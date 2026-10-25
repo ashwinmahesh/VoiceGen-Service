@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil
 from config import PROJECT_ROOT
 
-SHARED = ['test_inference_locks.py','inference_locks.py','durable_queue.py','test_queue.py','pause_edits.py','test_pause_edits.py','config.py','assets.py','download.py','schemas.py','capabilities.py','engine.py','storage.py',
+SHARED = ['VOICE_QUALITY.md','test_inference_locks.py','inference_locks.py','durable_queue.py','test_queue.py','pause_edits.py','test_pause_edits.py','config.py','assets.py','download.py','schemas.py','capabilities.py','engine.py','storage.py',
           'jobs.py','body_limit.py','server.py','voice_catalog.py','preflight.py','manage.py','Makefile',
           '.gitignore','clean_env.py','requirements.txt','requirements.lock.txt','smoke_test.py',
           'sync_source.py','storage.json.example','configure_storage.py','test_storage_configuration.py','directions.py','emotion_steering.py','extension_assets.py','test_extensions.py','test_contract.py','ui/index.html','ui/app.js','API.md','EXTENSIONS.md','THIRD_PARTY_NOTICES.md']

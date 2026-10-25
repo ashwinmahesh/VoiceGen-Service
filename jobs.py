@@ -128,7 +128,13 @@ class JobManager:
         key = hashlib.sha256(request.idempotency_key.encode()).hexdigest()
         try:
             compatible = [self.fingerprint(request,{'fish','higgs'})] if request.fish is None and request.higgs is None else []
-            row = self.store.existing(key,self.fingerprint(request),compatible)
+            legacy=[]
+            if request.clone_mode=='auto' and request.fish is None and request.higgs is None:
+                prior=request.model_copy(update={'clone_mode':'reference'})
+                legacy=[self.fingerprint(prior)]
+                if request.fish is None and request.higgs is None:
+                    legacy.append(self.fingerprint(prior,{'fish','higgs'}))
+            row = self.store.existing(key,self.fingerprint(request),compatible,legacy)
         except QueueConflict as exc:
             raise BusyError(str(exc)) from None
         if row:
@@ -151,23 +157,26 @@ class JobManager:
                     previous_backend=original_backend if prior['status']=='done' else self.profile['backend']
             if previous_backend != self.profile['backend']:
                 raise BusyError('This idempotency key belongs to another backend. Recover that job before choosing a new key.')
-            added={'preset_voice':None,'accent':'','clone_mode':'reference','steering_emotion':None,'steering_strength':None}
-            new={'exaggeration','cfg_weight','emotion_reference_id','emotion_vector','emotion_alpha','duration_factor','interval_silence','chatterbox','indextts','fish','higgs'}
-            exclusions=[set()]
-            if not request.generate_immediately:exclusions.append({'generate_immediately'})
-            if request.fish is None and request.higgs is None:
-                exclusions += [excluded|{'fish','higgs'} for excluded in exclusions.copy()]
+            candidates=[request]
+            if request.clone_mode=='auto' and request.fish is None and request.higgs is None:candidates.append(request.model_copy(update={'clone_mode':'reference'}))
             fingerprints=set()
-            for excluded in exclusions:
-                fingerprints.add(self.fingerprint(request,excluded))
-                if request.chatterbox is None and request.indextts is None:
-                    fingerprints.add(self.fingerprint(request,excluded|{'chatterbox','indextts'}))
-                if all(getattr(request,key) is None for key in new):
-                    fingerprints.add(self.fingerprint(request,excluded|new))
-                    if all(getattr(request,key)==value for key,value in added.items()):
-                        fingerprints.add(self.fingerprint(request,excluded|new|added.keys()))
-                if all(getattr(request,key)==value for key,value in added.items()):
-                    fingerprints.add(self.fingerprint(request,excluded|added.keys()))
+            for candidate in candidates:
+                added={'preset_voice':None,'accent':'','clone_mode':'reference','steering_emotion':None,'steering_strength':None}
+                new={'exaggeration','cfg_weight','emotion_reference_id','emotion_vector','emotion_alpha','duration_factor','interval_silence','chatterbox','indextts','fish','higgs'}
+                exclusions=[set()]
+                if not candidate.generate_immediately:exclusions.append({'generate_immediately'})
+                if candidate.fish is None and candidate.higgs is None:
+                    exclusions += [excluded|{'fish','higgs'} for excluded in exclusions.copy()]
+                for excluded in exclusions:
+                    fingerprints.add(self.fingerprint(candidate,excluded))
+                    if candidate.chatterbox is None and candidate.indextts is None:
+                        fingerprints.add(self.fingerprint(candidate,excluded|{'chatterbox','indextts'}))
+                    if all(getattr(candidate,key) is None for key in new):
+                        fingerprints.add(self.fingerprint(candidate,excluded|new))
+                        if all(getattr(candidate,key)==value for key,value in added.items()):
+                            fingerprints.add(self.fingerprint(candidate,excluded|new|added.keys()))
+                    if all(getattr(candidate,key)==value for key,value in added.items()):
+                        fingerprints.add(self.fingerprint(candidate,excluded|added.keys()))
             if saved['fingerprint'] not in fingerprints:
                 raise BusyError('This idempotency key was used with different settings')
             return self.read(saved['job'])
@@ -191,7 +200,7 @@ class JobManager:
             existing = self.existing(request)
             if existing:
                 return existing
-            payload = dict(requested=generation_metadata(request),effective=generation_metadata(effective),
+            payload = dict(fingerprint_version=2,requested=generation_metadata(request),effective=generation_metadata(effective),
                 reference=str(reference) if reference else None,
                 reference_sha256=hashlib.sha256(Path(reference).read_bytes()).hexdigest() if reference else None,transcript=transcript,
                 destination=str(destination),reference_info=reference_info)

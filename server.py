@@ -123,6 +123,8 @@ def generate(request: Generation):
             import hashlib
             reference_info['sha256']=hashlib.sha256(reference.read_bytes()).hexdigest()
             effective = effective.model_copy(update={'description':source.get('design_description',source.get('description',''))})
+        from capabilities import resolve_clone_mode
+        effective = resolve_clone_mode(effective,PROFILE['backend'],reference,transcript)
         if effective.clone_mode in ['continuation','combined'] and not transcript.strip():
             raise ValueError('Continuation/combined cloning requires the exact transcript of the reference recording')
         if PROFILE['backend'] in ('fish','higgs') and reference and not transcript.strip():

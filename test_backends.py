@@ -144,7 +144,7 @@ class BackendTests(unittest.TestCase):
                 caps=capabilities.capabilities()
                 self.assertEqual(caps.modes['design']['available'],backend=='moss')
                 if backend=='chatterbox':
-                    self.assertEqual(effective.exaggeration,.5)
+                    self.assertEqual(effective.exaggeration,.3)
                     with self.assertRaises(ValueError):capabilities.validate_controls(self.request(max_tokens=160))
                 if backend=='indextts':
                     self.assertEqual(effective.interval_silence,400)

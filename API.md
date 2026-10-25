@@ -47,7 +47,7 @@ This is durable admission and practical retry/restart recovery, **not exactly-on
 | `voice_id`, `reference_id` | Optional UUID hex IDs; choose one reference source or preset_voice |
 | `preset_voice` | Qwen CustomVoice preset ID from capabilities; mutually exclusive with voice_id/reference_id; description is optional additional direction |
 | `accent` | Optional accent instruction, <=500 characters; design/preset/Vox standard reference mode only; this is prompt guidance |
-| `clone_mode` | `reference` default; `continuation` and `combined` on VoxCPM2 references require an exact saved/override transcript |
+| `clone_mode` | `auto` default (combined for a transcribed Vox reference without new acting directions, otherwise reference); explicit `reference`, `continuation` and `combined` on VoxCPM2 references require an exact saved/override transcript |
 | `steering_emotion` | Optional installed experimental direction; Qwen CustomVoice presets only; see capabilities |
 | `steering_strength` | Optional 0–12, default 8 when a direction is selected; cannot be supplied without steering_emotion |
 | `ref_text` | Optional exact reference transcript, up to 3000 characters; Qwen reference mode or VoxCPM2 continuation/combined; overrides saved transcript |
@@ -110,7 +110,7 @@ VoxCPM2 continuation and combined cloning follow the recorded delivery and accep
 
 ## Combined cloning and performance references
 
-VoxCPM2 accepts `clone_mode: "combined"` with a saved `voice_id` or uploaded `reference_id` and an exact saved/override `ref_text`. This sends the same recording as both `ref_audio` (identity) and `prompt_audio` plus `prompt_text` (recorded performance). Continuation and combined modes reject new emotion/accent directions. A reference description is catalog context, not an applied instruction. Default reference behavior is unchanged. Check `modes.reference.clone_modes`; Qwen and other unsupported backends reject combined mode. The full text is synthesized in one call, and its transcript counts toward the input budget.
+VoxCPM2 accepts `clone_mode: "combined"` with a saved `voice_id` or uploaded `reference_id` and an exact saved/override `ref_text`. This sends the same recording as both `ref_audio` (identity) and `prompt_audio` plus `prompt_text` (recorded performance). Continuation and combined modes reject new emotion/accent directions. A reference description is catalog context, not an applied instruction. The default `clone_mode: "auto"` resolves to combined only for a Vox reference with an exact transcript and blank emotion/accent directions; otherwise it resolves to reference. Explicit modes retain their behavior; existing queued effective modes stay frozen. Check `modes.reference.clone_modes`; Qwen and other unsupported backends reject combined mode. The full text is synthesized in one call, and its transcript counts toward the input budget.
 
 For expressive variants, upload clean recordings of the **same desired speaker**, save each with a distinct performance name, mood tags and its exact spoken transcript, then select the variant for combined cloning. Preview the reference first: tags are organizational notes, not proof of accent quality. The selected recording supplies both identity and performance; a separate identity anchor is not exposed. Private recordings, transcripts and presets remain outside Git. Accent retention and delivery require listening; no accent guarantee is made.
 
@@ -137,7 +137,7 @@ See BACKENDS.md for exact capabilities, storage/locks, licenses and validation. 
 
 | Additional field | Accepted backend and behavior |
 | --- | --- |
-| chatterbox.exaggeration | Chatterbox Original only, 0–1, default .5 |
+| chatterbox.exaggeration | Chatterbox Original only, 0–1, default .3 (provisional character default) |
 | chatterbox.cfg_weight | Chatterbox Original only, 0–1, default .5 |
 | indextts.emotion_reference_id | IndexTTS only: uploaded reference UUID for emotion; separate from speaker reference |
 | indextts.emotion_vector | IndexTTS only: 8 finite 0–1 numbers in happy/angry/sad/afraid/disgusted/melancholic/surprised/calm order, sum <=1; mutually exclusive with emotion_reference_id |
@@ -177,8 +177,13 @@ For both samplers, accepted top_p .1–1 and top_k1–100 are conservative appli
 
 Artifacts retain original `requested.text` and requested namespace settings. Actual rendered text/resolved controls and consumed samplers live under `effective.fish` / `effective.higgs` (also in model-scoped result metadata). New options participate in retry identity; changed tags with the same key conflict. Absent nullable namespaces retain prior retry fingerprints. Automatically saved generated-voice transcripts omit control tags; review the spoken words before using them for cloning. Reference transcripts never receive structured delivery prefixes.
 
-Chatterbox Original exposes candidate UI presets under its existing namespace: Default(.5 exaggeration/.5 CFG), More deliberate(.5/.3), More expressive—experimental(.7/.3), all at temperature .8. These are optional experiments, not new defaults. Reference consumption is first6s for speech-token conditioning, first10s for decoder conditioning and the full waveform for voice embedding; this differs from Turbo and does not justify destructive cropping.
+Chatterbox Original exposes candidate UI presets under its existing namespace: Recommended(.3 exaggeration/.5 CFG, provisional), Upstream neutral(.5/.5), More deliberate(.5/.3), More expressive—experimental(.7/.3), all at temperature .8. Only the conservative recommended setting is the new default; alternatives remain explicit experiments. Reference consumption is first6s for speech-token conditioning, first10s for decoder conditioning and the full waveform for voice embedding; this differs from Turbo and does not justify destructive cropping.
 
 Index keeps the speaker reference unchanged while selecting Follow recording(default), a separate emotion recording, or an eight-value named mixture. Audio and vector sources remain exclusive; alpha without a source is rejected. Blend .3–.5 is an experimental starting point after explicitly choosing a source. The optional1.1 duration candidate changes native decoder target length; segment silence remains a gap between runtime segments, not every sentence. No automatic pronunciation respelling is performed.
 
 Qwen Base uses an exact transcript for ICL and rejects new acting/accent instructions. VoiceDesign creates a new voice; CustomVoice directs its fixed speaker. Sampling provenance resolves the installed model config and records the effective ICL repetition-penalty floor1.5. MOSS remains design-only with audio-temperature baseline1.5; a seed is not a cross-line identity lock, and a saved output can instead be cloned by a reference-capable backend.
+
+
+### Recommended defaults and retry compatibility
+
+See [VOICE_QUALITY.md](VOICE_QUALITY.md) for sourced per-model defaults and limitations. `clone_mode` now defaults to `auto`; requested metadata retains auto while effective settings freeze a concrete mode before durable admission. New auto and explicit reference requests have distinct fingerprints. A versioned compatibility path lets omitted-mode retries recover pre-auto SQLite/legacy JSON jobs under their old reference-mode hashes, including absent nullable Fish/Higgs fields. Nonempty new namespaces and explicit combined are not mapped through that mode fallback. Existing pending payloads and their requested JSON stay unchanged. Explicit generation overrides remain effective; changed defaults do not modify admitted jobs. The webpage preserves existing saved forms until Apply recommended defaults is selected.

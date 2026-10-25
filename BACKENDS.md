@@ -15,7 +15,7 @@ Omitting MODEL preserves the legacy `service.json` profile, `.venv`, and `DATA_D
 | --- | --- | --- |
 | voxcpm2 | .venv when original, otherwise .venv-mlx / 3.14 | Existing MLX BF16 design/reference/continuation/combined, steps, CFG, supported prompt directions |
 | qwen3 | .venv when original, otherwise .venv-mlx / 3.14 | Existing MLX 8-bit VoiceDesign/Base/CustomVoice; preset directions/optional steering; Base reference transcript |
-| chatterbox | .venv-chatterbox / 3.11 | Original English 500M reference cloning, exaggeration 0–1 (default .5), cfg_weight 0–1 (default .5), temperature .05–2 (default .8) |
+| chatterbox | .venv-chatterbox / 3.11 | Original English 500M reference cloning, exaggeration 0–1 (default .3, provisional character setting), cfg_weight 0–1 (default .5), temperature .05–2 (default .8) |
 | indextts | .venv-indextts / 3.11 | IndexTTS 2.5 reference cloning, separate emotion recording or eight-value vector, duration_factor .7–1.5, segment interval 0–2000 ms, temperature |
 | moss | .venv-native / 3.11 | MOSS VoiceGenerator description-based design only, English/Chinese, temperature, seed, audio-frame cap |
 | fish | .venv-mlx / 3.14 | Fish S2 Pro 8-bit reference cloning with exact transcript, inline `[free-form delivery tags]`, temperature, audio-token cap |
@@ -101,3 +101,5 @@ New controls are namespaced: `chatterbox.exaggeration/cfg_weight` and `indextts.
 ## Performance workflow
 
 Use each backend's own controls: the shared UI now previews Fish bracket-prefix tags and Higgs official emotion/prosody/style prefixes, and provides optional Chatterbox delivery candidates plus Index's Follow recording/emotion-audio/named-vector selection. All new fields live under their exact model ID; no universal quality slider or default change is made. Fish/Higgs samplers use real consumed top_p/top_k controls; ineffective repetition penalties stay hidden. Qwen mode guidance distinguishes Base ICL from newly designed/preset speakers, and MOSS explicitly remains design-only. See API.md for conflict rules, exact enums, sampling metadata, reference durations and audition limits. Whole submitted text is preserved, with raw generated output retained; precise pauses still require reviewed quiet-span edits.
+
+Recommended quality defaults and research evidence: [VOICE_QUALITY.md](VOICE_QUALITY.md). Vox auto resolves once at admission; other backends retain their own conditioning and untagged/follow-recording defaults.

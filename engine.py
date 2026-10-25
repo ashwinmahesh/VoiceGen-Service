@@ -85,7 +85,9 @@ class Engine:
             return self.model.generate_custom_voice(**common,speaker=request.preset_voice,language=request.language,instruct=instruction_text or None)
         if reference is None:
             return self.model.generate_voice_design(**common,instruct=instruction_text,language=request.language)
-        return self.model.generate(**common, ref_audio=str(reference), ref_text=transcript or None,
+        if transcript.strip() and not bool(getattr(getattr(self.model,'speech_tokenizer',None),'has_encoder',False)):
+            raise ValueError('Qwen reference transcript requires the speech tokenizer encoder for ICL; repair the pinned runtime/assets')
+        return self.model.generate(**common, ref_audio=str(reference), ref_text=transcript if transcript.strip() else None,
                                    lang_code=request.language, split_pattern='')
 
     def check_input_budget(self, request, reference, transcript):

@@ -72,7 +72,7 @@ class ExtensionTests(unittest.TestCase):
                     self.assertEqual(effective.steps,10)
                     with self.assertRaises(ValueError):capabilities.validate_controls(self.request(clone_mode='continuation',voice_id='a'*32,emotion='Sad'))
                     with self.assertRaises(ValueError):capabilities.validate_controls(self.request(preset_voice='ryan'))
-                    with self.assertRaises(ValueError):capabilities.validate_controls(self.request(voice_id='a'*32,ref_text='Ignored?'))
+                    with self.assertRaises(ValueError):capabilities.validate_controls(self.request(voice_id='a'*32,ref_text='Ignored?',clone_mode='reference'))
                 with self.assertRaises(ValueError):capabilities.validate_controls(self.request(steering_strength=5))
     def test_steering_strength_bounds(self):
         for strength in [-1,13]:

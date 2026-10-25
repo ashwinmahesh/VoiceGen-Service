@@ -66,7 +66,7 @@ class PerformanceTests(unittest.TestCase):
         self.assertEqual(args[args.index('--top-p')+1],'0.75');self.assertIn('--top-k',args)
         self.assertFalse(any('repetition' in x or 'allow_incomplete' in x for x in args))
     def test_qwen_icl_floor_and_clean_reference_transcripts(self):
-        model=SimpleNamespace(_resolve_generation_options=lambda *args:{'temperature':.9,'max_tokens':500,'top_k':50,'top_p':1.,'repetition_penalty':1.1})
+        model=SimpleNamespace(speech_tokenizer=SimpleNamespace(has_encoder=True),_resolve_generation_options=lambda *args:{'temperature':.9,'max_tokens':500,'top_k':50,'top_p':1.,'repetition_penalty':1.1})
         self.assertEqual(qwen_sampling(model,request(),Path('/tmp/ref'),'Exact words.')['sampling']['repetition_penalty'],1.5)
         self.assertEqual(qwen_sampling(model,request(),Path('/tmp/ref'),'')['sampling']['repetition_penalty'],1.1)
         self.assertEqual(spoken_transcript({'backend':'fish','text':'[low voice] My guests. [pause] You came.'}),'My guests. You came.')
@@ -116,3 +116,104 @@ class PerformanceArtifactTests(unittest.TestCase):
             pending=fixture.manager.store.read(job['id'])['payload']['requested']
             self.assertNotIn('fish',pending);self.assertNotIn('higgs',pending)
             self.assertEqual(fixture.generate(**{**body,'fish':{'delivery_tags':['low voice']}}).status_code,409)
+
+class AutoCloningTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture=test_contract.ContractTests(methodName='runTest');self.fixture.setUp();self.addCleanup(self.fixture.tearDown)
+        for name in ['server.PROFILE','capabilities.PROFILE']:
+            self.fixture.stack.enter_context(patch(name,profile('voxcpm2')))
+        self.fixture.stack.enter_context(patch.object(self.fixture.manager,'profile',profile('voxcpm2')))
+        self.reference=self.fixture.upload().json()
+    def test_admission_resolves_auto_and_preserves_explicit_and_design(self):
+        f=self.fixture
+        for extra,wanted in [({'ref_text':'Exact words.'},'combined'),({},'reference'),
+                ({'ref_text':'Exact words.','emotion':'calm'},'reference'),
+                ({'ref_text':'Exact words.','accent':'Eastern European'},'reference'),
+                ({'clone_mode':'reference'},'reference'),
+                ({'clone_mode':'continuation','ref_text':'Exact words.'},'continuation'),
+                ({'clone_mode':'combined','ref_text':'Exact words.'},'combined')]:
+            response=f.generate(reference_id=self.reference['id'],**extra)
+            self.assertEqual(response.status_code,202,response.text)
+            result=f.finish(response.json())['result']
+            self.assertEqual(result['requested']['clone_mode'],extra.get('clone_mode','auto'))
+            self.assertEqual(result['effective']['clone_mode'],wanted)
+        result=f.finish(f.generate().json())['result'];self.assertEqual(result['effective']['clone_mode'],'reference')
+        from capabilities import resolve_clone_mode
+        for backend in ['qwen3','chatterbox','indextts','fish','higgs','moss']:
+            self.assertEqual(resolve_clone_mode(request(),backend,Path('/reference'),'Exact words.').clone_mode,'reference')
+    def test_new_auto_and_explicit_reference_keys_are_distinct(self):
+        f=self.fixture;body={'reference_id':self.reference['id'],'ref_text':'Exact words.','idempotency_key':'auto-new'}
+        first=f.generate(**body);f.finish(first.json())
+        self.assertEqual(f.generate(**{**body,'clone_mode':'reference'}).status_code,409)
+        body.update(idempotency_key='explicit-new',clone_mode='reference',ref_text=None)
+        first=f.generate(**body);f.finish(first.json());body.pop('clone_mode')
+        self.assertEqual(f.generate(**body).status_code,409)
+    def test_old_sqlite_retry_and_frozen_reference_are_preserved(self):
+        f=self.fixture;body={'reference_id':self.reference['id'],'ref_text':'Exact words.','idempotency_key':'auto-old'}
+        first=f.generate(**body);result=f.finish(first.json())
+        old=Generation(text='Welcome home.',description='A calm baritone.',**body).model_copy(update={'clone_mode':'reference'})
+        key=hashlib.sha256(b'auto-old').hexdigest()
+        with f.manager.store.transaction() as db:
+            payload=json.loads(db.execute('SELECT payload FROM entries WHERE key_hash=?',(key,)).fetchone()[0])
+            payload.pop('fingerprint_version');payload['requested']['clone_mode']='reference';payload['effective']['clone_mode']='reference'
+            payload['requested'].pop('fish');payload['requested'].pop('higgs')
+            db.execute('UPDATE entries SET fingerprint=?,payload=? WHERE key_hash=?',(f.manager.fingerprint(old,{'fish','higgs'}),json.dumps(payload),key))
+        self.assertEqual(f.generate(**body).json()['id'],first.json()['id'])
+        stored=f.manager.store.read(first.json()['id'])['payload']
+        self.assertEqual(stored['effective']['clone_mode'],'reference');self.assertNotIn('fish',stored['requested'])
+        self.assertEqual(f.generate(**{**body,'clone_mode':'combined'}).status_code,409)
+        self.assertEqual(f.generate(**{**body,'fish':{'delivery_tags':['low voice']}}).status_code,409)
+    def test_default_values_and_explicit_overrides(self):
+        for backend,temperature in [('chatterbox',.8),('indextts',.8),('fish',.7),('higgs',.8),('moss',1.5),('qwen3',.9),('voxcpm2',None)]:
+            with patch('capabilities.PROFILE',profile(backend)):
+                r=request(language='English' if backend in ('chatterbox','indextts') else 'auto') if backend!='moss' else Generation(text='Hello.',description='A calm baritone.',language='English')
+                effective=capabilities.validate_controls(r)
+                self.assertEqual(effective.temperature,temperature)
+                if backend=='chatterbox':
+                    self.assertEqual(effective.chatterbox.exaggeration,.3)
+                    explicit=capabilities.validate_controls(request(chatterbox={'exaggeration':.5,'cfg_weight':.3},temperature=.7,language='English'))
+                    self.assertEqual(explicit.chatterbox.exaggeration,.5);self.assertEqual(explicit.temperature,.7)
+                if backend in ('fish','higgs'):
+                    self.assertEqual(getattr(effective,backend).top_k,30)
+
+    def test_pending_auto_is_concrete_and_catalog_edits_do_not_reresolve(self):
+        import threading
+        f=self.fixture;f.engine.gate=threading.Event()
+        active=f.generate().json();self.assertTrue(f.engine.started.wait(2))
+        pending=f.generate(reference_id=self.reference['id'],ref_text='Exact admitted words.').json()
+        self.assertEqual(pending['effective']['clone_mode'],'combined')
+        sidecar=f.root/'references'/f"{self.reference['id']}.json"
+        stored=json.loads(sidecar.read_text());stored['transcript']='Different catalog words.';sidecar.write_text(json.dumps(stored))
+        f.engine.gate.set();f.finish(active);result=f.finish(pending)['result']
+        self.assertEqual(result['effective']['clone_mode'],'combined')
+        self.assertEqual(result['reference']['transcript'],'Exact admitted words.')
+
+    def test_legacy_json_reference_hash_accepts_old_omitted_mode_retry(self):
+        from voice_catalog import atomic_json,now
+        f=self.fixture;identity='d'*32;key=hashlib.sha256(b'json-auto-old').hexdigest()
+        old=Generation(text='Welcome home.',description='A calm baritone.',clone_mode='reference')
+        atomic_json(f.root/'jobs'/f'{identity}.json',{'id':identity,'status':'error','stage':'Legacy interrupted','created_at':now(),'updated_at':now()})
+        atomic_json(f.root/'idempotency'/f'{key}.json',{'job':identity,'backend':f.manager.profile['backend'],'fingerprint':f.manager.fingerprint(old,{'fish','higgs'})})
+        self.assertEqual(f.generate(idempotency_key='json-auto-old').json()['id'],identity)
+        self.assertEqual(f.generate(idempotency_key='json-auto-old',clone_mode='combined').status_code,409)
+
+    def test_qwen_transcribed_reference_cannot_silently_lose_encoder(self):
+        adapter=engine.Engine();adapter.model=SimpleNamespace(speech_tokenizer=SimpleNamespace(has_encoder=False))
+        with patch('engine.PROFILE',profile('qwen3')):
+            with self.assertRaisesRegex(ValueError,'encoder'):adapter.backend_call(request(),Path('/reference'),'Exact words.')
+
+class FrozenCharacterDefaultTests(unittest.TestCase):
+    def test_old_chatterbox_default_is_not_recomputed_on_dispatch(self):
+        from test_queue import QueueFixture
+        fixture=QueueFixture(methodName='runTest');fixture.setUp();self.addCleanup(fixture.tearDown)
+        from test_contract import wav
+        reference=fixture.root/'references'/('a'*32+'.wav');reference.write_bytes(wav())
+        old=fixture.manager(backend='chatterbox')
+        requested=Generation(text='A full character line.',reference_id='a'*32,clone_mode='reference',language='English')
+        old_effective=requested.model_copy(update={'temperature':.8,'chatterbox':__import__('schemas').ChatterboxOptions(exaggeration=.5,cfg_weight=.5)})
+        job=old.submit(requested,old_effective,reference,'',fixture.root/'outputs');old.close()
+        with patch('capabilities.PROFILE',profile('chatterbox')):
+            self.assertEqual(capabilities.validate_controls(requested).chatterbox.exaggeration,.3)
+        fresh=fixture.manager(backend='chatterbox');fresh.recover()
+        self.assertEqual(fixture.done(fresh,job['id'])['status'],'done')
+        self.assertEqual(fresh.engine.calls[0][0].exaggeration,.5)

@@ -34,6 +34,7 @@ def rendered_text(request,backend):
 
 
 def applied_performance(request,backend):
+    if backend=='moss':return {'sampling':{'temperature':request.temperature,'top_p':.6,'top_k':50,'repetition_penalty':1.1},'sampling_source':'pinned native VoiceGenerator audio defaults'}
     if backend not in ('fish','higgs'):return {}
     options=getattr(request,backend)
     return {**(options.model_dump() if options else {}),'rendered_text':rendered_text(request,backend)}
@@ -41,9 +42,10 @@ def applied_performance(request,backend):
 
 def qwen_sampling(model,request,reference,transcript):
     resolved=model._resolve_generation_options(request.temperature,request.max_tokens,None,None,None)
-    icl=bool(reference and transcript.strip())
+    encoder=bool(getattr(getattr(model,'speech_tokenizer',None),'has_encoder',False))
+    icl=bool(reference and transcript.strip() and encoder)
     if icl:resolved['repetition_penalty']=max(resolved['repetition_penalty'],1.5)
-    return {'conditioning':'ICL' if icl else 'speaker embedding' if reference else 'preset' if request.preset_voice else 'voice design',
+    return {'speech_tokenizer_encoder_available':encoder,'conditioning':'ICL' if icl else 'speaker embedding' if reference else 'preset' if request.preset_voice else 'voice design',
         'sampling':resolved,'icl_repetition_penalty_floor':1.5 if icl else None}
 
 
