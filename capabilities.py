@@ -45,6 +45,10 @@ def backend_capabilities():
         limits={'text_characters':3000,'input_tokens':2048 if qwen else 4096,'upload_bytes':25*1024*1024,
                 'reference_seconds':[1,30],'reference_sample_rate':[8000,96000],'reference_channels':2,
                 'pause_adjustment':{'reviewed_spans':True,'automatic_alignment':False,'default_minimum_gap_ms':750,'max_spans':30,'max_source_seconds':600,'max_output_seconds':900,'max_bytes':128*1024*1024},
+                'queue':{'durable':True,'api_generate_immediately_default':False,'ui_generate_immediately_default':True,
+                         'ordering':'Immediate FIFO before normal FIFO; active inference is never interrupted',
+                         'backend_policy':'Only the startup backend executes; other pending backends are paused',
+                         'cancel_running':False},
                 'single_worker':True,'token_limit_is_per_segment':True},storage=str(ROOT),output_dir=str(OUTPUT_DIR))
 
 

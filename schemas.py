@@ -33,7 +33,7 @@ LEGACY_BACKEND_FIELDS=set().union(*(model.model_fields for model in MODEL_OPTION
 
 
 class Generation(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
     text: str = Field(min_length=1, max_length=3000)
     description: str = Field(default='', max_length=1500)
     emotion: str = Field(default='', max_length=1000)
@@ -61,6 +61,7 @@ class Generation(BaseModel):
     interval_silence: int | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0, le=2000)
     max_tokens: int = Field(default=1000, ge=50, le=2000)
     output_dir: str | None = Field(default=None, max_length=4096)
+    generate_immediately: bool = False
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
 
     @model_validator(mode='after')
@@ -127,6 +128,7 @@ class Health(BaseModel):
     active_job: str | None
     mode: str = 'local-jobs'
     last_error: str | None
+    queue_counts: dict[str,int] = Field(default_factory=dict)
 
 
 class Artifact(BaseModel):
@@ -146,12 +148,38 @@ class Artifact(BaseModel):
 
 class Job(BaseModel):
     id: str
-    status: Literal['queued','running','done','error']
+    status: Literal['queued','running','done','error','deleted']
     stage: str
     created_at: str
     updated_at: str
     error: str | None = None
     result: Artifact | None = None
+    sequence: int | None = None
+    backend: str | None = None
+    model: str | None = None
+    mode: str | None = None
+    generate_immediately: bool = False
+    paused: bool = False
+    attempts: int = 0
+    started_at: str | None = None
+    completed_at: str | None = None
+    requested: dict = Field(default_factory=dict)
+    effective: dict = Field(default_factory=dict)
+
+
+class QueuePage(BaseModel):
+    data: list[Job]
+    total: int
+    counts: dict[str,int]
+    limit: int
+    offset: int
+    has_more: bool
+    next_offset: int | None
+
+
+class QueueRemoval(BaseModel):
+    deleted: int
+    active_job: str | None
 
 
 class ArtifactPage(BaseModel):

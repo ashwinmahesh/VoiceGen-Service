@@ -18,7 +18,7 @@ import pause_edits
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
-from schemas import Generation, Health, Capabilities, Job, Artifact, ArtifactPage, Reference, Unloaded, TagsPage, PauseAdjustment
+from schemas import Generation, Health, Capabilities, Job, Artifact, ArtifactPage, Reference, Unloaded, TagsPage, PauseAdjustment, QueuePage, QueueRemoval
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from body_limit import BodyLimit
 import voice_catalog
@@ -40,7 +40,7 @@ async def lifespan(app):
         try:
             yield
         finally:
-            manager.executor.shutdown(wait=True)
+            await asyncio.to_thread(manager.close)
 
 
 app = FastAPI(title='Local Voice Studio API',version='2.1.0',lifespan=lifespan)
@@ -98,9 +98,12 @@ def health():
     return Health(status=status,service=PROFILE['id'],name=PROFILE['name'],project=str(PROJECT_ROOT),
         storage=str(ROOT),downloaded=not errors,asset_errors=errors,runtime_errors=runtime,model_loaded=engine.model is not None,
         loaded_variant=engine.variant,busy=bool(manager.active or manager.unloading),
-        active_job=manager.active,last_error=manager.last_error)
+        active_job=manager.active,last_error=manager.last_error,
+        queue_counts=manager.listing(limit=1)['counts'])
 
 
+@app.post('/api/jobs',status_code=202,response_model=Job)
+@app.post('/api/queue',status_code=202,response_model=Job)
 @app.post('/api/generate',status_code=202,response_model=Job)
 def generate(request: Generation):
     try:
@@ -136,6 +139,42 @@ def generate(request: Generation):
 def job_status(identity: str):
     try: return manager.read(identity)
     except (OSError,ValueError): raise HTTPException(404,'Job not found') from None
+
+
+@app.get('/api/jobs',response_model=QueuePage)
+@app.get('/api/queue',response_model=QueuePage)
+def queue_list(status: Literal['pending','all','queued','running','done','error','deleted']='pending',
+               backend: str | None=Query(default=None,max_length=80),
+               limit: int=Query(default=24,ge=1,le=100),offset: int=Query(default=0,ge=0)):
+    statuses = ('queued','running') if status=='pending' else () if status=='all' else (status,)
+    return manager.listing(statuses=statuses,backend=backend,limit=limit,offset=offset)
+
+
+@app.get('/api/queue/{identity}',response_model=Job)
+def queue_detail(identity: str):
+    return job_status(identity)
+
+
+@app.delete('/api/jobs',response_model=QueueRemoval)
+@app.delete('/api/queue',response_model=QueueRemoval)
+def queue_clear(backend: str | None=Query(default=None,max_length=80)):
+    return manager.remove(backend=backend)
+
+
+@app.delete('/api/jobs/{identity}',response_model=QueueRemoval)
+@app.delete('/api/queue/{identity}',response_model=QueueRemoval)
+def queue_delete(identity: str):
+    try: return manager.remove(identity)
+    except FileNotFoundError: raise HTTPException(404,'Queue entry not found') from None
+    except BusyError as exc: raise HTTPException(409,str(exc)) from None
+
+
+@app.post('/api/jobs/{identity}/retry',status_code=202,response_model=Job)
+@app.post('/api/queue/{identity}/retry',status_code=202,response_model=Job)
+def queue_retry(identity: str):
+    try: return manager.retry(identity)
+    except FileNotFoundError: raise HTTPException(404,'Queue entry not found') from None
+    except BusyError as exc: raise HTTPException(409,str(exc)) from None
 
 
 @app.get('/api/history',response_model=ArtifactPage)

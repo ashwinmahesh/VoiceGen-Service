@@ -1,5 +1,5 @@
 
-const $=id=>document.getElementById(id);let mode='design',collection='history',reference=null,latest=null,voiceRows=[],historyRows=[],busy=false,online=false,uploading=false,watching=null;
+const $=id=>document.getElementById(id);let mode='design',collection='history',reference=null,latest=null,voiceRows=[],historyRows=[],busy=false,online=false,uploading=false,watching=null,submitting=false;
 let pageSize = 24, caps=null, storageKey='voice-studio', historyPage={data:[],total:0,has_more:false}, pendingKey=null;
 let voicePage = {data: [], total: 0, has_more: false};
 let catalogOffset = 0, searchTimer = null, catalogRequest = 0, voiceEditor = null;
@@ -7,7 +7,7 @@ const presets={natural:'Natural, conversational delivery with relaxed pacing.',j
 async function api(path,options={}){const response=await fetch(path,options);if(!response.ok){let body;try{body=await response.json()}catch{}throw Error(typeof body?.detail==='string'?body.detail:body?.detail?.[0]?.msg||`Request failed (${response.status})`)}return response.json()}
 function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
 function error(message){$('error').textContent=message;$('error').hidden=false}function announce(text){$('announcement').textContent=text}
-function controls(){ $('generate').disabled=!online||busy||uploading;$('unload').disabled=!online||busy;$('new-seed').disabled=busy }
+function controls(){ $('generate').disabled=!online||submitting||uploading;$('unload').disabled=!online||busy;$('new-seed').disabled=busy }
 function setMode(next){if(caps){if(next==='design'&&caps.modes.design.available===false)next='upload';if((next==='saved'||next==='upload')&&caps.modes.reference.available===false)next='design'}pendingKey=null;mode=next;for(const button of document.querySelectorAll('[data-mode]'))button.setAttribute('aria-selected',button.dataset.mode===mode);for(const name of ['design','saved','upload','preset'])$(name+'-panel').hidden=name!==mode;updateCapabilities();persist()}
 document.querySelectorAll('[data-mode]').forEach(button=>button.onclick=()=>setMode(button.dataset.mode));
 $('emotion-preset').onchange=()=>{$('emotion').value=presets[$('emotion-preset').value];persist()};$('emotion').oninput=()=>{$('emotion-preset').value='custom';persist()};
@@ -15,7 +15,7 @@ function count(){$('count').textContent=`${$('text').value.length} / ${caps?.lim
 function settings(){
  const referenceMode=mode==='saved'||mode==='upload';
  const direction=referenceMode?(caps?.modes.reference.emotion&&$('clone-mode').value==='reference'):mode==='preset'||caps?.modes.design.emotion;
- const result={text:$('text').value,description:mode==='design'?$('description').value:'',
+ const result={generate_immediately:$('generate-immediately').checked,text:$('text').value,description:mode==='design'?$('description').value:'',
    emotion:direction?$('emotion').value:'',accent:direction?$('accent').value:'',
    seed:Number($('seed').value),max_tokens:caps?.limits.max_tokens_fixed?1000:Number($('max-tokens').value),
    preset_voice:mode==='preset'?$('preset-voice').value||null:null,
@@ -212,8 +212,27 @@ $('pause-editor-form').onsubmit=async event=>{
  catch(exc){pauseError(exc.message)}finally{pauseSaving=false;for(const id of ['pause-create','pause-cancel','pause-add','pause-minimum','pause-output-dir','pause-reviewed'])$(id).disabled=false;renderPauseSpans()}
 };
 $('reuse').onclick=()=>{if(latest){restore(latest);$('text').focus()}};
-async function watch(identity){if(watching===identity)return;watching=identity;busy=true;controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;const started=Date.now();localStorage.setItem(storageKey+'-job',identity);try{while(true){const job=await api('/api/jobs/'+identity);$('stage').textContent=job.stage;$('elapsed').textContent=`${Math.floor((Date.now()-started)/1000)} seconds elapsed`;if(job.status==='done'){localStorage.removeItem(storageKey+'-job');showResult(job.result);await refresh();announce('Speech ready');break}if(job.status==='error'){localStorage.removeItem(storageKey+'-job');throw Error(job.error);}await new Promise(resolve=>setTimeout(resolve,1500))}}catch(exc){error(exc.message);$('working').hidden=true;$('empty').hidden=!latest;if(latest)showResult(latest)}finally{busy=false;watching=null;controls()}}
-$('form').onsubmit=async event=>{event.preventDefault();if(busy||uploading)return;const request=settings();if(mode==='preset'&&!request.preset_voice){error('Choose an expressive preset voice first.');return}if(mode==='saved'&&!request.voice_id){error('Choose a saved voice first.');return}if(mode==='upload'&&!request.reference_id){error('Choose an audio reference first.');return}busy=true;controls();try{pendingKey=pendingKey||crypto.randomUUID();const job=await post('/api/generate',{...request,idempotency_key:pendingKey});pendingKey=null;watch(job.id)}catch(exc){busy=false;controls();error(exc.message)}};
+async function watch(identity){
+ if(watching===identity)return;watching=identity;controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
+ const started=Date.now();localStorage.setItem(storageKey+'-job',identity);
+ try{while(watching===identity){const job=await api('/api/jobs/'+identity);if(watching!==identity)return;
+  $('stage').textContent=job.paused?'Waiting for '+job.backend+' startup':job.stage;
+  $('elapsed').textContent=`${Math.floor((Date.now()-started)/1000)} seconds since monitoring began`;
+  if(job.status==='done'){localStorage.removeItem(storageKey+'-job');showResult(job.result);await refresh();announce('Speech ready');break}
+  if(job.status==='error'||job.status==='deleted'){localStorage.removeItem(storageKey+'-job');throw Error(job.error||'This pending take was removed.');}
+  await new Promise(resolve=>setTimeout(resolve,1500));
+ }}catch(exc){if(watching===identity){error(exc.message);$('working').hidden=true;$('empty').hidden=!latest;if(latest)showResult(latest)}}
+ finally{if(watching===identity){watching=null;controls();refreshQueue().catch(()=>{})}}
+}
+$('form').onsubmit=async event=>{
+ event.preventDefault();if(submitting||uploading)return;const request=settings();
+ if(mode==='preset'&&!request.preset_voice){error('Choose an expressive preset voice first.');return}
+ if(mode==='saved'&&!request.voice_id){error('Choose a saved voice first.');return}
+ if(mode==='upload'&&!request.reference_id){error('Choose an audio reference first.');return}
+ submitting=true;controls();
+ try{pendingKey=pendingKey||crypto.randomUUID();const job=await post('/api/generate',{...request,idempotency_key:pendingKey});pendingKey=null;watch(job.id);await refreshQueue()}
+ catch(exc){error(exc.message)}finally{submitting=false;controls()}
+};
 document.addEventListener('keydown',event=>{if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();if(!$('generate').disabled)$('form').requestSubmit()}});
 $('save-voice').onclick = () => {
   if (latest) openVoiceEditor({output_id: latest.id, name: $('voice-name').value,
@@ -225,7 +244,32 @@ $('save-reference').onclick = () => {
     name: (reference.name || 'Uploaded voice').replace(/\.[^.]+$/, '').slice(0, 100), description: '', transcript:$('ref-text').value,tags: []});
 };
 $('unload').onclick=async()=>{try{await post('/api/model/unload',{});announce('Model memory released. It reloads on the next take.');await health()}catch(exc){error(exc.message)}};
-async function health(){try{const state=await api('/health');online=state.downloaded&&state.status!=='error';$('status').dataset.offline=!online;$('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';if(state.active_job&&!watching)watch(state.active_job);else if(!watching)busy=state.busy}catch{online=false;$('status').textContent='Server offline';$('status').dataset.offline=true}controls()}
+async function health(){try{const state=await api('/health');online=state.downloaded;$('status').dataset.offline=!online;$('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';busy=state.busy;if(state.active_job&&!watching)watch(state.active_job);await refreshQueue()}catch{online=false;$('status').textContent='Server offline';$('status').dataset.offline=true}controls()}
+let queueOffset=0,queuePage=null,queueRequest=0;
+async function refreshQueue(){
+ const token=++queueRequest;
+ const page=await api('/api/queue?'+new URLSearchParams({status:$('queue-status').value,limit:$('queue-size').value,offset:queueOffset}));
+ if(token!==queueRequest)return;
+ if(queueOffset&&queueOffset>=page.total){queueOffset=0;return refreshQueue()}
+ queuePage=page;$('queue-entries').replaceChildren();
+ $('queue-count').textContent=`${page.counts.queued||0} pending · ${page.counts.running||0} running · ${page.counts.error||0} failed`;
+ $('queue-clear').disabled=!(page.counts.queued>0);$('queue-prev').disabled=queueOffset===0;$('queue-next').disabled=!page.has_more;
+ $('queue-page').textContent=page.total?`${queueOffset+1}–${queueOffset+page.data.length} of ${page.total}`:'No matching entries';
+ for(const row of page.data){
+  const card=el('article',null,'card');card.append(el('strong',`${row.status} · ${row.backend||'legacy'} · ${row.generate_immediately?'Immediate':'Normal FIFO'}`));
+  card.append(el('p',row.requested?.text||row.id),el('p',row.paused?'Paused until '+row.backend+' is selected at startup':row.stage,'hint'));
+  if(row.error)card.append(el('p',row.error,'error'));
+  const actions=el('div',null,'card-actions');
+  const inspect=el('button',row.status==='done'?'Open take':'Monitor','secondary');inspect.type='button';inspect.onclick=()=>row.result?showResult(row.result):watch(row.id);actions.append(inspect);
+  if(row.status==='queued'){const remove=el('button','Remove pending','secondary');remove.type='button';remove.onclick=async()=>{try{await api('/api/queue/'+row.id,{method:'DELETE'});await refreshQueue()}catch(exc){error(exc.message)}};actions.append(remove)}
+  if(row.status==='error'&&!row.paused&&row.backend===caps?.backend){const retry=el('button','Retry same entry','secondary');retry.type='button';retry.onclick=async()=>{try{const job=await post('/api/queue/'+row.id+'/retry',{});watch(job.id);await refreshQueue()}catch(exc){error(exc.message)}};actions.append(retry)}
+  card.append(actions);$('queue-entries').append(card);
+ }
+}
+$('queue-clear').onclick=async()=>{try{const result=await api('/api/queue',{method:'DELETE'});announce(`Removed ${result.deleted} pending takes. Running speech continues.`);await refreshQueue()}catch(exc){error(exc.message)}};
+$('queue-status').onchange=$('queue-size').onchange=()=>{queueOffset=0;refreshQueue().catch(exc=>error(exc.message))};
+$('queue-prev').onclick=()=>{queueOffset=Math.max(0,queueOffset-Number($('queue-size').value));refreshQueue().catch(exc=>error(exc.message))};
+$('queue-next').onclick=()=>{if(queuePage?.has_more){queueOffset+=Number($('queue-size').value);refreshQueue().catch(exc=>error(exc.message))}};
 async function loadCollection(){if(collection==='voices')return loadVoicePage();const page=await api('/api/history?'+new URLSearchParams({q:$('search').value,limit:pageSize,offset:catalogOffset}));historyPage=page;historyRows=page.data;renderCards()}
 async function loadVoicePage() {
   const token = ++catalogRequest;

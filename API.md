@@ -10,9 +10,34 @@ The startup-selected studio implements one OpenAPI schema at `GET /openapi.json`
 {"text":"Welcome home.","description":"A warm, cultured baritone.","emotion":"Quietly amused.","seed":42,"max_tokens":500,"idempotency_key":"scene-1-take-1"}
 ```
 
-`GET /api/jobs/{id}` returns `id`, `status` (`queued`, `running`, `done`, `error`), `stage`, timestamps, `error`, and `result`. Stage messages describe actual work; no estimated percentage or cancellation is provided. A disconnected browser or HTTP timeout does not cancel synthesis or release capacity. Recover by job ID, or resend the identical request with the same idempotency key. Reusing a key with different settings returns 409. Keys/jobs remain until explicitly removed from local storage. After a server restart unfinished jobs become errors; completed outputs remain available. Never retry an interrupted operation automatically with a new key before checking History.
+`GET /api/jobs/{id}` retains the established job response and IDs. New jobs add stable `sequence`, `backend`, `model`, `mode`, `generate_immediately`, `attempts`, start/completion times, frozen requested/effective settings, and `paused`. Status is `queued`, `running`, `done`, `error`, or `deleted`. Stage messages describe actual work; no percentage or active cancellation is promised. A disconnected browser or HTTP timeout does not cancel work or release accelerator capacity.
 
-A single worker accepts one job; another request returns 409 immediately. Both voice projects also share a nonblocking file lock for inference/unloading. That lock does not coordinate unrelated image/model servers. Qwen unloads its previous variant before loading another. Models load lazily from verified local assets and remain resident until `POST /api/model/unload` or shutdown. Run one server worker, with no development reloader.
+Submissions are transactionally admitted to SQLite under `DATA_DIR/jobs/queue.sqlite3` before a 202 response. A single worker starts after storage ownership/recovery, consumes startup backlog automatically, and runs only the startup backend. Other backends remain visibly paused; the server never loads a different backend to drain them. Within the applicable backend, immediate pending entries run FIFO ahead of ordinary FIFO entries. **Immediate means the next available slot after current inference, with no preemption.** A continuous stream of immediate work can delay ordinary entries. API submissions default `generate_immediately=false`; the webpage sends `true` by default and offers a checkbox to enqueue normally. Busy inference/accelerator contention queues requests rather than returning the former busy 409. Existing `/api/generate` clients still receive 202 Job and poll the same detail route; no synchronous speech route was changed.
+
+The worker holds the configured shared accelerator `GPU_LOCK_FILE` through completion (including after disconnect). It waits when another owner holds the lock. Point image/voice workers at the same lock to serialize accelerator use; an idle resident model still consumes memory. Run one server worker without reloaders. An additional per-data-directory queue owner lock prevents duplicate recovery/workers. Unloading a running model returns 409; unloading while entries wait releases the model, which loads again for the next admitted take.
+
+### Queue operations
+
+`/api/jobs` and `/api/queue` are aliases for the new collection operations; existing `/api/jobs/{id}` remains valid.
+
+| Method / route | Behavior |
+| --- | --- |
+| `POST /api/queue` | Same typed Generation body and 202 Job as `/api/generate` (also `POST /api/jobs`) |
+| `GET /api/queue?status=pending&backend=voxcpm2&limit=24&offset=0` | List entries; backend optional; limit 1–100, offset >=0. Status: pending (queued+running), queued, running, done, error, deleted, all. Counts reflect all statuses for the backend filter; total reflects the status filter. Includes has_more/next_offset. Running entries precede immediate and normal pending FIFO entries |
+| `GET /api/queue/{id}` | Typed detail (alias of `/api/jobs/{id}`); other-backend pending entries have paused=true |
+| `DELETE /api/queue/{id}` | Remove only a waiting entry; 409 for running or completed/failed work, 404 unknown. Returns deleted count and active_job. Repeated delete of a tombstone returns zero |
+| `DELETE /api/queue?backend=voxcpm2` | Transactionally clear waiting entries, optionally for one backend. Active entries keep running; completed artifacts, History, references and original recordings are retained |
+| `POST /api/queue/{id}/retry` | Explicitly retry an error under its original ID/order, incrementing attempts when claimed; 409 unless failed and its backend is selected. Also available under `/api/jobs/{id}/retry` |
+
+Delete/clear and worker claim are serialized in SQLite: an entry is either removed before claim or remains running. Removal retains a durable tombstone and retry-key mapping. Retrying an identical keyed submission returns its original job, including failed/deleted jobs, without silently regenerating. Changed settings (including priority) with the same key return 409. Use the explicit retry route for an intended failed-job retry. Unkeyed requests or new keys are new jobs. No automatic pruning is performed; queue/history retention are separate. Legacy JSON jobs and hashed key records remain readable. Legacy interrupted JSON entries cannot safely replay because they lack durable inputs and remain errors requiring History review.
+
+### Restart and reference guarantees
+
+Admission freezes validated requested/effective controls, backend/model/mode, destination, reference path/identity/metadata, exact transcript and reference audio SHA256. Later catalog renames/transcript edits cannot change an admitted take. If reference bytes change or disappear, execution fails visibly; restore the admitted bytes before retrying. No audio snapshots are duplicated or removed by queue clearing.
+
+Interrupted SQLite running entries return to their original ordering on restart. Recovery first reconciles a matching complete WAV plus JSON sidecar and repairs the artifact index instead of synthesizing again. The same check runs before executing a queued entry. Invalid/mismatched completion markers fail for review. Backend model-mapping changes also fail before inference. Worker failures stay errors until explicit retry.
+
+This is durable admission and practical retry/restart recovery, **not exactly-once synthesis across arbitrary crashes**. A crash before a complete sidecar exists can repeat synthesis under the same job ID; a complete matching sidecar plus valid WAV prevents the normal bookkeeping-crash duplicate. Hardware/filesystem failures, external edits and loss of storage are outside that guarantee. SQLite uses rollback journaling and FULL synchronous writes; keep the database, journal and owner lock on the configured local data volume and back up jobs together with outputs/indexes. Do not run a second server or manually alter its queue while an owner is active.
 
 | Field | Shared validation / meaning |
 | --- | --- |
@@ -33,6 +58,7 @@ A single worker accepts one job; another request returns 409 immediately. Both v
 | `temperature` | Qwen only, default 0.9, 0–2 |
 | `max_tokens` | Default 1000, 50–2000; output-token cap, not requested duration |
 | `output_dir` | Optional absolute directory on server's Mac; defaults to OUTPUT_DIR. Volume and writability checked before inference |
+| `generate_immediately` | Boolean, API default false; true joins priority FIFO for the next slot, never interrupts active inference |
 | `idempotency_key` | Optional 1–128 characters; stable for retries of the same request |
 
 Qwen VoiceDesign handles description+emotion. CustomVoice handles built-in preset speakers with emotion/style/accent instructions and the optional experimental steering pack. Base handles saved/uploaded references. Base accepts no direct emotion instruction: 422 if nonempty. An exact transcript enables in-context reference cloning; without a transcript it uses speaker embedding conditioning. Voice descriptions and accent/emotion are probabilistic; identity is approximate. There is no effective speed control, so the API rejects `speed`.
@@ -66,7 +92,7 @@ Voice names: 1–100 trimmed characters. Catalog description: <=2000. Tags: <=20
 
 ## Errors and local access
 
-422: validation/unsupported control/input/storage error; 409: occupied inference slot or conflicting idempotency key; 413: body too large; 503: incomplete assets (run `make download`); 404: unavailable ID/media. Worker failures appear in job status and health. Unload clears a previous inference error and allows another attempt. Status remains responsive because inference runs off the HTTP event loop.
+422: validation/unsupported control/input/storage error; 409: conflicting idempotency key, unsupported active deletion/retry, or occupied unload slot; 413: body too large; 503: incomplete assets (run `make download`); 404: unavailable ID/media. Worker failures appear in job status and health. Unload clears a previous inference error and allows another attempt. Status remains responsive because inference runs off the HTTP event loop.
 
 Loopback only, local Host allowlist, same-origin writes, no permissive CORS, no remote URL fetching, no external UI resources. This API accepts trusted local output paths and is not authenticated for LAN/internet exposure. Use an explicitly designed authentication/access layer before changing that scope.
 

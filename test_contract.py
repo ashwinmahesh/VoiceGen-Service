@@ -103,7 +103,7 @@ class ContractTests(unittest.TestCase):
         request=Generation(text='Welcome home.',description='A calm baritone.',idempotency_key='old-api')
         legacy={'preset_voice','accent','clone_mode','steering_emotion','steering_strength'}
         import hashlib
-        fingerprint=hashlib.sha256(request.model_dump_json(exclude={'idempotency_key',*legacy}).encode()).hexdigest()
+        fingerprint=hashlib.sha256(request.model_dump_json(exclude={'idempotency_key','generate_immediately',*legacy}).encode()).hexdigest()
         key=hashlib.sha256(b'old-api').hexdigest()
         atomic_json(self.root/'jobs'/f'{identity}.json',{'id':identity,'status':'error','stage':'Old completion','created_at':now(),'updated_at':now()})
         atomic_json(self.root/'idempotency'/f'{key}.json',{'job':identity,'fingerprint':fingerprint})
@@ -167,7 +167,7 @@ class ContractTests(unittest.TestCase):
         self.engine.gate=threading.Event()
         row=self.generate().json();self.assertTrue(self.engine.started.wait(1))
         # The POST has returned, so no HTTP handler owns this work or its capacity.
-        self.assertEqual(self.generate().status_code,409)
+        pending=self.generate();self.assertEqual(pending.status_code,202);self.assertEqual(pending.json()['status'],'queued')
         self.assertEqual(self.client.post('/api/model/unload').status_code,409)
         self.assertTrue(self.client.get('/health').json()['busy'])
         self.engine.gate.set();self.assertEqual(self.finish(row)['status'],'done')
@@ -187,7 +187,11 @@ class ContractTests(unittest.TestCase):
         from voice_catalog import atomic_json,now
         identity='a'*32
         atomic_json(self.root/'jobs'/f'{identity}.json',{'id':identity,'status':'running','stage':'x','created_at':now(),'updated_at':now()})
-        self.manager.recover();self.assertEqual(self.manager.read(identity)['status'],'error')
+        self.manager.close()
+        fresh=JobManager(self.engine,self.root,self.root/'gpu.lock')
+        try:
+            fresh.recover();self.assertEqual(fresh.read(identity)['status'],'error')
+        finally:fresh.close()
     def test_original_preserved_and_working_audio_bounded(self):
         raw=wav(48000,2)
         response=self.client.post('/api/references',files={'file':('stereo.wav',raw)},data={'transcript':'Hello there.'})

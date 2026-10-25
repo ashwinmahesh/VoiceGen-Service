@@ -38,3 +38,7 @@ storage.json
 /.runtime-source
 /.bootstrap
 /.python
+
+# Durable queue lives in DATA_DIR/jobs; also ignore accidental database files.
+*.sqlite3
+*.sqlite3-*
