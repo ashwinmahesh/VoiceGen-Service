@@ -13,9 +13,11 @@ from assets import all_errors
 from capabilities import capabilities, validate_controls
 from jobs import JobManager, BusyError
 import storage
+import pause_edits
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
-from schemas import Generation, Health, Capabilities, Job, Artifact, ArtifactPage, Reference, Unloaded, TagsPage
+from fastapi.exceptions import RequestValidationError
+from schemas import Generation, Health, Capabilities, Job, Artifact, ArtifactPage, Reference, Unloaded, TagsPage, PauseAdjustment
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from body_limit import BodyLimit
 import voice_catalog
@@ -36,6 +38,14 @@ async def lifespan(app):
 app = FastAPI(title='Local Voice Studio API',version='2.1.0',lifespan=lifespan)
 app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
 app.add_middleware(BodyLimit)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request, exc):
+    # Invalid NaN/Infinity inputs cannot be echoed by JSONResponse. Keep errors JSON-safe
+    # and avoid reflecting submitted text/audio metadata in validation responses.
+    return JSONResponse(status_code=422,content={'detail':[
+        {key:error[key] for key in ['loc','msg','type']} for error in exc.errors()]})
 
 
 @app.middleware('http')
@@ -130,6 +140,18 @@ def history(q: str=Query(default='',max_length=300),limit: int=Query(default=24,
 def get_artifact(identity: str):
     try: return storage.read_artifact(identity)
     except (OSError,ValueError,KeyError,RuntimeError): raise HTTPException(404,'Artifact unavailable') from None
+
+
+@app.post('/api/artifacts/{identity}/pauses',status_code=201,response_model=Artifact)
+def adjust_artifact_pauses(identity: str, request: PauseAdjustment):
+    try:
+        return pause_edits.adjust_pauses(identity,request)
+    except pause_edits.PauseEditBusy as exc:
+        raise HTTPException(409,str(exc)) from None
+    except FileNotFoundError:
+        raise HTTPException(404,'Source audio is unavailable; check its storage volume') from None
+    except (OSError,ValueError,KeyError,RuntimeError) as exc:
+        raise HTTPException(422,str(exc)) from None
 
 
 @app.get('/api/metadata/{identity}')

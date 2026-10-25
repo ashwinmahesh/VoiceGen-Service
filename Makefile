@@ -50,7 +50,7 @@ health:
 open:
 	open http://127.0.0.1:$(PORT)/
 test:
-	"$(PYTHON)" -m unittest -v test_contract test_extensions test_storage_configuration
+	"$(PYTHON)" -m unittest -v test_contract test_extensions test_storage_configuration test_pause_edits
 smoke:
 	"$(PYTHON)" smoke_test.py --port $(PORT)
 sync-check:

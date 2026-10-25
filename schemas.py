@@ -127,3 +127,30 @@ class TagCount(BaseModel):
 
 class TagsPage(BaseModel):
     data: list[TagCount]
+
+
+class ReviewedPauseSpan(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    start_seconds: float = Field(ge=0, le=600)
+    end_seconds: float = Field(gt=0, le=600)
+
+    @model_validator(mode='after')
+    def increasing(self):
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError('Each reviewed gap must end after it starts')
+        return self
+
+
+class PauseAdjustment(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    spans: list[ReviewedPauseSpan] = Field(min_length=1, max_length=30)
+    reviewed: Literal[True]
+    minimum_gap_ms: int = Field(default=750, ge=100, le=5000)
+    output_dir: str | None = Field(default=None, max_length=4096)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode='after')
+    def ordered(self):
+        if any(a.end_seconds > b.start_seconds for a,b in zip(self.spans,self.spans[1:])):
+            raise ValueError('Reviewed gaps must be ordered and must not overlap')
+        return self

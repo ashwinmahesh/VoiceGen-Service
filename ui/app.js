@@ -142,6 +142,7 @@ function renderCards() {
     } else {
       const reuse = el('button', 'Reuse settings', 'secondary'); reuse.type = 'button';
       reuse.onclick = () => { restore(row); $('text').focus(); }; actions.append(reuse);
+      const pauses=el('button','Adjust pauses','secondary');pauses.type='button';pauses.onclick=()=>openPauseEditor(row);actions.append(pauses);
     }
     const download = el('a', 'Download WAV', 'secondary');
     download.href = row.audio_url + '?download=true'; download.download = '';
@@ -155,7 +156,42 @@ $('search').oninput = () => {
   searchTimer=setTimeout(()=>loadCollection().catch(exc=>error(exc.message)),250);
 };
 function waveform(peaks){const canvas=$('waveform'),ratio=devicePixelRatio||1;canvas.width=canvas.clientWidth*ratio;canvas.height=110*ratio;const c=canvas.getContext('2d');c.clearRect(0,0,canvas.width,canvas.height);c.fillStyle='#c3b9ff';if(!peaks?.length)return;const step=canvas.width/peaks.length;peaks.forEach((peak,i)=>{const h=Math.max(2*ratio,peak*canvas.height*.9);c.fillRect(i*step,(canvas.height-h)/2,Math.max(1,step*.55),h)})}
-function showResult(row){latest=row;const details=[row.preset_voice?'Preset '+row.preset_voice:'',row.clone_mode==='combined'?'Combined identity and recorded performance':row.clone_mode==='continuation'?'Continued reference performance':'',row.accent?'Accent direction: '+row.accent:'',row.steering_emotion?`Experimental ${row.steering_emotion} steering · ${row.steering_strength}`:''].filter(Boolean);$('direction-summary').textContent=details.join(' · ');$('direction-summary').hidden=!details.length;$('empty').hidden=true;$('working').hidden=true;$('result').hidden=false;$('player').src=row.audio_url;$('download').href=row.audio_url+'?download=true';$('metrics').textContent=`${row.duration.toFixed(1)} seconds · ${row.sample_rate/1000} kHz · Synthesis ${row.generation_seconds}s${row.cold_load?` · Load ${row.load_seconds}s`:``}`;$('result-seed').textContent=`Seed ${row.seed}`;$('path').textContent=row.path;$('truncated').hidden=!row.possibly_truncated;$('save-hint').textContent='Use a clean, natural take as your character reference. Up to the first 30 seconds are saved.';waveform(row.waveform)}
+function showResult(row){latest=row;const details=[row.preset_voice?'Preset '+row.preset_voice:'',row.clone_mode==='combined'?'Combined identity and recorded performance':row.clone_mode==='continuation'?'Continued reference performance':'',row.accent?'Accent direction: '+row.accent:'',row.steering_emotion?`Experimental ${row.steering_emotion} steering · ${row.steering_strength}`:''].filter(Boolean);$('direction-summary').textContent=details.join(' · ');$('direction-summary').hidden=!details.length;$('empty').hidden=true;$('working').hidden=true;$('result').hidden=false;$('player').src=row.audio_url;$('download').href=row.audio_url+'?download=true';$('metrics').textContent=`${row.duration.toFixed(1)} seconds · ${row.sample_rate/1000} kHz · ${row.transformation?`Pause edit ${row.transformation.processing_seconds}s · Original synthesis`:'Synthesis'} ${row.generation_seconds}s${row.cold_load?` · Load ${row.load_seconds}s`:``}`;$('result-seed').textContent=`Seed ${row.seed}`;$('path').textContent=row.path;$('truncated').hidden=!row.possibly_truncated;$('save-hint').textContent='Use a clean, natural take as your character reference. Up to the first 30 seconds are saved.';waveform(row.waveform)}
+let pauseSource=null,pauseSpans=[],pausePreviewEnd=null,pausePreviewTimer=null,pausePendingKey=null,pauseSaving=false;
+function pauseError(message){$('pause-error').textContent=message;$('pause-error').hidden=false}
+function renderPauseSpans(){
+ $('pause-spans').replaceChildren();
+ if(!pauseSpans.length)$('pause-spans').append(el('p','No reviewed gaps selected.','hint'));
+ pauseSpans.forEach((span,index)=>{const row=el('div',null,'dialog-actions');row.append(el('span',`${span.start_seconds.toFixed(3)}–${span.end_seconds.toFixed(3)} s`));
+  const remove=el('button','Remove','secondary');remove.type='button';remove.disabled=pauseSaving;remove.onclick=()=>{pauseSpans.splice(index,1);$('pause-reviewed').checked=false;pausePendingKey=null;renderPauseSpans()};row.append(remove);$('pause-spans').append(row)});
+}
+function openPauseEditor(row){
+ pauseSource=row;pauseSpans=[];pausePendingKey=null;pausePreviewEnd=null;clearTimeout(pausePreviewTimer);$('pause-player').src=row.audio_url;
+ $('pause-source-text').textContent=row.text;$('pause-start').value=$('pause-end').value='0';
+ $('pause-start').max=$('pause-end').max=row.duration;$('pause-minimum').value='750';$('pause-output-dir').value='';
+ $('pause-reviewed').checked=false;$('pause-error').hidden=true;renderPauseSpans();$('pause-editor').showModal();
+}
+$('adjust-pauses').onclick=()=>{if(latest)openPauseEditor(latest)};
+$('pause-player').ontimeupdate=()=>{const player=$('pause-player');$('pause-current-time').textContent=`Playback: ${player.currentTime.toFixed(3)} s`;if(pausePreviewEnd!==null&&player.currentTime>=pausePreviewEnd){player.pause();pausePreviewEnd=null}};
+$('pause-player').onpause=()=>{clearTimeout(pausePreviewTimer);pausePreviewEnd=null};
+$('pause-mark-start').onclick=()=>{$('pause-start').value=$('pause-player').currentTime.toFixed(3)};
+$('pause-mark-end').onclick=()=>{$('pause-end').value=$('pause-player').currentTime.toFixed(3)};
+function selectedPause(){const start=Number($('pause-start').value),end=Number($('pause-end').value);if(!Number.isFinite(start)||!Number.isFinite(end)||start<=0||end<=start||end>=pauseSource.duration||end-start<.02)throw Error('Select an interior quiet gap at least 0.02 seconds long.');return {start_seconds:start,end_seconds:end}}
+$('pause-listen').onclick=async()=>{try{const span=selectedPause();$('pause-player').currentTime=span.start_seconds;pausePreviewEnd=span.end_seconds;clearTimeout(pausePreviewTimer);await $('pause-player').play();pausePreviewTimer=setTimeout(()=>$('pause-player').pause(),Math.max(0,span.end_seconds-$('pause-player').currentTime)*1000)}catch(exc){pauseError(exc.message)}};
+$('pause-add').onclick=()=>{try{const span=selectedPause();if(pauseSpans.length>=30)throw Error('Use up to 30 reviewed gaps per version.');if(pauseSpans.some(s=>span.start_seconds<s.end_seconds&&s.start_seconds<span.end_seconds))throw Error('Selected gaps must not overlap.');pauseSpans.push(span);pauseSpans.sort((a,b)=>a.start_seconds-b.start_seconds);$('pause-reviewed').checked=false;pausePendingKey=null;$('pause-error').hidden=true;renderPauseSpans()}catch(exc){pauseError(exc.message)}};
+$('pause-cancel').onclick=()=>{$('pause-player').pause();$('pause-editor').close()};
+$('pause-editor').addEventListener('close',()=>{$('pause-player').pause();pausePreviewEnd=null;clearTimeout(pausePreviewTimer)});
+$('pause-editor').addEventListener('cancel',event=>{if(pauseSaving)event.preventDefault()});
+$('pause-editor-form').addEventListener('input',()=>{pausePendingKey=null});
+$('pause-editor-form').onsubmit=async event=>{
+ event.preventDefault();if(pauseSaving||!pauseSource)return;
+ if(!pauseSpans.length){pauseError('Add at least one gap after reviewing the playback.');return}
+ if(!$('pause-reviewed').checked){pauseError('Review every selected gap before creating a version.');return}
+ const minimum=Number($('pause-minimum').value);if(!Number.isInteger(minimum)||minimum<100||minimum>5000){pauseError('Choose a total gap from 100 to 5000 milliseconds.');return}
+ pauseSaving=true;for(const id of ['pause-create','pause-cancel','pause-add','pause-minimum','pause-output-dir','pause-reviewed'])$(id).disabled=true;renderPauseSpans();
+ try{pausePendingKey=pausePendingKey||crypto.randomUUID();const row=await post('/api/artifacts/'+pauseSource.id+'/pauses',{spans:pauseSpans,reviewed:true,minimum_gap_ms:minimum,output_dir:$('pause-output-dir').value.trim()||null,idempotency_key:pausePendingKey});pausePendingKey=null;$('pause-editor').close();showResult(row);await refresh();announce('Separate pause-adjusted version ready. Original recording preserved.')}
+ catch(exc){pauseError(exc.message)}finally{pauseSaving=false;for(const id of ['pause-create','pause-cancel','pause-add','pause-minimum','pause-output-dir','pause-reviewed'])$(id).disabled=false;renderPauseSpans()}
+};
 $('reuse').onclick=()=>{if(latest){restore(latest);$('text').focus()}};
 async function watch(identity){if(watching===identity)return;watching=identity;busy=true;controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;const started=Date.now();localStorage.setItem(storageKey+'-job',identity);try{while(true){const job=await api('/api/jobs/'+identity);$('stage').textContent=job.stage;$('elapsed').textContent=`${Math.floor((Date.now()-started)/1000)} seconds elapsed`;if(job.status==='done'){localStorage.removeItem(storageKey+'-job');showResult(job.result);await refresh();announce('Speech ready');break}if(job.status==='error'){localStorage.removeItem(storageKey+'-job');throw Error(job.error);}await new Promise(resolve=>setTimeout(resolve,1500))}}catch(exc){error(exc.message);$('working').hidden=true;$('empty').hidden=!latest;if(latest)showResult(latest)}finally{busy=false;watching=null;controls()}}
 $('form').onsubmit=async event=>{event.preventDefault();if(busy||uploading)return;const request=settings();if(mode==='preset'&&!request.preset_voice){error('Choose an expressive preset voice first.');return}if(mode==='saved'&&!request.voice_id){error('Choose a saved voice first.');return}if(mode==='upload'&&!request.reference_id){error('Choose an audio reference first.');return}busy=true;controls();try{pendingKey=pendingKey||crypto.randomUUID();const job=await post('/api/generate',{...request,idempotency_key:pendingKey});pendingKey=null;watch(job.id)}catch(exc){busy=false;controls();error(exc.message)}};
