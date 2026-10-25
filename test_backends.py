@@ -37,22 +37,72 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(choose_model('voxcpm2','fish',True,input_fn=lambda: self.fail('unexpected prompt')),'fish')
         answers=iter(['typo','3'])
         self.assertEqual(choose_model('voxcpm2',interactive=True,input_fn=lambda:next(answers),stream=io.StringIO()),'chatterbox')
-        master,slave=pty.openpty()
-        try:
-            process=subprocess.Popen([sys.executable,str(PROJECT_ROOT/'startup_select.py'),'serve','--dry-run'],
-                stdin=slave,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-            os.close(slave);slave=None;os.write(master,b'\n')
-            out,err=process.communicate(timeout=10)
-            import config
-            self.assertEqual(process.returncode,0);self.assertEqual(json.loads(out)['model'],config.ORIGINAL_PROFILE['backend'])
-            self.assertIn('Enter =',err)
-            env={**os.environ,'VENV':'/temporary/auto-venv','PORT':'8111'}
-            base=[sys.executable,str(PROJECT_ROOT/'startup_select.py'),'serve','--model','fish','--non-interactive','--dry-run']
-            picked=json.loads(subprocess.check_output(base,env=env,text=True));self.assertIsNone(picked['venv']);self.assertIsNone(picked['port'])
-            picked=json.loads(subprocess.check_output(base+['--keep-venv','--keep-port'],env=env,text=True));self.assertEqual(picked['venv'],env['VENV']);self.assertEqual(picked['port'],'8111')
-        finally:
-            os.close(master)
-            if slave is not None:os.close(slave)
+        import config
+        from startup_select import model_name
+        for action,answer,expected in [('setup','',config.ORIGINAL_PROFILE['backend']),('setup','7','higgs')]:
+            with self.subTest(action=action,answer=answer):
+                master,slave=pty.openpty()
+                try:
+                    process=subprocess.Popen([sys.executable,str(PROJECT_ROOT/'startup_select.py'),action,'--dry-run'],
+                        stdin=slave,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+                    os.close(slave);slave=None;os.write(master,(answer+'\n').encode())
+                    out,err=process.communicate(timeout=10)
+                    self.assertEqual(process.returncode,0);picked=json.loads(out)
+                    self.assertEqual(picked['model'],expected)
+                    self.assertEqual(picked['command'],['make',action+'-selected','MODEL='+expected])
+                    self.assertIn('Enter = '+model_name(config.ORIGINAL_PROFILE['backend']),err)
+                    for backend in BACKENDS:self.assertIn(model_name(backend)+' ['+backend+']',err)
+                finally:
+                    os.close(master)
+                    if slave is not None:os.close(slave)
+        env={**os.environ,'VENV':'/temporary/auto-venv','PORT':'8111'}
+        base=[sys.executable,str(PROJECT_ROOT/'startup_select.py'),'serve','--model','fish','--non-interactive','--dry-run']
+        picked=json.loads(subprocess.check_output(base,env=env,text=True));self.assertIsNone(picked['venv']);self.assertIsNone(picked['port'])
+        picked=json.loads(subprocess.check_output(base+['--keep-venv','--keep-port'],env=env,text=True));self.assertEqual(picked['venv'],env['VENV']);self.assertEqual(picked['port'],'8111')
+
+    def test_serve_menu_contains_only_ready_models_with_available_default(self):
+        import io
+        from startup_select import choose_model
+        output=io.StringIO()
+        self.assertEqual(choose_model('voxcpm2',interactive=True,input_fn=lambda:'',stream=output,
+                                      choices=['voxcpm2','higgs'],serving=True,unavailable={'qwen3':['missing assets']}),'voxcpm2')
+        self.assertIn('VoxCPM2 [voxcpm2] (default)',output.getvalue())
+        self.assertIn('Higgs TTS 3 [higgs]',output.getvalue())
+        self.assertIn('  2. Higgs TTS 3 [higgs]',output.getvalue())
+        self.assertIn('  - Qwen3-TTS [qwen3] — make setup MODEL=qwen3',output.getvalue())
+        self.assertNotIn('  3.',output.getvalue())
+        self.assertIn('not selectable',output.getvalue())
+        answers=iter(['qwen3','2'])
+        self.assertEqual(choose_model('voxcpm2',interactive=True,input_fn=lambda:next(answers),stream=io.StringIO(),
+                                      choices=['voxcpm2','higgs'],serving=True),'higgs')
+        self.assertEqual(choose_model('voxcpm2',interactive=True,input_fn=lambda:'',stream=io.StringIO(),
+                                      choices=['higgs'],serving=True),'higgs')
+        with self.assertRaises(ValueError):choose_model('voxcpm2',choices=[])
+
+    def test_ready_discovery_respects_runtime_and_asset_failures_without_loading(self):
+        import startup_select
+        def errors(root,backend,original,override):
+            return [] if backend in ('voxcpm2','higgs') else ['missing runtime or verified assets']
+        with patch('startup_select.setup_errors',side_effect=errors):
+            ready,unavailable=startup_select.ready_models(PROJECT_ROOT,'voxcpm2')
+        self.assertEqual(ready,['voxcpm2','higgs']);self.assertEqual(len(unavailable),5)
+        self.assertEqual(startup_select.runtime_python(PROJECT_ROOT,'qwen3','voxcpm2'),PROJECT_ROOT/'.venv-mlx/bin/python')
+        self.assertEqual(startup_select.runtime_python(PROJECT_ROOT,'higgs','voxcpm2'),PROJECT_ROOT/'.venv-native/bin/python')
+        self.assertEqual(startup_select.runtime_python(PROJECT_ROOT,'voxcpm2','voxcpm2'),PROJECT_ROOT/'.venv/bin/python')
+        with patch('startup_select.subprocess.run') as run:
+            self.assertTrue(startup_select.setup_errors(PROJECT_ROOT,'higgs','voxcpm2','/missing-voice-menu-fixture'))
+            run.assert_not_called()
+
+    def test_serve_selection_fails_cleanly_before_launch_when_setup_is_missing(self):
+        import io,sys,startup_select
+        with patch.object(sys,'argv',['startup_select.py','serve','--non-interactive']),patch('startup_select.setup_errors',return_value=['incomplete model']),patch('startup_select.os.execvpe') as launch:
+            with self.assertRaisesRegex(SystemExit,'make setup MODEL='):
+                startup_select.main()
+            launch.assert_not_called()
+        with patch.object(sys,'argv',['startup_select.py','serve']),patch('startup_select.sys.stdin.isatty',return_value=True),patch('startup_select.ready_models',return_value=([],{'voxcpm2':['volume is not mounted']})),patch('startup_select.os.execvpe') as launch:
+            with self.assertRaisesRegex(SystemExit,'No set-up voice models are ready'):
+                startup_select.main()
+            launch.assert_not_called()
 
     def test_typed_model_options_inactive_unknown_and_legacy_aliases(self):
         from schemas import generation_metadata
