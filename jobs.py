@@ -6,7 +6,7 @@ import json
 import logging
 import threading
 from uuid import uuid4
-from config import ROOT, GPU_LOCK_FILE, PROFILE
+from config import ROOT, GPU_LOCK_FILE, PROFILE, PROJECT_ROOT
 from voice_catalog import now, atomic_json, IDENTITY
 from storage import persist_artifact
 
@@ -54,12 +54,31 @@ class JobManager:
         fingerprint = hashlib.sha256(request.model_dump_json(exclude={'idempotency_key'}).encode()).hexdigest()
         if path.is_file():
             saved = json.loads(path.read_text())
+            original_backend=json.loads((PROJECT_ROOT/'service.json').read_text())['backend']
+            previous_backend=saved.get('backend')
+            if previous_backend is None:
+                prior=self.read(saved['job'])
+                result=prior.get('result') or {}
+                previous_backend=result.get('backend')
+                if previous_backend is None:
+                    model=result.get('model','').lower()
+                    previous_backend='qwen3' if 'qwen3-tts' in model else 'voxcpm2' if 'voxcpm2' in model else None
+                if previous_backend is None:
+                    previous_backend=original_backend if prior['status']=='done' else PROFILE['backend']
+            if previous_backend != PROFILE['backend']:
+                raise BusyError('This idempotency key belongs to another backend. Recover that job before choosing a new key.')
             if saved['fingerprint'] != fingerprint:
                 added={'preset_voice':None,'accent':'','clone_mode':'reference','steering_emotion':None,'steering_strength':None}
-                legacy = None
+                new={'exaggeration','cfg_weight','emotion_reference_id','emotion_vector','emotion_alpha','duration_factor','interval_silence'}
+                legacy=[]
+                if all(getattr(request,key) is None for key in new):
+                    legacy.append(hashlib.sha256(request.model_dump_json(exclude={'idempotency_key',*new}).encode()).hexdigest())
+                    if all(getattr(request,key)==value for key,value in added.items()):
+                        legacy.append(hashlib.sha256(request.model_dump_json(exclude={'idempotency_key',*new,*added}).encode()).hexdigest())
+                # Also accepts legacy fixtures/protocols that predate only the original added fields.
                 if all(getattr(request,key)==value for key,value in added.items()):
-                    legacy=hashlib.sha256(request.model_dump_json(exclude={'idempotency_key',*added}).encode()).hexdigest()
-                if saved['fingerprint'] != legacy:
+                    legacy.append(hashlib.sha256(request.model_dump_json(exclude={'idempotency_key',*added}).encode()).hexdigest())
+                if saved['fingerprint'] not in legacy:
                     raise BusyError('This idempotency key was used with different settings')
             return self.read(saved['job'])
         return None
@@ -87,7 +106,7 @@ class JobManager:
                 if request.idempotency_key:
                     key = hashlib.sha256(request.idempotency_key.encode()).hexdigest()
                     fingerprint = hashlib.sha256(request.model_dump_json(exclude={'idempotency_key'}).encode()).hexdigest()
-                    atomic_json(self.root/'idempotency'/f'{key}.json',{'fingerprint':fingerprint,'job':identity})
+                    atomic_json(self.root/'idempotency'/f'{key}.json',{'fingerprint':fingerprint,'job':identity,'backend':PROFILE['backend']})
                 self.active = identity
                 self.last_error = None
                 self.executor.submit(self.run,identity,request,effective,reference,transcript,destination,handle,reference_info)
@@ -106,10 +125,10 @@ class JobManager:
             metrics = self.engine.generate(effective,reference,destination,stage,transcript=transcript)
             applied = effective.model_dump(exclude={'idempotency_key'})
             applied['description'] = effective.description if reference is None else ''
-            applied['ref_text'] = (transcript or None) if PROFILE['backend']=='qwen3' or effective.clone_mode=='continuation' else None
+            applied['ref_text'] = (transcript or None) if PROFILE['backend'] in ('qwen3','fish','higgs') or effective.clone_mode=='continuation' else None
             applied['output_dir'] = str(destination.parent)
             row = {**effective.model_dump(exclude={'idempotency_key'}),**metrics,'id':identity,
-                'created_at':now(),'api_version':'2.1.0', 'requested':request.model_dump(exclude={'idempotency_key'}),
+                'created_at':now(),'api_version':'2.1.0','backend':PROFILE['backend'], 'requested':request.model_dump(exclude={'idempotency_key'}),
                 'effective':applied, 'audio_url':f'/api/audio/outputs/{identity}',
                 'path':str(destination),'metadata_path':str(destination.with_suffix('.json')),
                 'reference':{'path':str(reference),'transcript':transcript,**(reference_info or {})} if reference else None}

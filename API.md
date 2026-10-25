@@ -1,6 +1,6 @@
 # Local Voice Studio API 2.1.0
 
-Both projects implement the same OpenAPI schema at `GET /openapi.json` and interactive documentation at `/docs`. The API is a local job protocol, not an OpenAI-compatible speech endpoint. Read `GET /api/capabilities` before building a request; backend-specific controls are optional in the common schema but rejected when unsupported. Unknown request fields return 422.
+The startup-selected studio implements one OpenAPI schema at `GET /openapi.json` and interactive documentation at `/docs`. The API is a local job protocol, not an OpenAI-compatible speech endpoint. Read `GET /api/capabilities` before building a request; backend-specific controls are optional in the common schema but rejected when unsupported. Unknown request fields return 422.
 
 ## Generation
 
@@ -81,3 +81,26 @@ Read [EXTENSIONS.md](EXTENSIONS.md) for provenance, compatibility and limitation
 A preset requires no description. When temperature is omitted with steering, effective temperature is 1.1. Choose `clone_mode: "continuation"` plus a VoxCPM2 voice/reference ID and exact `ref_text` to continue the recorded performance; an empty override with no usable saved transcript returns 422 before inference. New metadata includes `applied_instructions`, extension revision/settings and requested/effective preset, accent and continuation controls. Old 2.0 records remain readable.
 
 VoxCPM2 continuation follows the recorded delivery and accepts no new emotion/accent directions in this service. Use its standard reference mode to apply prompt directions.
+
+
+## Additional startup backends
+
+See BACKENDS.md for exact capabilities, storage/locks, licenses and validation. Start with `make serve MODEL=chatterbox|indextts|moss|fish|higgs PORT=...`; selection is not a per-generation request field. Existing Vox/Qwen profiles are also available. Health/capabilities identify the active backend. Unsupported controls fail with 422 before reserving the GPU.
+
+| Additional field | Accepted backend and behavior |
+| --- | --- |
+| exaggeration | Chatterbox Original only, 0–1, default .5 |
+| cfg_weight | Chatterbox Original only, 0–1, default .5 |
+| emotion_reference_id | IndexTTS only: uploaded reference UUID for emotion; separate from speaker reference |
+| emotion_vector | IndexTTS only: 8 finite 0–1 numbers in happy/angry/sad/afraid/disgusted/melancholic/surprised/calm order, sum <=1; mutually exclusive with emotion_reference_id |
+| emotion_alpha | IndexTTS only, 0–1, default 1 when an emotion source is selected; requires a source |
+| duration_factor | IndexTTS only, .7–1.5, default 1; higher is slower |
+| interval_silence | IndexTTS only, 0–2000 ms, default 400; between upstream segments, without automatic sentence splitting |
+
+Chatterbox/Index require a voice/reference; neither accepts prompt-based emotion/accent, presets, reference transcripts or Vox clone modes. Chatterbox fixes max_tokens at 1000 (other values rejected). Index max_tokens is 50–1500 per segment, and requires an explicit supported language. MOSS requires a description and English/Chinese language, supports voice directions as design instructions, rejects references, and limits text to 500 characters. MOSS max_tokens maps to audio frames, with upstream text-derived minimum behavior documented in capabilities.
+
+Fish/Higgs require a reference plus exact saved/override transcript. Their emotion/prosody/pause controls are explicit inline text tags, not the shared emotion/accent fields. The UI shows the appropriate syntax; the service preserves submitted text. The wrapper exposes one reference and offline WAV jobs. Index phoneme annotations also remain explicit in text; optional normalization is disabled.
+
+Native MOSS/Higgs processes release their models after every job, so model_loaded=false while idle is correct. Their load_seconds=null and generation_seconds include startup/load/synthesis; timing_scope explains this. peak_process_rss_gb measures native child peak RSS. Torch metadata distinguishes current MPS active/driver allocations from process-lifetime peak RSS; none is a claimed peak system-RAM measurement. Older validation records retain current_device_memory_gb, meaning end-of-job MPS driver allocation. Requested and effective settings remain distinct. Idempotency records include backend identity; a key from another backend returns 409 rather than replaying the wrong voice job.
+
+A second process cannot own the same DATA_DIR: its lifetime lock fails before restart recovery. A port collision also fails before recovery. Keep old active installations and isolated validation jobs on distinct data roots. WEIGHTS_DIR can point at shared immutable model files without sharing JobManagers or copying weights.

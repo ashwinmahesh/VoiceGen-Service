@@ -8,34 +8,48 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage
-from engine import Engine
+from engine import create_engine
 from assets import all_errors
+from runtime_checks import runtime_errors
 from capabilities import capabilities, validate_controls
 from jobs import JobManager, BusyError
 import storage
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
 from schemas import Generation, Health, Capabilities, Job, Artifact, ArtifactPage, Reference, Unloaded, TagsPage
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from body_limit import BodyLimit
 import voice_catalog
 from voice_catalog import SaveVoice, VoiceUpdate, Voice, VoicePage
 
-engine = Engine()
+engine = create_engine()
 manager = JobManager(engine)
 
 
 @asynccontextmanager
 async def lifespan(app):
     prepare_storage()
-    manager.recover()
-    yield
-    manager.executor.shutdown(wait=True)
+    from data_owner import own_data_directory
+    with own_data_directory(ROOT):
+        manager.recover()
+        try:
+            yield
+        finally:
+            manager.executor.shutdown(wait=True)
 
 
 app = FastAPI(title='Local Voice Studio API',version='2.1.0',lifespan=lifespan)
 app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
 app.add_middleware(BodyLimit)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request, exc):
+    # Invalid NaN/Infinity inputs cannot be echoed by JSONResponse. Keep errors JSON-safe
+    # and avoid reflecting submitted text/audio metadata in validation responses.
+    return JSONResponse(status_code=422,content={'detail':[
+        {key:error[key] for key in ['loc','msg','type']} for error in exc.errors()]})
 
 
 @app.middleware('http')
@@ -72,12 +86,13 @@ def get_capabilities(): return capabilities()
 @app.get('/health',response_model=Health)
 def health():
     errors = all_errors()
+    runtime = runtime_errors()
     status = manager.stage
-    if errors: status = 'error'
+    if errors or runtime: status = 'error'
     elif not manager.active and not manager.unloading and not manager.last_error:
         status = 'ready' if engine.model is not None else 'unloaded'
     return Health(status=status,service=PROFILE['id'],name=PROFILE['name'],project=str(PROJECT_ROOT),
-        storage=str(ROOT),downloaded=not errors,asset_errors=errors,model_loaded=engine.model is not None,
+        storage=str(ROOT),downloaded=not errors,asset_errors=errors,runtime_errors=runtime,model_loaded=engine.model is not None,
         loaded_variant=engine.variant,busy=bool(manager.active or manager.unloading),
         active_job=manager.active,last_error=manager.last_error)
 
@@ -99,8 +114,12 @@ def generate(request: Generation):
             effective = effective.model_copy(update={'description':source.get('design_description',source.get('description',''))})
         if effective.clone_mode=='continuation' and not transcript.strip():
             raise ValueError('Continuation requires the exact transcript of the reference recording')
-        errors = all_errors()
-        if errors: raise HTTPException(503,'Incomplete setup. Run make download. '+ '; '.join(errors))
+        if PROFILE['backend'] in ('fish','higgs') and reference and not transcript.strip():
+            raise ValueError('This backend requires the exact reference transcript')
+        if effective.emotion_reference_id:
+            asset_path('references',effective.emotion_reference_id)
+        errors = all_errors()+runtime_errors()
+        if errors: raise HTTPException(503,'Incomplete setup. Run make setup for the selected MODEL. '+ '; '.join(errors))
         destination = storage.output_folder(request.output_dir)
         return manager.submit(request,effective,reference,transcript,destination,reference_info)
     except BusyError as exc:
@@ -256,5 +275,12 @@ if __name__ == '__main__':
     import uvicorn
     parser = argparse.ArgumentParser()
     parser.add_argument('--port',type=int,default=DEFAULT_PORT)
+    parser.add_argument('--backend',choices=__import__('backend_selection').BACKENDS)
     args = parser.parse_args()
+    # Fail before lifespan recovery when another listener already owns the port.
+    import socket
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+        try:probe.bind(('127.0.0.1',args.port))
+        except OSError:raise SystemExit(f'Port {args.port} is occupied; select another port or inspect the existing service.') from None
     uvicorn.run(app,host='127.0.0.1',port=args.port,workers=1)

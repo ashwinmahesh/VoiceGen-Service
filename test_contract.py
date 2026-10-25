@@ -17,7 +17,7 @@ import server
 import storage
 from jobs import JobManager
 from schemas import Generation
-from config import PROJECT_ROOT
+from config import PROJECT_ROOT, ROOT
 
 
 def wav(rate=16000,channels=1,seconds=2):
@@ -41,7 +41,7 @@ class FakeEngine:
 
 class ContractTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory(dir=PROJECT_ROOT/'cache/tmp')
+        self.tmp=tempfile.TemporaryDirectory(dir=ROOT/'cache/tmp')
         self.root=Path(self.tmp.name)
         for name in ['outputs','voices','references/originals','jobs','artifact-index','idempotency','cache/tmp']:
             (self.root/name).mkdir(parents=True,exist_ok=True)
@@ -225,7 +225,7 @@ class AdapterTests(unittest.TestCase):
 class AssetTests(unittest.TestCase):
     def test_retry_and_checksum_completion(self):
         import assets,download
-        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT/'cache/tmp') as tmp:
+        with tempfile.TemporaryDirectory(dir=ROOT/'cache/tmp') as tmp:
             root=Path(tmp);blob=b'{"model_type":"fake"}'
             spec={'test':{'repo':'fake/repo','revision':'abc','subdir':'','files':[{'path':'config.json','size':len(blob),
                 'sha256':hashlib.sha256(blob).hexdigest()}]}}
@@ -254,7 +254,7 @@ class AssetTests(unittest.TestCase):
             self.assertFalse(manage.verified_pid(123,8003))
     def test_appledouble_cleanup_preserves_other_files(self):
         from clean_env import clean_appledouble
-        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT/'cache/tmp') as tmp:
+        with tempfile.TemporaryDirectory(dir=ROOT/'cache/tmp') as tmp:
             root=Path(tmp)
             (root/'._fake').write_bytes(b'not metadata')
             (root/'._model.safetensors').write_bytes(b'\x00\x05\x16\x07'+b'hello')

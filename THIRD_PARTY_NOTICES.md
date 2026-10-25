@@ -23,3 +23,8 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+## Startup backend additions
+
+See BACKENDS.md and third_party/ for full exact upstream license copies. Chatterbox official code/weights and audio.cpp use MIT; MOSS VoiceGenerator and its separate v1 codec cards declare Apache-2.0. IndexTTS uses the custom Bilibili model-use license (including output and downstream conditions), Fish S2 Pro the Fish Audio Research License, and Higgs TTS 3 the Boson research/noncommercial license with conditional creator grant. These are not interchangeable MIT/Apache licenses. Pinned conversion hashes do not establish an unpublished source-conversion revision. Dependencies retain their own bundled notices. No private voice/media/catalog files are distributed.

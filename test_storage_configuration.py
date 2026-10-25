@@ -37,6 +37,16 @@ class StorageConfigurationTest(unittest.TestCase):
             self.assertFalse((project/'storage.json').exists())
             self.assertFalse((project/'weights').is_symlink())
 
+    def test_setup_retry_preserves_explicit_backend_asset_mappings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project=Path(tmp).resolve()
+            mappings={'backend_weights':{'qwen3':'/absolute/other/weights'},
+                      'backend_extensions':{'qwen3':'/absolute/other/extensions'}}
+            (project/'storage.json').write_text(json.dumps(mappings))
+            configure(project,project,project/'gpu.lock')
+            settings=json.loads((project/'storage.json').read_text())
+            for key,value in mappings.items():self.assertEqual(settings[key],value)
+
     def test_unavailable_volume_is_reported_before_setup(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch('configure_storage.validate_mount', side_effect=RuntimeError('Storage volume is not mounted')):

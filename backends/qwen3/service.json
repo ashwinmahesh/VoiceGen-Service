@@ -1,0 +1,13 @@
+{
+  "id": "qwen3-tts",
+  "name": "Qwen3-TTS",
+  "backend": "qwen3",
+  "port": 8004,
+  "quantization": "8-bit",
+  "sample_rate": 24000,
+  "modes": {
+    "design": "design",
+    "reference": "base",
+    "preset": "custom"
+  }
+}

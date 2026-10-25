@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 import urllib.request
-from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage
+from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, BACKEND, prepare_storage
 
 
 def health(port):
@@ -43,6 +43,7 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('action',choices=['start','stop','status','health'])
     parser.add_argument('--port',type=int,default=DEFAULT_PORT)
+    parser.add_argument('--backend',choices=__import__('backend_selection').BACKENDS)
     args=parser.parse_args()
     prepare_storage()
     pidfile=ROOT/'logs'/f'server-{args.port}.pid'
@@ -73,7 +74,8 @@ def main():
         except OSError: raise SystemExit(f'Port {args.port} is occupied; select another PORT.')
     log=ROOT/'logs/server.log'
     with log.open('a') as stream:
-        process=subprocess.Popen([sys.executable,'-u',str(PROJECT_ROOT/'server.py'),'--port',str(args.port)],
+        process=subprocess.Popen([sys.executable,'-u',str(PROJECT_ROOT/'server.py'),'--port',str(args.port)] +
+                                 (['--backend',BACKEND] if BACKEND else []),
             cwd=PROJECT_ROOT,stdin=subprocess.DEVNULL,stdout=stream,stderr=stream,start_new_session=True)
     pidfile.write_text(str(process.pid))
     for _ in range(100):

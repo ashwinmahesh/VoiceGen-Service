@@ -1,9 +1,9 @@
 ---
-name: voxcpm2
-description: Operate the local VoxCPM2 Voice Studio to design voices, direct supported emotion, synthesize speech, and manage saved named/tagged reference voices. Use for this existing server rather than rebuilding it.
+name: local-voice-studio
+description: Operate Local Voice Studio with a startup-selected voice backend, truthful model capabilities, durable speech jobs and saved reference voices.
 ---
 
-# VoxCPM2 Voice Studio
+# Local Voice Studio
 
 Locate the checkout from the user's location or service.json with the expected name; do not assume an alias or this Mac's paths. Read README.md and API.md. Read GET /health and /api/capabilities on the configured port; fetch /openapi.json for the authoritative schema. Preserve model mode, recordings, catalogs and active work.
 
@@ -24,3 +24,14 @@ Run make test for no-GPU validation and make smoke for one small real inference 
 ## Expressiveness additions
 
 Read EXTENSIONS.md and the live API 2.1 capabilities. Qwen may offer preset_voice and the experimental steering_emotion/steering_strength fields only when its CustomVoice checkpoint/pack is installed. Do not apply these vectors to Base or VoiceDesign. Accent is a literal prompt direction in supported modes, not a trained accent adapter. VoxCPM2 continuation requires a reference plus its exact transcript and uses prompt_audio/prompt_text; default reference mode remains available. Do not infer that a language LoRA or unrelated runtime extension can be loaded by MLX. Inspect applied settings and decode small real outputs after changes; do not claim perceptual improvement without listening.
+
+
+## Startup selection
+
+Read BACKENDS.md. Select one MODEL at startup: voxcpm2, qwen3, chatterbox, indextts, moss, fish or higgs. Use the matching Python/runtime environment and lock. No MODEL preserves the original profile/layout. WEIGHTS_DIR reuses existing immutable model files independently of DATA_DIR. Keep source/env/native builds internal and model/cache/private data in configured external storage. Missing linked volumes fail without fallback downloads. A fresh make setup asks once for storage; Enter means project-local. DATA_DIR or NONINTERACTIVE=1 avoids prompts.
+
+Do not run two JobManagers against one DATA_DIR. The lifetime owner lock protects recovery; the shared GPU lock covers all actual load/generation/unload work. Native MOSS/Higgs use one Metal subprocess per job and report model_loaded=false between jobs. Their timing includes cold load; do not compare it as warm synthesis. Preserve native logs for errors. Do not disable memory safeguards or stop unrelated listeners.
+
+Chatterbox Original supports reference cloning/exaggeration/CFG with a fixed1000-token output ceiling, without prompt emotion/accent. Index2.5 supports reference cloning plus separate emotion recording or vector and duration/segment-silence controls, without installed text-to-emotion guidance. Both are experimental on24GB due to observed high MPS driver allocations and slow inference; allocator figures are not physical-RAM peak measurements. MOSS designs from descriptions, cannot clone references, and does not lock identity across lines. Fish/Higgs clone with reference+exact transcript and explicit inline emotion/prosody tags in text. Reject unsupported controls; do not silently rewrite supplied speech or pretend a supported language guarantees a Romanian accent.
+
+Retain exact Bilibili/Fish/Boson research/noncommercial terms and output/attribution conditions as documented. No commercial-use confirmation is required for already authorized personal research use. Copying a venv is not a portable deployment: rebuild from a permanent internal interpreter and the pinned lock. Reuse SSD model paths and rebuild native source at its final internal location so deployment does not depend on an isolated worktree.

@@ -21,6 +21,13 @@ class Generation(BaseModel):
     steps: int | None = Field(default=None, ge=1, le=30)
     guidance: float | None = Field(default=None, ge=1, le=5)
     temperature: float | None = Field(default=None, ge=0, le=2)
+    exaggeration: float | None = Field(default=None, ge=0, le=1)
+    cfg_weight: float | None = Field(default=None, ge=0, le=1)
+    emotion_reference_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
+    emotion_vector: list[float] | None = Field(default=None, min_length=8, max_length=8)
+    emotion_alpha: float | None = Field(default=None, ge=0, le=1)
+    duration_factor: float | None = Field(default=None, ge=0.7, le=1.5)
+    interval_silence: int | None = Field(default=None, ge=0, le=2000)
     max_tokens: int = Field(default=1000, ge=50, le=2000)
     output_dir: str | None = Field(default=None, max_length=4096)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
@@ -29,6 +36,14 @@ class Generation(BaseModel):
     def combinations(self):
         if not self.text.strip():
             raise ValueError('Enter some text to speak')
+        if self.emotion_vector is not None:
+            import math
+            if any(not math.isfinite(v) or not 0 <= v <= 1 for v in self.emotion_vector):
+                raise ValueError('Emotion vector needs eight finite values between 0 and 1')
+            if sum(self.emotion_vector) > 1:
+                raise ValueError('Emotion vector sum must not exceed 1')
+        if self.emotion_reference_id and self.emotion_vector is not None:
+            raise ValueError('Choose an emotion reference or emotion vector')
         if sum(bool(x) for x in [self.voice_id,self.reference_id,self.preset_voice]) > 1:
             raise ValueError('Choose a saved voice or uploaded reference')
         if not self.voice_id and not self.reference_id and not self.preset_voice and not self.description.strip():
@@ -62,6 +77,7 @@ class Health(BaseModel):
     storage: str
     downloaded: bool
     asset_errors: list[str]
+    runtime_errors: list[str] = Field(default_factory=list)
     model_loaded: bool
     loaded_variant: str | None
     busy: bool

@@ -34,3 +34,7 @@ storage.json
 /loras
 /image-index
 /.venv
+/.venv-*
+/.runtime-source
+/.bootstrap
+/.python
