@@ -73,6 +73,8 @@ def main():
         try: probe.bind(('127.0.0.1',args.port))
         except OSError: raise SystemExit(f'Port {args.port} is occupied; select another PORT.')
     log=ROOT/'logs/server.log'
+    from license_notices import warn_at_startup
+    warn_at_startup(PROFILE['backend'])
     with log.open('a') as stream:
         process=subprocess.Popen([sys.executable,'-u',str(PROJECT_ROOT/'server.py'),'--port',str(args.port)] +
                                  (['--backend',BACKEND] if BACKEND else []),

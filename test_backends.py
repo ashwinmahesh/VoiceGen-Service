@@ -124,7 +124,7 @@ class BackendTests(unittest.TestCase):
 
     def test_truthful_nonblocking_model_license_notices(self):
         from license_notices import notice_for
-        self.assertFalse(notice_for('voxcpm2'));self.assertFalse(notice_for('chatterbox'))
+        for backend in ['voxcpm2','qwen3','chatterbox','moss']:self.assertFalse(notice_for(backend))
         self.assertIn('commercial',notice_for('fish')['notice'])
         self.assertIn('Creator Use Grant',notice_for('higgs')['notice'])
         self.assertIn('100 million',notice_for('indextts')['notice'])
@@ -133,6 +133,43 @@ class BackendTests(unittest.TestCase):
             specs=json.loads((PROJECT_ROOT/'backends'/backend/'model_specs.json').read_text())
             with patch('capabilities.PROFILE',self.profile(backend)),patch('capabilities.MODEL_SPECS',specs):
                 self.assertIn('license_url',capabilities.capabilities().models[backend])
+                self.assertEqual(capabilities.capabilities().models[backend]['commercial_use_notice'],notice_for(backend)['commercial_use_notice'])
+
+    def test_license_warning_at_every_startup_is_conditional_and_nonblocking(self):
+        import asyncio,logging,server
+        from contextlib import nullcontext
+        from license_notices import notice_for
+        async def start_twice():
+            for _ in range(2):
+                async with server.lifespan(server.app):pass
+        for backend in BACKENDS:
+            with self.subTest(backend=backend),patch('server.PROFILE',self.profile(backend)),patch('server.prepare_storage'),patch('server.manager',Mock()) as manager,patch('data_owner.own_data_directory',side_effect=lambda root:nullcontext(object())):
+                notice=notice_for(backend)
+                if notice:
+                    with self.assertLogs(level=logging.WARNING) as output:asyncio.run(start_twice())
+                    self.assertEqual(len(output.output),2)
+                    for message in output.output:
+                        self.assertIn('MODEL LICENSE WARNING',message)
+                        self.assertIn(notice['license_url'],message)
+                        self.assertIn(notice['commercial_use_notice'],' '.join(message.splitlines()[2:-2]))
+                else:
+                    with self.assertNoLogs(level=logging.WARNING):asyncio.run(start_twice())
+                self.assertEqual(manager.recover.call_count,2)
+                self.assertEqual(manager.close.call_count,2)
+
+    def test_managed_start_surfaces_license_warning_in_launching_terminal(self):
+        import io,manage,sys
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'logs').mkdir()
+            state={'service':'fish','project':str(PROJECT_ROOT),'storage':str(root)}
+            process=Mock(pid=12345);process.poll.return_value=None
+            with patch.object(sys,'argv',['manage.py','start','--port','8113']),patch('manage.PROFILE',self.profile('fish')),patch('manage.ROOT',root),patch('manage.prepare_storage'),patch('manage.health',side_effect=[None,state]),patch('manage.socket.socket'),patch('manage.subprocess.Popen',return_value=process) as launch,redirect_stdout(io.StringIO()):
+                with self.assertLogs(level='WARNING') as output:manage.main()
+                self.assertIn('MODEL LICENSE WARNING',output.output[0])
+                self.assertIn('Fish S2 Pro',output.output[0])
+                self.assertEqual((root/'logs/server-8113.pid').read_text(),'12345')
+                launch.assert_called_once()
 
     def test_selection_precedence_and_unknown(self):
         with patch.dict(os.environ,{'MODEL_BACKEND':'fish'}):

@@ -159,6 +159,8 @@ New backend-specific options use typed objects named by the exact API model ID: 
 
 Restricted-model notices appear at every server startup, visibly in the webpage, and under `models.<model-id>` in capabilities, with authoritative license links and bundled source texts. They do not add an acknowledgment gate. Fish requires a separate license for commercial model use. Higgs includes a conditional grant for monetized creator content with prominent acknowledgment, while hosting/product integration and other uses outside that grant require a separate license. Index uses custom terms with a separate-license threshold for very large organizations, not a blanket noncommercial restriction. Read the full model-specific terms; reference uploads are not reclassified as generated outputs.
 
+`models.<model-id>.commercial_use_notice` is the concise, model-specific summary printed in the startup warning banner. `notice` retains the fuller summary, alongside `license`, `license_url` and `license_file`. Permissive models omit these warning fields. Managed `make start` prints the same banner to the launching terminal and the server log; repeated starts that reuse an existing server do not represent a new startup.
+
 ## Per-model performance controls
 
 Defaults remain unchanged. A more dramatic take can lose the recorded accent; compare raw whole-line takes and rate accent separately. Vox combined cloning retains recorded context without added instructions; the reviewed pause editor remains the way to enforce a reviewed minimum total gap.

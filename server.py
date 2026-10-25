@@ -3,7 +3,6 @@ import argparse
 import asyncio
 from contextlib import asynccontextmanager
 import json
-import logging
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -31,9 +30,8 @@ manager = JobManager(engine, db_path=PROJECT_ROOT/'state/queue.sqlite3')
 @asynccontextmanager
 async def lifespan(app):
     prepare_storage()
-    from license_notices import notice_for
-    notice=notice_for(PROFILE['backend'])
-    if notice:logging.warning('%s License: %s',notice['notice'],notice['license_url'])
+    from license_notices import warn_at_startup
+    warn_at_startup(PROFILE['backend'])
     from data_owner import own_data_directory
     with own_data_directory(ROOT) as owner:
         manager.data_owner = owner
