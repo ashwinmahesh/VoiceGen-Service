@@ -1,0 +1,27 @@
+"""Explicitly copy/check only common source. Never touches models, config, or user data."""
+import argparse
+from pathlib import Path
+import shutil
+from config import PROJECT_ROOT
+
+SHARED = ['config.py','assets.py','download.py','schemas.py','capabilities.py','engine.py','storage.py',
+          'jobs.py','body_limit.py','server.py','voice_catalog.py','preflight.py','manage.py','Makefile',
+          '.gitignore','clean_env.py','requirements.txt','requirements.lock.txt','smoke_test.py',
+          'sync_source.py','storage.json.example','configure_storage.py','test_storage_configuration.py','directions.py','emotion_steering.py','extension_assets.py','test_extensions.py','test_contract.py','ui/index.html','ui/app.js','API.md','EXTENSIONS.md','THIRD_PARTY_NOTICES.md']
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--check',action='store_true')
+    parser.add_argument('peer',type=Path)
+    args=parser.parse_args()
+    if not (args.peer/'service.json').is_file():raise SystemExit('Peer service.json is required')
+    differences=[]
+    for name in SHARED:
+        source,target=PROJECT_ROOT/name,args.peer/name
+        if args.check:
+            if not target.is_file() or source.read_bytes()!=target.read_bytes():differences.append(name)
+        else:
+            target.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(source,target)
+    print('Differences: '+', '.join(differences) if differences else 'Shared source matches.' if args.check else 'Shared source copied.')
+    raise SystemExit(bool(differences))

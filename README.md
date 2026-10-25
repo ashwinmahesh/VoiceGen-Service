@@ -1,0 +1,87 @@
+# VoxCPM2 Voice Studio
+
+A local VoxCPM2 speech server for Apple Silicon, with voice design, reference cloning, performance directions, a reusable voice library and a browser UI. VoxCPM2 and Qwen3-TTS share byte-identical server, API schema and webpage source. Each has independent weights, environment, recordings, catalog and configuration. Read [API.md](API.md) for the shared protocol; live capability data selects the controls that actually work.
+
+## Setup and storage
+
+Tested on this Mac: Apple M6, 24 GB unified memory, macOS, Python 3.14, MLX 0.32.4, MLX Audio 0.6.1. `requirements.lock.txt` pins all installed Python dependencies. Use an Apple Silicon macOS interpreter for this lockfile. Server source, UI, documentation and the Python virtual environment live in `~/Documents/models/<service-name>`. Model weights, extension vectors, caches, temporary files, recordings, outputs and durable catalog/job data stay in `/Volumes/ASH-SSD/models/<service-name>`. No model weights were copied to internal storage. Python's base Homebrew framework remains at its installed location.
+
+On this Mac the projects are `~/Documents/models/VoxCPM2` and `~/Documents/models/Qwen3-TTS`. Each ignored `storage.json` selects its existing SSD `data_dir` and the shared SSD `gpu_lock_file`. Both direct Python commands and Make use that data setting; explicit DATA_DIR/GPU_LOCK_FILE environment or Make overrides take precedence. A fresh clone or ZIP works with ordinary `make setup`: on first terminal use it asks for a model/data folder. Press Enter to keep it inside the project, or enter another absolute folder to create data symlinks. Retries remember that choice. No ASH-SSD path or manual configuration file is required. For scripts or AI tools use `make setup NONINTERACTIVE=1` to select the default without a question, or supply an explicit DATA_DIR to select external storage. With no terminal, setup also uses the default without blocking. To use external storage, run `make setup DATA_DIR=/Volumes/YourDrive/models/service-name`; setup validates the mount, creates data links, and saves the choice in ignored storage.json so later `make start` uses it automatically. `make configure-storage DATA_DIR=...` configures storage without installing or downloading. Existing local data or links to another destination are preserved and reported for explicit migration. Convenience data-directory links expose existing SSD files from the project; preserve their targets. The venv itself is local. A disconnected linked volume fails before model downloads; there is no fallback download to the internal drive.
+
+Prerequisites: Apple Silicon macOS, Git, Make, and Python 3.14. The default interpreter is Homebrew’s `/opt/homebrew/bin/python3.14`; install it with `brew install python@3.14`, or pass `BOOTSTRAP_PYTHON=/absolute/path/to/python3.14`.
+
+```sh
+cd /absolute/path/to/project
+make setup
+make start
+make open
+make health
+```
+
+`make setup-env` installs only the runtime. `make download` resumes pinned required files and verifies sizes, JSON, SHA256 for LFS assets and Git blob SHA1 for small files. `model_specs.json` records repository revisions, expected files, byte counts and upstream hashes. A complete checksum manifest is written only after successful verification; corrupted required files are removed on a failed verification so rerunning download repairs them. `make verify` checks all hashes again. Runtime readiness compares the manifest, required file sizes and modification times and parses JSON, without repeatedly hashing gigabytes on every health request. Serving is offline and never downloads weights implicitly.
+
+Check that the SSD is mounted before setup/start; paths under `/Volumes` are validated before directories are created. Moving DATA_DIR does not migrate existing weights or catalogs: explicitly copy the intended data or run download in that data root. Keep model weights under DATA_DIR/weights. Leave extra space for the Python environment, download staging, allocator/context/decoder memory and generated audio, beyond the weight bytes.
+
+```sh
+# An explicit DATA_DIR skips the first-use question. All overrides flow through setup, serve, health and smoke:
+make setup BOOTSTRAP_PYTHON=/path/to/python3.14 VENV=/absolute/local/venv DATA_DIR=/absolute/ssd/data
+make start VENV=/absolute/local/venv DATA_DIR=/absolute/ssd/data OUTPUT_DIR=/absolute/ssd/takes PORT=8014
+make health VENV=/absolute/local/venv DATA_DIR=/absolute/ssd/data PORT=8014
+```
+
+`clean_env.py` removes only validated AppleDouble metadata sidecars from the environment after pip installation. On exFAT, macOS `._*.py` files can otherwise break Transformers module discovery. The downloader and loader also remove validated AppleDouble sidecars from weight folders, because Qwen scans all decoder safetensors files. If that error returns, run `make setup-env` or `VENV/bin/python clean_env.py /absolute/path/to/venv`. Do not use arbitrary recursive deletion commands on recordings or weights.
+
+## Run and stop
+
+`make serve` retains a foreground process; Ctrl-C stops it. `make start` explicitly starts a managed background process, reuses a matching instance, and records its PID in DATA_DIR/logs. `make stop` checks identity, project/data root, command, cwd and listening PID before stopping a managed idle instance. It refuses unrelated listeners and busy instances. `make status` displays state; `make health` fails for offline/mismatched/error/incomplete services. No login item or automatic launch service is installed. `Start Voice Studio.command` runs the explicit background start/open commands.
+
+Default port comes from service.json: VoxCPM2 8003; Qwen3-TTS 8004. UI at `http://127.0.0.1:PORT/`, OpenAPI at `/openapi.json`, interactive docs at `/docs`. Both run on loopback with one worker. Their local storage settings preserve the shared GPU reservation at `/Volumes/ASH-SSD/models/.voice-studio/gpu.lock`, configurable using GPU_LOCK_FILE; this prevents overlapping voice jobs, but does not unload another process's resident model or coordinate other model servers. Release memory in idle servers before another memory-heavy task. Unrelated image servers are never stopped or modified.
+
+## Use
+
+Describe a voice, choose emotion/delivery and enter a short line. Generate, play/download the WAV, then save a named voice with description and tags. Use the searchable, paginated catalog to reuse the recording for more lines; editing catalog details preserves the original design and audio. Uploads preserve originals and create bounded normalized copies. Qwen accepts optional exact reference transcripts; these can be edited in saved voice details. History search/pagination includes custom output destinations. Reuse settings fills the form; submission creates the new take.
+
+```sh
+curl -s http://127.0.0.1:8003/api/capabilities
+curl -s http://127.0.0.1:8003/api/generate -H 'Content-Type: application/json' \
+  -d '{"text":"Welcome home.","description":"A warm, rich baritone.","emotion":"Quietly amused.","max_tokens":500,"idempotency_key":"welcome-take-1"}'
+# Poll the returned ID:
+curl -s http://127.0.0.1:8003/api/jobs/JOB_ID
+```
+
+Use port 8004 for Qwen. The shared schema deliberately rejects unsupported controls. VoxCPM2 supports description and reference-conditioned emotion, steps and guidance. Qwen VoiceDesign supports description+emotion; Qwen Base reuses saved/uploaded recordings and does not accept direct emotion instructions. Qwen switches checkpoints automatically, unloading the previous variant first. It uses transcript-assisted cloning when an exact transcript is available, or speaker embedding conditioning otherwise. Voice/accent/emotion matching is approximate and should be auditioned. No speed control or speech streaming endpoint is exposed. Token caps may cut off long passages; start short. Full limits and retry/error semantics are in API.md.
+
+Jobs, WAV/JSON results, voice samples, tags and reference transcripts persist locally. A client timeout does not cancel the job. Poll its ID or retry the same request with the same idempotency key; a new key can generate a duplicate. On restart, unfinished jobs are marked interrupted. Model loading time is separate from synthesis time. Metadata reports actual sample rate/duration/channels, requested/effective settings, model/revision/runtime, timings and waveform peaks. Existing pre-v2 outputs/voices are retained and supported; legacy records naturally lack the newer provenance fields.
+
+## Verify and maintain
+
+```sh
+make test             # meaningful fake backend/download/API/lifecycle tests; no weights/GPU
+make smoke            # short real speech, needs running server and downloaded assets
+make smoke PORT=8004  # from the Qwen checkout
+make verify           # full model-file checksums
+make sync-check PEER=/absolute/path/to/other/voice/project
+```
+
+Tests cover strict validation, both adapter mappings, capability restrictions, download retry/completion, health errors, custom folders and restart lookup, durable/idempotent jobs, busy/disconnected-client capacity, cross-service reservation, upload decoded/body bounds and original preservation, catalog editing/search/reuse, missing media and source-only ignore rules. Smoke decodes the actual result, checks finite/nonsilent audio, and records metrics under logs. It does not establish perceptual accent/identity/emotion quality: listen in the webpage.
+
+The two projects vendor the same small source set for independent operation. Edit one, run its tests, then explicitly run `VENV/bin/python sync_source.py /absolute/peer/path`, test the peer and compare live `/openapi.json`. The allowlist excludes service.json, model_specs.json, storage.json, README, skills, all data and environments; it includes storage.json.example. Keep README/profile skills aligned when changing behavior. `API.md` is shared. Do not create a runtime dependency on the sibling project.
+
+Troubleshooting: missing assets -> `make download`; wrong-platform preflight -> choose a compatible runtime; occupied port -> inspect the listener or choose PORT; inference failure -> inspect job/log, release model memory, shorten text or lower the effective output-token cap, then retry deliberately. Do not infer cancellation from timeout. If an external output volume disappears, remount it; catalog skips missing audio. A completion-index write failure can leave a complete WAV/JSON pair at its custom destination: preserve and inspect it before retrying. Port checks and defaults do not grant permission to stop another model server.
+
+Keep `.venv`, weights, cache, logs, outputs, references, voices, jobs, idempotency and artifact-index directories out of Git. No automatic cleanup, cloud upload, commit, push or sharing occurs. Back up recordings, sidecars, catalogs and indexes together. Stop when idle before deleting caches/environments; `make setup` rebuilds those. Delete weights only when intentionally reclaiming space; delete recordings or catalogs only on explicit instruction. Custom output folders are outside the repository's ignore boundary and should not be added to source repositories.
+
+## Model profile
+
+See service.json for the selected backend and model_specs.json for immutable revisions/hashes. Both selected MLX model cards declare Apache-2.0. Upstream sources: [MLX Audio Qwen implementation](https://github.com/Blaizzy/mlx-audio/tree/main/mlx_audio/tts/models/qwen3_tts), [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS), [VoxCPM2 MLX model](https://huggingface.co/mlx-community/VoxCPM2-bf16). Exact installed source in `.venv` was inspected for the adapter mappings; main-branch documentation can differ from the pinned runtime.
+
+| Project | Port / output | Pinned weights |
+| --- | --- | --- |
+| VoxCPM2 | 8003 / 48 kHz | BF16, 4.96 GB; a7fb80d9056983135a54ca3f71fcc5a637ccddf5 |
+| Qwen3-TTS | 8004 / 24 kHz | VoiceDesign 8-bit, 3.08 GB; f90d617701d9f7f4ca499291e0b57f2b3c2fd2ee; Base 8-bit, 3.10 GB; e7dd0585652209fa0d7783659aad4e8a324de11c |
+
+## Expressiveness additions (API 2.1)
+
+See [EXTENSIONS.md](EXTENSIONS.md): Qwen now also installs the pinned 1.7B CustomVoice 8-bit checkpoint and a small MIT emotion-steering vector pack. Use Expressive presets for its nine built-in speakers; optional learned steering is experimental and supports these presets only. Both UIs provide an explicit prompt-based accent direction. VoxCPM2 exposes native continuation with an exact reference transcript for carrying recorded performance context. Qwen Base still rejects direct emotion/accent/steering instructions. No compatible Romanian-accent LoRA pack was identified for these installed runtimes.
+
+`make download-extensions` restores selected vector assets. `make verify` checks all model and extension hashes. `make test` now runs both the shared contract suite and extension tests. Real A/B/continuation results are recorded in ignored logs; perceptual accent/emotion quality still needs listening. All model checkpoints and extension assets remain on the SSD and run offline after setup.

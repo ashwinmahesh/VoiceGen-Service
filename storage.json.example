@@ -1,0 +1,4 @@
+{
+  "data_dir": "/absolute/path/to/external-data",
+  "gpu_lock_file": "/absolute/shared/data/voice-studio/gpu.lock"
+}
