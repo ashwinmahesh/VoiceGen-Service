@@ -6,9 +6,31 @@ One local speech studio with a shared UI, voice library, durable job API and sta
 
 Read [BACKENDS.md](BACKENDS.md) for the backend matrix, Python environments, controls, exact licenses, model/codec storage, real-smoke interpretation and integration instructions. `make setup MODEL=...` installs one selected runtime and pinned assets; `make serve MODEL=... PORT=8017` starts it on an unused port. `server.py --backend ...` also selects at startup. Omitting MODEL preserves the legacy service.json profile. The remaining default setup/examples below describe that original Vox/MLX profile. Read [API.md](API.md) and live `/api/capabilities` for the common protocol and model-specific validation.
 
+## UI preview
+
+The shared studio provides voice design/reference inputs, playback, a persistent generation queue, and a searchable voice library. Screenshots use illustrative characters and queued requests; private recordings and catalogs are not included.
+
+![Voice studio showing voice design, immediate and normal queue entries, and the searchable voice library](docs/images/studio-overview.png)
+
+<details>
+<summary>Voice names, descriptions, transcripts and tags</summary>
+
+![Voice editor with a character name, description, exact recording transcript and searchable tags](docs/images/voice-details.png)
+
+</details>
+
+<details>
+<summary>Model-specific delivery controls</summary>
+
+Fish S2 Pro offers explicit delivery tags and a preview of the text sent to the model. Other backends show their supported controls in the same studio.
+
+![Fish S2 Pro reference voice controls, delivery tags and rendered text preview](docs/images/fish-delivery-controls.png)
+
+</details>
+
 ## Setup and storage
 
-Tested on this Mac: Apple M6, 24 GB unified memory, macOS, Python 3.14, MLX 0.32.4, MLX Audio 0.6.1. `requirements.lock.txt` pins all installed Python dependencies. Use an Apple Silicon macOS interpreter for this lockfile. Server source, UI, documentation and the Python virtual environment live in `~/Documents/models/<service-name>`. Model weights, extension vectors, caches, temporary files, recordings, outputs and durable catalog/job data stay in `/Volumes/ASH-SSD/models/<service-name>`. No model weights were copied to internal storage. Python's base Homebrew framework remains at its installed location.
+Tested on this Mac: Apple M6, 24 GB unified memory, macOS, Python 3.14, MLX 0.32.4, MLX Audio 0.6.1. `requirements.lock.txt` pins all installed Python dependencies. Use an Apple Silicon macOS interpreter for this lockfile. Server source, UI, documentation, the Python virtual environment and the SQLite queue (`state/queue.sqlite3`) live in `~/Documents/models/<service-name>`. Model weights, extension vectors, caches, temporary files, recordings, outputs, catalog files and legacy JSON job records stay in `/Volumes/ASH-SSD/models/<service-name>`. No model weights were copied to internal storage. Python's base Homebrew framework remains at its installed location.
 
 On this Mac the projects are `~/Documents/models/VoiceGen-Service` and `~/Documents/models/Qwen3-TTS`. The VoiceGen-Service rename changes source/runtime paths only: its existing SSD data stays at `/Volumes/ASH-SSD/models/VoxCPM2`; Qwen data and all backend mappings stay in place. Each ignored `storage.json` selects its existing SSD `data_dir` and the shared SSD `gpu_lock_file`. Both direct Python commands and Make use that data setting; explicit DATA_DIR/GPU_LOCK_FILE environment or Make overrides take precedence. A fresh clone or ZIP works with ordinary `make setup`: on first terminal use it asks for a model/data folder. Press Enter to keep it inside the project, or enter another absolute folder to create data symlinks. Retries remember that choice. No ASH-SSD path or manual configuration file is required. For scripts or AI tools use `make setup NONINTERACTIVE=1` to select the default without a question, or supply an explicit DATA_DIR to select external storage. With no terminal, setup also uses the default without blocking. To use external storage, run `make setup DATA_DIR=/Volumes/YourDrive/models/service-name`; setup validates the mount, creates data links, and saves the choice in ignored storage.json so later `make start` uses it automatically. `make configure-storage DATA_DIR=...` configures storage without installing or downloading. Existing local data or links to another destination are preserved and reported for explicit migration. Convenience data-directory links expose existing SSD files from the project; preserve their targets. The venv itself is local. A disconnected linked volume fails before model downloads; there is no fallback download to the internal drive.
 
