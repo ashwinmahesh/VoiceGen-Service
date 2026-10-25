@@ -3,6 +3,35 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class ChatterboxOptions(BaseModel):
+    model_config = ConfigDict(extra='forbid',allow_inf_nan=False)
+    exaggeration: float | None = Field(default=None,ge=0,le=1)
+    cfg_weight: float | None = Field(default=None,ge=0,le=1)
+
+
+class IndexTTSOptions(BaseModel):
+    model_config = ConfigDict(extra='forbid',allow_inf_nan=False)
+    emotion_reference_id: str | None = Field(default=None,pattern=r'^[a-f0-9]{32}$')
+    emotion_vector: list[float] | None = Field(default=None,min_length=8,max_length=8)
+    emotion_alpha: float | None = Field(default=None,ge=0,le=1)
+    duration_factor: float | None = Field(default=None,ge=.7,le=1.5)
+    interval_silence: int | None = Field(default=None,ge=0,le=2000)
+
+    @model_validator(mode='after')
+    def emotion_source(self):
+        if self.emotion_vector is not None:
+            import math
+            if any(not math.isfinite(v) or not 0<=v<=1 for v in self.emotion_vector) or sum(self.emotion_vector)>1:
+                raise ValueError('Emotion vector needs eight finite 0–1 values with total at most 1')
+        if self.emotion_reference_id and self.emotion_vector is not None:
+            raise ValueError('Choose an emotion reference or emotion vector')
+        return self
+
+
+MODEL_OPTIONS={'chatterbox':ChatterboxOptions,'indextts':IndexTTSOptions}
+LEGACY_BACKEND_FIELDS=set().union(*(model.model_fields for model in MODEL_OPTIONS.values()))
+
+
 class Generation(BaseModel):
     model_config = ConfigDict(extra='forbid')
     text: str = Field(min_length=1, max_length=3000)
@@ -21,19 +50,48 @@ class Generation(BaseModel):
     steps: int | None = Field(default=None, ge=1, le=30)
     guidance: float | None = Field(default=None, ge=1, le=5)
     temperature: float | None = Field(default=None, ge=0, le=2)
+    chatterbox: ChatterboxOptions | None = None
+    indextts: IndexTTSOptions | None = None
+    exaggeration: float | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0, le=1)
+    cfg_weight: float | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0, le=1)
+    emotion_reference_id: str | None = Field(default=None, json_schema_extra={'deprecated':True}, pattern=r'^[a-f0-9]{32}$')
+    emotion_vector: list[float] | None = Field(default=None, json_schema_extra={'deprecated':True}, min_length=8, max_length=8)
+    emotion_alpha: float | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0, le=1)
+    duration_factor: float | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0.7, le=1.5)
+    interval_silence: int | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0, le=2000)
     max_tokens: int = Field(default=1000, ge=50, le=2000)
     output_dir: str | None = Field(default=None, max_length=4096)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
 
     @model_validator(mode='after')
     def combinations(self):
+        for backend,model in MODEL_OPTIONS.items():
+            if getattr(self,backend) is not None and any(getattr(self,key) is not None for key in model.model_fields):
+                raise ValueError(f'Choose {backend} options or legacy flat aliases, not both')
         if not self.text.strip():
             raise ValueError('Enter some text to speak')
+        if self.emotion_vector is not None:
+            import math
+            if any(not math.isfinite(v) or not 0 <= v <= 1 for v in self.emotion_vector):
+                raise ValueError('Emotion vector needs eight finite values between 0 and 1')
+            if sum(self.emotion_vector) > 1:
+                raise ValueError('Emotion vector sum must not exceed 1')
+        if self.emotion_reference_id and self.emotion_vector is not None:
+            raise ValueError('Choose an emotion reference or emotion vector')
         if sum(bool(x) for x in [self.voice_id,self.reference_id,self.preset_voice]) > 1:
             raise ValueError('Choose a saved voice or uploaded reference')
         if not self.voice_id and not self.reference_id and not self.preset_voice and not self.description.strip():
             raise ValueError('Describe a voice or select a reference')
         return self
+
+
+def generation_metadata(request):
+    result=request.model_dump(exclude={'idempotency_key',*LEGACY_BACKEND_FIELDS})
+    for backend,model in MODEL_OPTIONS.items():
+        if result[backend] is None:
+            aliases={key:getattr(request,key) for key in model.model_fields if getattr(request,key) is not None}
+            if aliases:result[backend]=aliases
+    return result
 
 
 class Capabilities(BaseModel):
@@ -62,6 +120,7 @@ class Health(BaseModel):
     storage: str
     downloaded: bool
     asset_errors: list[str]
+    runtime_errors: list[str] = Field(default_factory=list)
     model_loaded: bool
     loaded_variant: str | None
     busy: bool

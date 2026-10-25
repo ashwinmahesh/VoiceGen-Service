@@ -32,7 +32,10 @@ def configure(project, data, gpu_lock):
         # Existing external links must fail clearly while their volume is absent.
         for name in DATA_NAMES:
             validate_mount(project/name)
-    settings = {'data_dir': str(data), 'gpu_lock_file': str(Path(gpu_lock).absolute())}
+    # Preserve explicit per-backend reuse paths across setup retries.
+    saved=project/'storage.json'
+    settings=json.loads(saved.read_text()) if saved.is_file() else {}
+    settings.update(data_dir=str(data),gpu_lock_file=str(Path(gpu_lock).absolute()))
     temporary = project/'storage.json.tmp'
     temporary.write_text(json.dumps(settings, indent=2)+'\n')
     temporary.replace(project/'storage.json')

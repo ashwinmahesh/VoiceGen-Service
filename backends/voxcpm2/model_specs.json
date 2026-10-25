@@ -1,0 +1,49 @@
+{
+  "voxcpm2": {
+    "repo": "mlx-community/VoxCPM2-bf16",
+    "revision": "a7fb80d9056983135a54ca3f71fcc5a637ccddf5",
+    "subdir": "",
+    "files": [
+      {
+        "path": "README.md",
+        "size": 2170,
+        "git_sha1": "aa76fb4c6b39c676ade8708571e8f89b3e6850ef"
+      },
+      {
+        "path": "config.json",
+        "size": 5210,
+        "git_sha1": "8502c6139b3ca6d164ad3fe92af45140664e63ec"
+      },
+      {
+        "path": "model-00001.safetensors",
+        "size": 4286190791,
+        "sha256": "676b05649d915e63f2291a0b091bd72250785b2448fe14ec81f3566cf5f47950"
+      },
+      {
+        "path": "model-00002.safetensors",
+        "size": 669068875,
+        "sha256": "adddb9b85026763751beb20ba050aa46ef19b6b55cf6cb6a8c44ac8b06ec5cff"
+      },
+      {
+        "path": "model.safetensors.index.json",
+        "size": 67424,
+        "git_sha1": "0e36c6f8ce21f4cfe4d68a76471ed722eec609ad"
+      },
+      {
+        "path": "special_tokens_map.json",
+        "size": 1632,
+        "git_sha1": "8619dda6f3eb6d60d0a1bb274820054e46f41699"
+      },
+      {
+        "path": "tokenizer.json",
+        "size": 3676772,
+        "git_sha1": "41a5c2a8dba4058dd1ad73fb898abf5e4f64f0f9"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "size": 4952,
+        "git_sha1": "213f667d43be76ffdf226393fe58375f913747fc"
+      }
+    ]
+  }
+}

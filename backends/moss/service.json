@@ -1,0 +1,13 @@
+{
+  "id": "moss",
+  "name": "MOSS VoiceGenerator",
+  "backend": "moss",
+  "port": 8003,
+  "quantization": "BF16 backbone / FP16 codec",
+  "sample_rate": 24000,
+  "modes": {
+    "design": "moss"
+  },
+  "runtime": "audio.cpp Metal",
+  "family": "moss_voicegen"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "voxcpm2",
+  "name": "VoxCPM2",
+  "backend": "voxcpm2",
+  "port": 8003,
+  "quantization": "BF16",
+  "sample_rate": 48000,
+  "modes": {
+    "design": "voxcpm2",
+    "reference": "voxcpm2"
+  }
+}

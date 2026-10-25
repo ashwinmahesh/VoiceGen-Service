@@ -1,0 +1,13 @@
+{
+  "id": "higgs",
+  "name": "Higgs TTS 3",
+  "backend": "higgs",
+  "port": 8003,
+  "quantization": "Q8_0",
+  "sample_rate": 24000,
+  "modes": {
+    "reference": "higgs"
+  },
+  "runtime": "audio.cpp Metal",
+  "family": "higgs_audio_tts"
+}

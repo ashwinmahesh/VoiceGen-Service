@@ -1,0 +1,16 @@
+{
+  "higgs": {
+    "repo": "audio-cpp/audio.cpp-gguf",
+    "revision": "462b4cec041e06ffb3d8fcf0d8c655051b1cd9f5",
+    "subdir": "",
+    "files": [
+      {
+        "path": "Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf",
+        "size": 5095359136,
+        "sha256": "cfa5cc01adcd199dfcf1baf0f610aa474cda83418fd1802aa6defa82d956a0e4"
+      }
+    ],
+    "license": "LicenseRef-Boson-Higgs-TTS-3-Research-Noncommercial",
+    "packaging": "Self-contained GGUF, codec included; immutable conversion hash verified. Upstream conversion source revision is not asserted."
+  }
+}

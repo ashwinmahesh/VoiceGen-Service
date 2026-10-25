@@ -1,0 +1,6 @@
+{
+  "repo": "OpenMOSS-Team/MOSS-VoiceGenerator",
+  "revision": "97521ec2b6f3ec5026ac1f5751f8fc302d82c2d4",
+  "license": "apache-2.0",
+  "relation": "Upstream model/card documentation at setup; downloaded conversion revision and hashes are in model_specs.json. Exact conversion source revision is not asserted."
+}

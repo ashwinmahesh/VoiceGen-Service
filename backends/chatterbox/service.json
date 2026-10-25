@@ -1,0 +1,15 @@
+{
+  "id": "chatterbox",
+  "name": "Chatterbox Original",
+  "backend": "chatterbox",
+  "port": 8003,
+  "quantization": "FP32",
+  "sample_rate": 24000,
+  "license": "MIT",
+  "modes": {
+    "reference": "chatterbox"
+  },
+  "runtime": "PyTorch MPS",
+  "experimental": true,
+  "memory_note": "Experimental on 24 GB Apple Silicon; completed smoke with high MPS driver allocation. No throughput or memory guarantee."
+}

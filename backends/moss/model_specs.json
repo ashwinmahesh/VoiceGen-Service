@@ -1,0 +1,16 @@
+{
+  "moss": {
+    "repo": "audio-cpp/audio.cpp-gguf",
+    "revision": "462b4cec041e06ffb3d8fcf0d8c655051b1cd9f5",
+    "subdir": "",
+    "files": [
+      {
+        "path": "MOSS-VoiceGenerator-GGUF/moss_voicegen_bf16_codec_f16_decode.gguf",
+        "size": 6022982624,
+        "sha256": "6c69ba22816917ed16ef6991a7c0c848d86cde7071e9f6554ad867b47b268769"
+      }
+    ],
+    "license": "Apache-2.0",
+    "packaging": "Self-contained GGUF, codec included; immutable conversion hash verified. Upstream conversion source revision is not asserted."
+  }
+}

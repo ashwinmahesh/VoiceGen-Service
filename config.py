@@ -2,21 +2,29 @@
 import json
 import os
 from pathlib import Path
+from backend_selection import selected_backend, weights_directory
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-PROFILE = json.loads((PROJECT_ROOT / 'service.json').read_text())
-MODEL_SPECS = json.loads((PROJECT_ROOT / 'model_specs.json').read_text())
-EXTENSION_SPECS = json.loads((PROJECT_ROOT / 'extension_specs.json').read_text()) if (PROJECT_ROOT/'extension_specs.json').is_file() else {}
+BACKEND = selected_backend()
+ORIGINAL_PROFILE = json.loads((PROJECT_ROOT/'service.json').read_text())
+PROFILE_ROOT = PROJECT_ROOT/'backends'/BACKEND if BACKEND else PROJECT_ROOT
+PROFILE = json.loads((PROFILE_ROOT / 'service.json').read_text())
+MODEL_SPECS = json.loads((PROFILE_ROOT / 'model_specs.json').read_text())
+EXTENSION_SPECS = json.loads((PROFILE_ROOT / 'extension_specs.json').read_text()) if (PROFILE_ROOT/'extension_specs.json').is_file() else {}
 LOCAL_STORAGE = json.loads((PROJECT_ROOT/'storage.json').read_text()) if (PROJECT_ROOT/'storage.json').is_file() else {}
 ROOT = Path(os.environ.get('DATA_DIR', LOCAL_STORAGE.get('data_dir', str(PROJECT_ROOT)))).expanduser().absolute()
 OUTPUT_DIR = Path(os.environ.get('OUTPUT_DIR', str(ROOT / 'outputs'))).expanduser().absolute()
-MODEL_DIR = ROOT / 'weights'
-EXTENSION_DIR = ROOT / 'extensions'
+MODEL_DIR = weights_directory(ROOT,BACKEND,ORIGINAL_PROFILE['backend'],
+    os.environ.get('WEIGHTS_DIR',LOCAL_STORAGE.get('backend_weights',{}).get(PROFILE['backend'])))
+EXTENSION_DIR = Path(os.environ.get('EXTENSIONS_DIR',LOCAL_STORAGE.get('backend_extensions',{}).get(PROFILE['backend'],str(ROOT/'extensions')))).expanduser()
+if not EXTENSION_DIR.is_absolute():raise ValueError('EXTENSIONS_DIR/backend_extensions must be an absolute directory')
 DEFAULT_PORT = int(os.environ.get('PORT', PROFILE['port']))
 GPU_LOCK_FILE = Path(os.environ.get('GPU_LOCK_FILE', LOCAL_STORAGE.get('gpu_lock_file', str(PROJECT_ROOT.parent / '.voice-studio' / 'gpu.lock'))))
 # Explicitly keep this process's caches with its configured data root.
 for key, value in {'HF_HOME':ROOT/'cache/huggingface','XDG_CACHE_HOME':ROOT/'cache',
-                   'TORCH_HOME':ROOT/'cache/torch','TMPDIR':ROOT/'cache/tmp'}.items():
+                   'TORCH_HOME':ROOT/'cache/torch','TMPDIR':ROOT/'cache/tmp',
+                   'HF_HUB_CACHE':ROOT/'cache/huggingface/hub',
+                   'NUMBA_CACHE_DIR':ROOT/'cache/numba','NLTK_DATA':ROOT/'cache/nltk'}.items():
     os.environ[key] = str(value)
 os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
@@ -34,7 +42,7 @@ def validate_mount(path):
 
 
 def prepare_storage():
-    for path in [ROOT, OUTPUT_DIR, GPU_LOCK_FILE.parent] + [ROOT/name for name in ['weights','extensions','cache','logs','outputs','voices','references','jobs','artifact-index','idempotency']]:
+    for path in [ROOT, MODEL_DIR, EXTENSION_DIR, OUTPUT_DIR, GPU_LOCK_FILE.parent] + [ROOT/name for name in ['weights','extensions','cache','logs','outputs','voices','references','jobs','artifact-index','idempotency']]:
         validate_mount(path)
     for name in ['outputs','voices','references/originals','cache/tmp','logs','jobs','artifact-index','idempotency','extensions']:
         (ROOT/name).mkdir(parents=True, exist_ok=True)

@@ -9,6 +9,16 @@ from directions import instructions, variant_for
 from emotion_steering import emotion_context
 
 
+def create_engine():
+    if PROFILE['backend'] in ('moss','higgs'):
+        from native_engine import NativeEngine
+        return NativeEngine()
+    if PROFILE['backend'] in ('chatterbox', 'indextts'):
+        from torch_engine import TorchEngine
+        return TorchEngine()
+    return Engine()
+
+
 class Engine:
     def __init__(self, loader=None):
         self.model = None
@@ -30,8 +40,12 @@ class Engine:
         if errors:
             raise RuntimeError('; '.join(errors)+'. Run make download.')
         if self.loader is None:
-            from mlx_audio.tts.utils import load_model
-            loader = load_model
+            if PROFILE['backend']=='fish':
+                from fish_loader import load_fish_model
+                loader=load_fish_model
+            else:
+                from mlx_audio.tts.utils import load_model
+                loader = load_model
         else:
             loader = self.loader
         from clean_env import clean_appledouble
@@ -51,6 +65,12 @@ class Engine:
     def backend_call(self, request, reference, transcript):
         instruction_text = instructions(request,reference)
         common = dict(text=request.text, max_tokens=request.max_tokens)
+        if PROFILE['backend']=='fish':
+            from mlx_audio.utils import load_audio
+            waveform=load_audio(str(reference),sample_rate=self.model.sample_rate) if reference else None
+            return self.model.generate(**common,ref_audio=waveform,
+                ref_text=transcript or None,temperature=request.temperature,stream=False,verbose=False,
+                chunk_length=300)
         if PROFILE['backend'] == 'voxcpm2':
             conditioning = {'prompt_audio':str(reference),'prompt_text':transcript.rstrip()+' '} if request.clone_mode in ['continuation','combined'] else {'ref_audio':str(reference) if reference else None}
             if request.clone_mode=='combined':
@@ -70,7 +90,7 @@ class Engine:
     def check_input_budget(self, request, reference, transcript):
         encoded = self.model.tokenizer.encode('\n'.join([request.text, request.description if not reference else '',
             request.emotion, request.accent,
-            transcript if PROFILE['backend']=='qwen3' or request.clone_mode in ['continuation','combined'] else '']))
+            transcript if PROFILE['backend'] in ('qwen3','fish') or request.clone_mode in ['continuation','combined'] else '']))
         if len(encoded) > capabilities().limits['input_tokens']:
             raise ValueError('Input exceeds the documented token limit; shorten text, description, or transcript.')
         return encoded
@@ -117,9 +137,9 @@ class Engine:
                 'generation_seconds':round(finished-loaded,3), 'total_seconds':round(finished-started,3),
                 'real_time_factor':round((finished-loaded)/duration,3),
                 'peak_memory_gb':round(mx.get_peak_memory()/1e9,3), 'input_tokens':len(encoded),
-                'possibly_truncated':any(t >= request.max_tokens for t in token_counts) if PROFILE['backend']=='qwen3'
+                'possibly_truncated':any(t >= request.max_tokens for t in token_counts) if PROFILE['backend'] in ('qwen3','fish')
                     else duration >= request.max_tokens*.16-.5,
-                'truncation_detection':'output token count' if PROFILE['backend']=='qwen3' else 'duration heuristic',
+                'truncation_detection':'output token count' if PROFILE['backend'] in ('qwen3','fish') else 'duration heuristic',
                 'waveform':peaks, 'model':MODEL_SPECS[variant]['repo'],
                 'model_revision':MODEL_SPECS[variant]['revision'], 'variant':variant,
                 'runtime':{key:version(key) for key in ['mlx','mlx-audio','transformers']},

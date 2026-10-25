@@ -9,13 +9,13 @@ from unittest.mock import Mock,patch
 import numpy as np
 import capabilities,engine
 from schemas import Generation
-from config import PROJECT_ROOT
+from config import PROJECT_ROOT, ROOT
 from emotion_steering import read_vector,steering_weight,preserve_norm,steer_layers
 
 
 class ExtensionTests(unittest.TestCase):
     def request(self,**extra):return Generation(text='Welcome home.',description='A calm baritone.',**extra)
-    def profile(self,backend):return {'backend':backend,'id':backend,'name':backend,'sample_rate':24000,'quantization':'test'}
+    def profile(self,backend):return {'backend':backend,'id':backend,'name':backend,'sample_rate':24000,'quantization':'test','runtime':'test'}
     def test_native_customvoice_routing(self):
         adapter=engine.Engine();adapter.model=Mock()
         with patch('engine.PROFILE',self.profile('qwen3')):
@@ -78,7 +78,7 @@ class ExtensionTests(unittest.TestCase):
         for strength in [-1,13]:
             with self.assertRaises(ValueError):self.request(preset_voice='ryan',steering_emotion='sad',steering_strength=strength)
     def test_vector_architecture_and_corrupt_data(self):
-        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT/'cache/tmp') as tmp:
+        with tempfile.TemporaryDirectory(dir=ROOT/'cache/tmp') as tmp:
             path=Path(tmp)/'fake.qlsteer'
             data=np.ones((29,2048),dtype='<f4')
             path.write_bytes(struct.pack('<Iii',0x54534C51,29,2048)+data.tobytes())

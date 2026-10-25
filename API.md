@@ -1,6 +1,6 @@
 # Local Voice Studio API 2.1.0
 
-Both projects implement the same OpenAPI schema at `GET /openapi.json` and interactive documentation at `/docs`. The API is a local job protocol, not an OpenAI-compatible speech endpoint. Read `GET /api/capabilities` before building a request; backend-specific controls are optional in the common schema but rejected when unsupported. Unknown request fields return 422.
+The startup-selected studio implements one OpenAPI schema at `GET /openapi.json` and interactive documentation at `/docs`. The API is a local job protocol, not an OpenAI-compatible speech endpoint. Read `GET /api/capabilities` before building a request; backend-specific controls are optional in the common schema but rejected when unsupported. Unknown request fields return 422.
 
 ## Generation
 
@@ -105,3 +105,30 @@ Inputs must be mono/stereo PCM16 WAV, 8–96kHz, <=600 seconds and <=128MiB. Out
 Generation `requested`/`effective` settings remain unchanged. `transformation` separately records the reviewed request, source artifact ID/path/SHA256, original source lineage, source frames, exact start/end/insertion offsets, original and inserted gap samples, output frames and CPU processing time. Previous transformations remain in `transformation_history`. No models or GPU locks are used. Pause retry keys live in a separate namespace and do not change legacy generation fingerprints. Identical keyed retries return the existing derivative; changed request or source bytes with the same key returns409. Keep the same key after a client timeout; HTTP timeout does not prove the CPU edit stopped.
 
 In the webpage, open a completed/history take and choose **Adjust pauses**. Listen or seek, copy playback time into the start/end fields (or enter measured times), listen to the selection, and add/remove reviewed gaps. Set the desired total and confirm every selection was reviewed, then create a separate longer-pause version. Raw audio remains available in History. This workflow does not automatically enforce 750ms sentence pauses.
+## Additional startup backends
+
+See BACKENDS.md for exact capabilities, storage/locks, licenses and validation. Start with `make serve MODEL=chatterbox|indextts|moss|fish|higgs PORT=...`; selection is not a per-generation request field. Existing Vox/Qwen profiles are also available. Health/capabilities identify the active backend. Unsupported controls fail with 422 before reserving the GPU.
+
+| Additional field | Accepted backend and behavior |
+| --- | --- |
+| chatterbox.exaggeration | Chatterbox Original only, 0–1, default .5 |
+| chatterbox.cfg_weight | Chatterbox Original only, 0–1, default .5 |
+| indextts.emotion_reference_id | IndexTTS only: uploaded reference UUID for emotion; separate from speaker reference |
+| indextts.emotion_vector | IndexTTS only: 8 finite 0–1 numbers in happy/angry/sad/afraid/disgusted/melancholic/surprised/calm order, sum <=1; mutually exclusive with emotion_reference_id |
+| indextts.emotion_alpha | IndexTTS only, 0–1, default 1 when an emotion source is selected; requires a source |
+| indextts.duration_factor | IndexTTS only, .7–1.5, default 1; higher is slower |
+| indextts.interval_silence | IndexTTS only, 0–2000 ms, default 400; between upstream segments, without automatic sentence splitting |
+
+Chatterbox/Index require a voice/reference; neither accepts prompt-based emotion/accent, presets, reference transcripts or Vox clone modes. Chatterbox fixes max_tokens at 1000 (other values rejected). Index max_tokens is 50–1500 per segment, and requires an explicit supported language. MOSS requires a description and English/Chinese language, supports voice directions as design instructions, rejects references, and limits text to 500 characters. MOSS max_tokens maps to audio frames, with upstream text-derived minimum behavior documented in capabilities.
+
+Fish/Higgs require a reference plus exact saved/override transcript. Their emotion/prosody/pause controls are explicit inline text tags, not the shared emotion/accent fields. The UI shows the appropriate syntax; the service preserves submitted text. The wrapper exposes one reference and offline WAV jobs. Index phoneme annotations also remain explicit in text; optional normalization is disabled.
+
+Native MOSS/Higgs processes release their models after every job, so model_loaded=false while idle is correct. Their load_seconds=null and generation_seconds include startup/load/synthesis; timing_scope explains this. peak_process_rss_gb measures native child peak RSS. Torch metadata distinguishes current MPS active/driver allocations from process-lifetime peak RSS; none is a claimed peak system-RAM measurement. Older validation records retain current_device_memory_gb, meaning end-of-job MPS driver allocation. Requested and effective settings remain distinct. Idempotency records include backend identity; a key from another backend returns 409 rather than replaying the wrong voice job.
+
+A second process cannot own the same DATA_DIR: its lifetime lock fails before restart recovery. A port collision also fails before recovery. Keep old active installations and isolated validation jobs on distinct data roots. WEIGHTS_DIR can point at shared immutable model files without sharing JobManagers or copying weights.
+
+### Model-scoped options and compatibility
+
+New backend-specific options use typed objects named by the exact API model ID: `"chatterbox":{"exaggeration":0.7,"cfg_weight":0.5}` or `"indextts":{"duration_factor":1.2,"interval_silence":750}`. Temperature, text, seed, token cap and published Vox/Qwen fields remain common. Capabilities list these settings under `controls.chatterbox` / `controls.indextts`. Unknown members and inactive-model objects return422. Deprecated flat aliases remain accepted for local pre-integration requests; supplying a namespace and any of its flat aliases together returns422. Use the same request form/key for retries. Prior published generation hashes remain recoverable. Newly written requested/effective metadata stores these options under the same model keys; legacy sidecars stay unchanged. Model-only telemetry (MPS allocation, native log path, watermark/normalization details) is similarly scoped under its model ID; ordinary output properties/timings remain common.
+
+Restricted-model notices appear at every server startup, visibly in the webpage, and under `models.<model-id>` in capabilities, with authoritative license links and bundled source texts. They do not add an acknowledgment gate. Fish requires a separate license for commercial model use. Higgs includes a conditional grant for monetized creator content with prominent acknowledgment, while hosting/product integration and other uses outside that grant require a separate license. Index uses custom terms with a separate-license threshold for very large organizations, not a blanket noncommercial restriction. Read the full model-specific terms; reference uploads are not reclassified as generated outputs.

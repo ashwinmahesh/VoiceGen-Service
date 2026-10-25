@@ -1,0 +1,81 @@
+{
+  "emotion_steering": {
+    "source": "https://github.com/gabriele-mastrapasqua/qwen3-tts",
+    "revision": "ef339be58a778b062e1c14382347964552eae007",
+    "license": "MIT",
+    "base_url": "https://raw.githubusercontent.com/gabriele-mastrapasqua/qwen3-tts/ef339be58a778b062e1c14382347964552eae007/",
+    "subdir": "qwen-emotion-steering",
+    "files": [
+      {
+        "path": "LICENSE",
+        "size": 1078,
+        "git_sha1": "634a9104f34077bf700219d6108982ec61b68d39"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_ang.qlsteer",
+        "size": 237580,
+        "git_sha1": "7890a179bba12bad9a8253486bf0528b1d756bc5"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_awe.qlsteer",
+        "size": 237580,
+        "git_sha1": "85108c881d16dc61e3f51a3159374b33df073364"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_contempt.qlsteer",
+        "size": 237580,
+        "git_sha1": "ea3229e6e7d5f54b62ac40e664e0db8611bc927a"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_despair.qlsteer",
+        "size": 237580,
+        "git_sha1": "e8ec3e06be2d87aff8b30eea3d3b404be1620e90"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_disapproval.qlsteer",
+        "size": 237580,
+        "git_sha1": "bbb3c9bec23e0aa889b54acaf8f18ff552ebffbf"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_disgust.qlsteer",
+        "size": 237580,
+        "git_sha1": "7a1002f06701a51bbec55258978a83dd62736ff1"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_fear.qlsteer",
+        "size": 237580,
+        "git_sha1": "c9c216ef67bb57ff97ca02a7412c161aae3261bd"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_joy.qlsteer",
+        "size": 237580,
+        "git_sha1": "bdcca8db437eac52fc31a200cf68e45558b430db"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_nostalgia.qlsteer",
+        "size": 237580,
+        "git_sha1": "0cef3c5d8436b115c3a4e044781c5b6d7d239324"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_outrage.qlsteer",
+        "size": 237580,
+        "git_sha1": "08df95a6423fdbd1c0c7ed9317371cd8a0ce290b"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_remorse.qlsteer",
+        "size": 237580,
+        "git_sha1": "a4fa3599b1fb3957087d23c654424ccd72720507"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_sad.qlsteer",
+        "size": 237580,
+        "git_sha1": "e8dbd0e60c7204e812342015879c7050327fc5b7"
+      },
+      {
+        "path": "presets/steer/emotion/ryan_surprise.qlsteer",
+        "size": 237580,
+        "git_sha1": "ddb776095e3ce346d615a1875eec52d8f0e7b642"
+      }
+    ]
+  }
+}

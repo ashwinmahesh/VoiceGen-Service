@@ -1,0 +1,6 @@
+{
+  "repo": "bosonai/higgs-tts-3-4b",
+  "revision": "239f63fb7b02b1aa085f98d9efae5e35cc5523e8",
+  "license": "other",
+  "relation": "Upstream model/card documentation at setup; downloaded conversion revision and hashes are in model_specs.json. Exact conversion source revision is not asserted."
+}

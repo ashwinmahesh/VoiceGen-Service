@@ -17,7 +17,7 @@ import server
 import storage
 from jobs import JobManager
 from schemas import Generation
-from config import PROJECT_ROOT
+from config import PROJECT_ROOT, ROOT
 
 
 def wav(rate=16000,channels=1,seconds=2):
@@ -41,7 +41,7 @@ class FakeEngine:
 
 class ContractTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory(dir=PROJECT_ROOT/'cache/tmp')
+        self.tmp=tempfile.TemporaryDirectory(dir=ROOT/'cache/tmp')
         self.root=Path(self.tmp.name)
         for name in ['outputs','voices','references/originals','jobs','artifact-index','idempotency','cache/tmp']:
             (self.root/name).mkdir(parents=True,exist_ok=True)
@@ -120,6 +120,35 @@ class ContractTests(unittest.TestCase):
         else:
             self.assertEqual(self.generate(reference_id=reference['id'],accent='Romanian English').status_code,422)
             self.assertEqual(self.generate(reference_id=reference['id'],clone_mode='continuation').status_code,422)
+    def test_namespaced_backend_options_metadata_and_alias_compatibility(self):
+        reference=self.upload().json()
+        import jobs,capabilities
+        for backend,options in [('chatterbox',{'exaggeration':.7}),('indextts',{'duration_factor':1.2,'emotion_vector':[.1]*8,'emotion_alpha':.5})]:
+            profile=json.loads((PROJECT_ROOT/'backends'/backend/'service.json').read_text())
+            with patch('server.PROFILE',profile),patch('jobs.PROFILE',profile),patch('capabilities.PROFILE',profile):
+                job=self.generate(reference_id=reference['id'],language='English',**{backend:options}).json()
+                result=self.finish(job)['result']
+                self.assertNotIn('exaggeration',result['requested']);self.assertNotIn('duration_factor',result['effective'])
+                self.assertEqual(result['requested'][backend][next(iter(options))],next(iter(options.values())))
+                self.assertEqual(result['effective'][backend][next(iter(options))],next(iter(options.values())))
+                alias_job=self.generate(reference_id=reference['id'],language='English',**options).json()
+                alias=self.finish(alias_job)['result']
+                self.assertEqual(alias['requested'][backend],options)
+
+    def test_combined_retry_from_prior_api_fields_survives_backend_merge(self):
+        if server.PROFILE['backend']!='voxcpm2':return
+        request=Generation(text='Welcome home.',description='A calm baritone.',voice_id='a'*32,
+            clone_mode='combined',idempotency_key='prior-combined')
+        added={'exaggeration','cfg_weight','emotion_reference_id','emotion_vector','emotion_alpha','duration_factor','interval_silence','chatterbox','indextts'}
+        fingerprint=hashlib.sha256(request.model_dump_json(exclude={'idempotency_key',*added}).encode()).hexdigest()
+        identity='c'*32
+        from voice_catalog import atomic_json,now
+        atomic_json(self.root/'jobs'/f'{identity}.json',{'id':identity,'status':'error','stage':'Prior completion','created_at':now(),'updated_at':now()})
+        key=hashlib.sha256(b'prior-combined').hexdigest()
+        atomic_json(self.root/'idempotency'/f'{key}.json',{'job':identity,'fingerprint':fingerprint})
+        response=self.client.post('/api/generate',json=request.model_dump())
+        self.assertEqual(response.status_code,202);self.assertEqual(response.json()['id'],identity)
+
     def test_combined_validation_metadata_and_reuse(self):
         reference=self.upload().json()
         for fields in [{}, {'ref_text':'   '}]:
@@ -239,7 +268,7 @@ class AdapterTests(unittest.TestCase):
 class AssetTests(unittest.TestCase):
     def test_retry_and_checksum_completion(self):
         import assets,download
-        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT/'cache/tmp') as tmp:
+        with tempfile.TemporaryDirectory(dir=ROOT/'cache/tmp') as tmp:
             root=Path(tmp);blob=b'{"model_type":"fake"}'
             spec={'test':{'repo':'fake/repo','revision':'abc','subdir':'','files':[{'path':'config.json','size':len(blob),
                 'sha256':hashlib.sha256(blob).hexdigest()}]}}
@@ -268,7 +297,7 @@ class AssetTests(unittest.TestCase):
             self.assertFalse(manage.verified_pid(123,8003))
     def test_appledouble_cleanup_preserves_other_files(self):
         from clean_env import clean_appledouble
-        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT/'cache/tmp') as tmp:
+        with tempfile.TemporaryDirectory(dir=ROOT/'cache/tmp') as tmp:
             root=Path(tmp)
             (root/'._fake').write_bytes(b'not metadata')
             (root/'._model.safetensors').write_bytes(b'\x00\x05\x16\x07'+b'hello')
