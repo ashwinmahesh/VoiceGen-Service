@@ -19,7 +19,7 @@ Return the verified WAV and JSON paths and local playback URL after success. Che
 
 Save reusable recordings using POST /api/voices, with name, catalog description and normalized tags. Search/filter/page through GET /api/voices. PATCH updates metadata without changing audio/original design. Save exact excerpt transcripts where appropriate; long samples save only their first 30 seconds. Uploads retain original bytes plus bounded mono working copies. Never delete user recordings as cleanup.
 
-Run make test for no-GPU validation and make smoke for one small real inference when requested/appropriate. Shared source/UI/API can be checked with make sync-check PEER=...; synchronization only copies allowlisted source and never profiles, weights or user data. Keep private audio, transcripts, metadata, indexes, jobs, caches and environments outside Git. Do not upload or publish anything without user authorization.
+Run make test for no-GPU validation and make smoke for one small real inference when requested/appropriate. Select Qwen with `MODEL=qwen3` in this same VoiceGen-Service checkout; no sibling Qwen project or source synchronization is required. Stop the active backend using its MODEL/PORT before starting another: all backends share one library and one project-local SQLite queue. Preserve the former Qwen SSD data folders: imported history indexes still resolve their historical audio there. Consolidation backups of private source/configuration and SQLite state are under ignored project-local state/backups. Keep private audio, transcripts, metadata, indexes, jobs, caches and environments outside Git. Do not upload or publish anything without user authorization.
 
 ## Expressiveness additions
 

@@ -32,7 +32,7 @@ Fish S2 Pro offers explicit delivery tags and a preview of the text sent to the 
 
 Tested on this Mac: Apple M6, 24 GB unified memory, macOS, Python 3.14, MLX 0.32.4, MLX Audio 0.6.1. `requirements.lock.txt` pins all installed Python dependencies. Use an Apple Silicon macOS interpreter for this lockfile. Server source, UI, documentation, the Python virtual environment and the SQLite queue (`state/queue.sqlite3`) live in `~/Documents/models/<service-name>`. Model weights, extension vectors, caches, temporary files, recordings, outputs, catalog files and legacy JSON job records stay in `/Volumes/ASH-SSD/models/<service-name>`. No model weights were copied to internal storage. Python's base Homebrew framework remains at its installed location.
 
-On this Mac the projects are `~/Documents/models/VoiceGen-Service` and `~/Documents/models/Qwen3-TTS`. The VoiceGen-Service rename changes source/runtime paths only: its existing SSD data stays at `/Volumes/ASH-SSD/models/VoxCPM2`; Qwen data and all backend mappings stay in place. Each ignored `storage.json` selects its existing SSD `data_dir` and the shared SSD `gpu_lock_file`. Both direct Python commands and Make use that data setting; explicit DATA_DIR/GPU_LOCK_FILE environment or Make overrides take precedence. A fresh clone or ZIP works with ordinary `make setup`: on first terminal use it asks for a model/data folder. Press Enter to keep it inside the project, or enter another absolute folder to create data symlinks. Retries remember that choice. No ASH-SSD path or manual configuration file is required. For scripts or AI tools use `make setup NONINTERACTIVE=1` to select the default without a question, or supply an explicit DATA_DIR to select external storage. With no terminal, setup also uses the default without blocking. To use external storage, run `make setup DATA_DIR=/Volumes/YourDrive/models/service-name`; setup validates the mount, creates data links, and saves the choice in ignored storage.json so later `make start` uses it automatically. `make configure-storage DATA_DIR=...` configures storage without installing or downloading. Existing local data or links to another destination are preserved and reported for explicit migration. Convenience data-directory links expose existing SSD files from the project; preserve their targets. The venv itself is local. A disconnected linked volume fails before model downloads; there is no fallback download to the internal drive.
+On this Mac the serving project is `~/Documents/models/VoiceGen-Service` for every backend, including Qwen. Shared SSD data remains at `/Volumes/ASH-SSD/models/VoxCPM2`; Qwen weights and extensions are reused from `/Volumes/ASH-SSD/models/Qwen3-TTS`. The separate Qwen serving project has been retired. Its saved voices, references, history indexes and legacy job/retry records are consolidated into the shared library, while historical audio remains at its existing SSD paths. Preserve these data folders: deleting the old serving project does not delete model or audio storage. Ignored `storage.json` selects the shared `data_dir`, backend asset mappings and SSD `gpu_lock_file`; explicit environment/Make overrides take precedence. A fresh clone or ZIP works with ordinary `make setup`: on first terminal use it asks for a model/data folder. Press Enter to keep it inside the project, or enter another absolute folder to create data symlinks. Retries remember that choice. No ASH-SSD path or manual configuration file is required. For scripts or AI tools use `make setup NONINTERACTIVE=1` to select the default without a question, or supply an explicit DATA_DIR to select external storage. With no terminal, setup also uses the default without blocking. To use external storage, run `make setup DATA_DIR=/Volumes/YourDrive/models/service-name`; setup validates the mount, creates data links, and saves the choice in ignored storage.json so later `make start` uses it automatically. `make configure-storage DATA_DIR=...` configures storage without installing or downloading. Existing local data or links to another destination are preserved and reported for explicit migration. Convenience data-directory links expose existing SSD files from the project; preserve their targets. The venv itself is local. A disconnected linked volume fails before model downloads; there is no fallback download to the internal drive.
 
 Prerequisites: Apple Silicon macOS, Git, Make, and Python 3.14. The default interpreter is Homebrew’s `/opt/homebrew/bin/python3.14`; install it with `brew install python@3.14`, or pass `BOOTSTRAP_PYTHON=/absolute/path/to/python3.14`.
 
@@ -61,7 +61,17 @@ make health VENV=/absolute/local/venv DATA_DIR=/absolute/ssd/data PORT=8014
 
 `make serve` retains a foreground process; Ctrl-C stops it. `make start` explicitly starts a managed background process, reuses a matching instance, and records its PID in DATA_DIR/logs. `make stop` checks identity, project/data root, command, cwd and listening PID before stopping a managed idle instance. It refuses unrelated listeners and busy instances. `make status` displays state; `make health` fails for offline/mismatched/error/incomplete services. No login item or automatic launch service is installed. `Start Voice Studio.command` runs the explicit background start/open commands.
 
-Default port comes from service.json: VoxCPM2 8003; Qwen3-TTS 8004. UI at `http://127.0.0.1:PORT/`, OpenAPI at `/openapi.json`, interactive docs at `/docs`. Both run on loopback with one worker. Their local storage settings preserve the shared GPU reservation at `/Volumes/ASH-SSD/models/.voice-studio/gpu.lock`, configurable using GPU_LOCK_FILE; this prevents overlapping voice jobs, but does not unload another process's resident model or coordinate other model servers. Release memory in idle servers before another memory-heavy task. Unrelated image servers are never stopped or modified.
+Default port comes from the selected backend profile: VoxCPM2 8003; Qwen3-TTS 8004. UI at `http://127.0.0.1:PORT/`, OpenAPI at `/openapi.json`, interactive docs at `/docs`. One startup backend owns the shared library and project-local queue at a time; another server against the same data/queue is rejected even on another port. Stop the active backend before selecting another, using the same MODEL/PORT used to start it. The configured shared GPU reservation serializes cooperating model services but does not evict resident weights. Unrelated image servers are never stopped or modified.
+
+```sh
+# All commands run from this checkout; Qwen reuses the shared .venv-mlx.
+make stop MODEL=voxcpm2  # when this is the active backend
+make start MODEL=qwen3
+make health MODEL=qwen3
+# Later, switch back without another checkout or model download:
+make stop MODEL=qwen3
+make start MODEL=voxcpm2
+```
 
 ## Use
 
@@ -84,14 +94,13 @@ Jobs, WAV/JSON results, voice samples, tags and reference transcripts persist lo
 ```sh
 make test             # meaningful fake backend/download/API/lifecycle tests; no weights/GPU
 make smoke            # short real speech, needs running server and downloaded assets
-make smoke PORT=8004  # from the Qwen checkout
+make smoke MODEL=qwen3 # from this checkout while Qwen is active
 make verify           # full model-file checksums
-make sync-check PEER=/absolute/path/to/other/voice/project
 ```
 
 Tests cover strict validation, both adapter mappings, capability restrictions, download retry/completion, health errors, custom folders and restart lookup, durable/idempotent jobs, busy/disconnected-client capacity, cross-service reservation, upload decoded/body bounds and original preservation, catalog editing/search/reuse, missing media and source-only ignore rules. Smoke decodes the actual result, checks finite/nonsilent audio, and records metrics under logs. It does not establish perceptual accent/identity/emotion quality: listen in the webpage.
 
-Legacy installations can still compare/synchronize the explicitly allowlisted source set; the unified project selects all backends at startup. Edit one, run its tests, then explicitly run `VENV/bin/python sync_source.py /absolute/peer/path`, test the peer and compare live `/openapi.json`. The allowlist excludes service.json, model_specs.json, storage.json, README, skills, all data and environments; it includes storage.json.example and the portable backend profiles/runtime adapters. Never sync into a live peer as an automatic deployment step. Keep README/profile skills aligned when changing behavior. `API.md` is shared. Do not create a runtime dependency on the sibling project.
+No sibling checkout or source synchronization is needed for Qwen. Edit and test this project once; use `MODEL=qwen3` for Qwen-specific validation. The allowlisted `sync_source.py` utility remains available for independently managed legacy installations and is not part of normal setup or model switching. Keep backend profiles, API.md and the portable service skill aligned when changing behavior.
 
 Troubleshooting: missing assets -> `make download`; wrong-platform preflight -> choose a compatible runtime; occupied port -> inspect the listener or choose PORT; inference failure -> inspect job/log, release model memory, shorten text or lower the effective output-token cap, then retry deliberately. Do not infer cancellation from timeout. If an external output volume disappears, remount it; catalog skips missing audio. A completion-index write failure can leave a complete WAV/JSON pair at its custom destination: preserve and inspect it before retrying. Port checks and defaults do not grant permission to stop another model server.
 
@@ -101,14 +110,14 @@ Keep `.venv`, weights, cache, logs, outputs, references, voices, jobs, idempoten
 
 See service.json for the selected backend and model_specs.json for immutable revisions/hashes. Both selected MLX model cards declare Apache-2.0. Upstream sources: [MLX Audio Qwen implementation](https://github.com/Blaizzy/mlx-audio/tree/main/mlx_audio/tts/models/qwen3_tts), [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS), [VoxCPM2 MLX model](https://huggingface.co/mlx-community/VoxCPM2-bf16). Exact installed source in `.venv` was inspected for the adapter mappings; main-branch documentation can differ from the pinned runtime.
 
-| Project | Port / output | Pinned weights |
+| Backend | Port / output | Pinned weights |
 | --- | --- | --- |
 | VoxCPM2 | 8003 / 48 kHz | BF16, 4.96 GB; a7fb80d9056983135a54ca3f71fcc5a637ccddf5 |
 | Qwen3-TTS | 8004 / 24 kHz | VoiceDesign 8-bit, 3.08 GB; f90d617701d9f7f4ca499291e0b57f2b3c2fd2ee; Base 8-bit, 3.10 GB; e7dd0585652209fa0d7783659aad4e8a324de11c |
 
 ## Expressiveness additions (API 2.1)
 
-See [EXTENSIONS.md](EXTENSIONS.md): Qwen now also installs the pinned 1.7B CustomVoice 8-bit checkpoint and a small MIT emotion-steering vector pack. Use Expressive presets for its nine built-in speakers; optional learned steering is experimental and supports these presets only. Both UIs provide an explicit prompt-based accent direction. VoxCPM2 exposes native continuation with an exact reference transcript for carrying recorded performance context. Qwen Base still rejects direct emotion/accent/steering instructions. No compatible Romanian-accent LoRA pack was identified for these installed runtimes.
+See [EXTENSIONS.md](EXTENSIONS.md): Qwen now also installs the pinned 1.7B CustomVoice 8-bit checkpoint and a small MIT emotion-steering vector pack. Use Expressive presets for its nine built-in speakers; optional learned steering is experimental and supports these presets only. The shared UI provides an explicit prompt-based accent direction. VoxCPM2 exposes native continuation with an exact reference transcript for carrying recorded performance context. Qwen Base still rejects direct emotion/accent/steering instructions. No compatible Romanian-accent LoRA pack was identified for these installed runtimes.
 
 `make download-extensions` restores selected vector assets. `make verify` checks all model and extension hashes. `make test` now runs both the shared contract suite and extension tests. Real A/B/continuation results are recorded in ignored logs; perceptual accent/emotion quality still needs listening. All model checkpoints and extension assets remain on the SSD and run offline after setup.
 

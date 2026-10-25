@@ -1,6 +1,6 @@
 # Startup backends
 
-Local Voice Studio uses one UI, API 2.1 job protocol, storage/catalog implementation, and single reserved inference worker. Select one backend at process startup. Selection never loads every model. Read `/api/capabilities` before forming a request: unsupported fields are rejected, not silently discarded.
+Local Voice Studio uses one UI, API 2.1 job protocol, storage/catalog implementation, and single reserved inference worker. Select one backend at process startup. Qwen uses this same checkout (`make start MODEL=qwen3`) and shared MLX environment, catalog and queue; no separate Qwen project is needed. Stop the active backend before switching; shared storage/queue ownership rejects a second simultaneous worker. Selection never loads every model. Read `/api/capabilities` before forming a request: unsupported fields are rejected, not silently discarded.
 
 ```sh
 make setup MODEL=chatterbox
