@@ -19,10 +19,10 @@ class BusyError(QueueConflict):
 
 
 class JobManager:
-    def __init__(self, engine, root=ROOT, lock_file=GPU_LOCK_FILE, profile=None):
+    def __init__(self, engine, root=ROOT, lock_file=GPU_LOCK_FILE, profile=None, db_path=None):
         self.engine, self.root, self.lock_file = engine, Path(root), Path(lock_file)
         self.profile = dict(profile or PROFILE)
-        self.store = QueueStore(self.root)
+        self.store = QueueStore(self.root, db_path)
         self.executor = ThreadPoolExecutor(max_workers=1,thread_name_prefix='voice-inference')
         self.guard = threading.RLock()
         self.active = None
@@ -49,14 +49,17 @@ class JobManager:
                 return
             validate_mount(self.root/'jobs')
             (self.root/'jobs').mkdir(parents=True,exist_ok=True)
-            handle = (self.root/'jobs/worker.lock').open('a+')
+            validate_mount(self.store.path)
+            self.store.path.parent.mkdir(parents=True,exist_ok=True)
+            handle = self.store.path.with_suffix('.worker.lock').open('a+')
             try:
                 fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:
                 handle.close()
-                raise BusyError('Another queue worker owns this data directory') from None
+                raise BusyError('Another queue worker owns this SQLite database') from None
             self._owner = handle
             try:
+                self.store.migrate()
                 self._ready()
                 for row in self.store.interrupted():
                     # The owner lock proves no live worker still owns these records.

@@ -114,6 +114,7 @@ class Capabilities(BaseModel):
 
 
 class Health(BaseModel):
+    queue_database: str | None = None
     status: Literal['unloaded','loading','ready','generating','unloading','error']
     service: str
     name: str

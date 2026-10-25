@@ -25,7 +25,7 @@ import voice_catalog
 from voice_catalog import SaveVoice, VoiceUpdate, Voice, VoicePage
 
 engine = create_engine()
-manager = JobManager(engine)
+manager = JobManager(engine, db_path=PROJECT_ROOT/'state/queue.sqlite3')
 
 
 @asynccontextmanager
@@ -101,7 +101,7 @@ def health():
         storage=str(ROOT),downloaded=not errors,asset_errors=errors,runtime_errors=runtime,model_loaded=engine.model is not None,
         loaded_variant=engine.variant,busy=bool(manager.active or manager.unloading),
         active_job=manager.active,last_error=manager.last_error,
-        queue_counts=manager.listing(limit=1)['counts'])
+        queue_database=str(manager.store.path),queue_counts=manager.listing(limit=1)['counts'])
 
 
 @app.post('/api/jobs',status_code=202,response_model=Job)

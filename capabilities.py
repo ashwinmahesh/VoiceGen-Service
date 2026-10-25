@@ -1,4 +1,4 @@
-from config import PROFILE, MODEL_SPECS, EXTENSION_SPECS, ROOT, OUTPUT_DIR
+from config import PROFILE, MODEL_SPECS, EXTENSION_SPECS, ROOT, OUTPUT_DIR, PROJECT_ROOT
 from schemas import Capabilities, MODEL_OPTIONS
 from directions import PRESETS, EMOTIONS
 
@@ -12,7 +12,7 @@ def with_pause_editing(caps):
 
 def capabilities():
     caps=backend_capabilities()
-    caps.limits.update({'queue':{'durable':True,'api_generate_immediately_default':False,'ui_generate_immediately_default':True,
+    caps.limits.update({'queue':{'durable':True,'database':str(PROJECT_ROOT/'state/queue.sqlite3'),'api_generate_immediately_default':False,'ui_generate_immediately_default':True,
                          'ordering':'Immediate FIFO before normal FIFO; active inference is never interrupted',
                          'backend_policy':'Only the startup backend executes; other pending backends are paused',
                          'cancel_running':False}})

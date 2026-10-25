@@ -1,5 +1,5 @@
 """Durability/concurrency tests: fake engines only, no weights or GPU work."""
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 import fcntl
 import json
 from pathlib import Path
@@ -318,3 +318,32 @@ class QueueAPITests(QueueFixture):
 
 
 if __name__=='__main__':unittest.main()
+
+class ProjectQueueTests(QueueFixture):
+    def test_migration_preserves_entire_database_and_backup(self):
+        original=QueueStore(self.root);original.initialize()
+        original.admit('voxcpm2','test','design',True,{'destination':str(self.root/'outputs')},'key','hash')
+        target=QueueStore(self.root,self.root/'state/queue.sqlite3')
+        import sqlite3
+        with closing(sqlite3.connect(original.path)) as db: before=list(db.iterdump())
+        target.migrate()
+        self.assertFalse(original.path.exists())
+        self.assertTrue(original.path.with_name('queue.sqlite3.migrated-backup').is_file())
+        with closing(sqlite3.connect(target.path)) as db:
+            self.assertEqual(db.execute('PRAGMA integrity_check').fetchone()[0],'ok')
+            self.assertEqual(list(db.iterdump()),before)
+        target.migrate() # clean restart is idempotent
+
+    def test_migration_collision_preserves_both_databases(self):
+        original=QueueStore(self.root);original.initialize()
+        target=QueueStore(self.root,self.root/'state/queue.sqlite3');target.initialize()
+        with self.assertRaisesRegex(RuntimeError,'Both legacy'):target.migrate()
+        self.assertTrue(original.path.exists());self.assertTrue(target.path.exists())
+
+    def test_same_database_different_data_roots_share_worker_ownership(self):
+        db=self.root/'state/queue.sqlite3'
+        first=JobManager(FakeEngine(),self.root,self.root/'gpu.lock',db_path=db)
+        other=self.root/'other';(other/'jobs').mkdir(parents=True)
+        second=JobManager(FakeEngine(),other,self.root/'gpu.lock',db_path=db)
+        self.managers.extend([first,second]);first.recover()
+        with self.assertRaisesRegex(BusyError,'SQLite'):second.recover()

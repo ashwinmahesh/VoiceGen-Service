@@ -1,9 +1,10 @@
 """Private SQLite queue. All admissions, claims and removals are transactions.
 
-One owning JobManager holds worker.lock before recovery. SQLite is deliberately
-in rollback-journal/FULL mode for portable local disks (including exFAT).
+One owning JobManager holds the database-adjacent worker lock before recovery.
+Production databases live in the serving project; injectable paths isolate tests.
+SQLite uses rollback-journal/FULL mode.
 """
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 import json
 from pathlib import Path
 import sqlite3
@@ -17,8 +18,39 @@ class QueueConflict(ValueError):
 
 
 class QueueStore:
-    def __init__(self, root):
-        self.path = Path(root)/'jobs/queue.sqlite3'
+    def __init__(self, root, db_path=None):
+        self.path = (Path(db_path) if db_path is not None else Path(root)/'jobs/queue.sqlite3').expanduser().resolve()
+        self.legacy_path = Path(root)/'jobs/queue.sqlite3'
+
+    def migrate(self):
+        """Called only while both data and database worker ownership are held."""
+        source = self.legacy_path
+        if source.absolute() == self.path.absolute() or not source.exists():
+            return
+        validate_mount(source)
+        if self.path.exists():
+            raise RuntimeError('Both legacy and project queue databases exist; review migration before startup')
+        backup = source.with_name(source.name+'.migrated-backup')
+        if backup.exists():
+            raise RuntimeError('Legacy queue backup already exists; review migration before startup')
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(self.path.name+'.migrating')
+        if temporary.exists():
+            raise RuntimeError('Incomplete queue migration exists; review before startup')
+        try:
+            with closing(sqlite3.connect(source)) as original, closing(sqlite3.connect(temporary)) as target:
+                if original.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                    raise RuntimeError('Legacy queue integrity check failed')
+                original.backup(target)
+                if target.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                    raise RuntimeError('Migrated queue integrity check failed')
+                if list(original.iterdump()) != list(target.iterdump()):
+                    raise RuntimeError('Migrated queue contents differ')
+            temporary.replace(self.path)
+            source.rename(backup)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
 
     @contextmanager
     def transaction(self):
