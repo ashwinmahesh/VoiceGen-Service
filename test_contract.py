@@ -120,6 +120,20 @@ class ContractTests(unittest.TestCase):
         else:
             self.assertEqual(self.generate(reference_id=reference['id'],accent='Romanian English').status_code,422)
             self.assertEqual(self.generate(reference_id=reference['id'],clone_mode='continuation').status_code,422)
+    def test_combined_validation_metadata_and_reuse(self):
+        reference=self.upload().json()
+        for fields in [{}, {'ref_text':'   '}]:
+            self.assertEqual(self.generate(reference_id=reference['id'],clone_mode='combined',**fields).status_code,422)
+        request=dict(reference_id=reference['id'],clone_mode='combined',ref_text='Exact words.',idempotency_key='combined-test')
+        if server.PROFILE['backend']!='voxcpm2':
+            self.assertEqual(self.generate(**request).status_code,422);return
+        job=self.generate(**request).json();result=self.finish(job)['result']
+        self.assertEqual(result['effective']['ref_text'],'Exact words.')
+        self.assertEqual(result['requested']['clone_mode'],'combined')
+        self.assertEqual(result['effective']['description'],'')
+        self.assertEqual(result['reference']['transcript'],'Exact words.')
+        self.assertEqual(self.generate(**request).json()['id'],job['id'])
+        self.assertEqual(self.generate(**{**request,'clone_mode':'continuation'}).status_code,409)
     def test_busy_and_disconnected_client_keeps_capacity(self):
         self.engine.gate=threading.Event()
         row=self.generate().json();self.assertTrue(self.engine.started.wait(1))

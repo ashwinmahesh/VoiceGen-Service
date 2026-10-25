@@ -4,7 +4,7 @@ from directions import PRESETS, EMOTIONS
 
 
 def capabilities():
-    qwen=PROFILE['backend']=='qwen3'
+    qwen=PROFILE['backend']=='qwen3';vox=PROFILE['backend']=='voxcpm2'
     custom=qwen and 'custom' in MODEL_SPECS
     return Capabilities(service=PROFILE['id'],name=PROFILE['name'],backend=PROFILE['backend'],
         quantization=PROFILE['quantization'],sample_rate=PROFILE['sample_rate'],models=MODEL_SPECS,
@@ -13,11 +13,11 @@ def capabilities():
                          'strength':{'default':8,'min':0,'max':12},'layers':[21,25],'decay':.985}
                     for key,spec in EXTENSION_SPECS.items()},presets=PRESETS if custom else [],
         modes={'design':{'description':True,'emotion':True,'accent':True},
-               'reference':{'description':False,'emotion':not qwen,'accent':not qwen,'transcript':True,
-                            'continuation':not qwen,'continuation_direction':False},
+               'reference':{'description':False,'emotion':vox,'accent':vox,'transcript':True,
+                            'continuation':vox,'combined':vox,'clone_modes':['reference','continuation','combined'] if vox else ['reference'],'continuation_direction':False},
                'preset':{'available':custom,'description':False,'emotion':custom,'accent':custom}},
-        controls={'steps':{'default':10,'min':1,'max':30} if not qwen else None,
-                  'guidance':{'default':2.,'min':1,'max':5} if not qwen else None,
+        controls={'steps':{'default':10,'min':1,'max':30} if vox else None,
+                  'guidance':{'default':2.,'min':1,'max':5} if vox else None,
                   'temperature':{'default':.9,'min':0,'max':2} if qwen else None,
                   'seed':{'default':42,'min':0,'max':2**32-1},
                   'max_tokens':{'default':1000,'min':50,'max':2000}},
@@ -28,7 +28,7 @@ def capabilities():
 
 
 def validate_controls(request):
-    caps=capabilities();qwen=PROFILE['backend']=='qwen3'
+    caps=capabilities();qwen=PROFILE['backend']=='qwen3';vox=PROFILE['backend']=='voxcpm2'
     for name in ['steps','guidance','temperature']:
         if getattr(request,name) is not None and caps.controls[name] is None:
             raise ValueError(f'{name} is unsupported by {PROFILE["name"]}')
@@ -38,12 +38,12 @@ def validate_controls(request):
         raise ValueError('Unsupported preset voice. See /api/capabilities')
     if qwen and reference and (request.emotion.strip() or request.accent.strip()):
         raise ValueError('Qwen Base does not support emotion or accent instructions with a reference voice')
-    if request.clone_mode=='continuation' and (qwen or not reference):
-        raise ValueError('Continuation is supported only for VoxCPM2 reference voices')
-    if request.clone_mode=='continuation' and (request.emotion.strip() or request.accent.strip()):
-        raise ValueError('Continuation follows the recorded delivery; choose reference mode for new emotion/accent directions')
-    if request.ref_text and not (reference and (qwen or request.clone_mode=='continuation')):
-        raise ValueError('ref_text requires Qwen reference cloning or VoxCPM2 continuation')
+    if request.clone_mode in ['continuation','combined'] and (not vox or not reference):
+        raise ValueError('Continuation/combined cloning is supported only for VoxCPM2 reference voices')
+    if request.clone_mode in ['continuation','combined'] and (request.emotion.strip() or request.accent.strip()):
+        raise ValueError('Continuation/combined cloning follows the recorded delivery; choose reference mode for new emotion/accent directions')
+    if request.ref_text and not (reference and (qwen or request.clone_mode in ['continuation','combined'])):
+        raise ValueError('ref_text requires Qwen reference cloning or VoxCPM2 continuation/combined cloning')
     if request.steering_emotion:
         if not request.preset_voice or not caps.extensions or request.steering_emotion not in EMOTIONS:
             raise ValueError('Emotion steering requires an installed Qwen CustomVoice preset and a listed emotion')

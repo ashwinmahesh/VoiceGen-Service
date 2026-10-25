@@ -12,7 +12,7 @@ class Generation(BaseModel):
     reference_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
     preset_voice: str | None = Field(default=None, max_length=40)
     accent: str = Field(default='', max_length=500)
-    clone_mode: Literal['reference','continuation'] = 'reference'
+    clone_mode: Literal['reference','continuation','combined'] = 'reference'
     steering_emotion: str | None = Field(default=None, max_length=30)
     steering_strength: float | None = Field(default=None, ge=0, le=12)
     ref_text: str | None = Field(default=None, max_length=3000)

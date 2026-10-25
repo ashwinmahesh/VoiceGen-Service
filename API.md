@@ -22,10 +22,10 @@ A single worker accepts one job; another request returns 409 immediately. Both v
 | `voice_id`, `reference_id` | Optional UUID hex IDs; choose one reference source or preset_voice |
 | `preset_voice` | Qwen CustomVoice preset ID from capabilities; mutually exclusive with voice_id/reference_id; description is optional additional direction |
 | `accent` | Optional accent instruction, <=500 characters; design/preset/Vox standard reference mode only; this is prompt guidance |
-| `clone_mode` | `reference` default; `continuation` on VoxCPM2 references requires an exact saved/override transcript |
+| `clone_mode` | `reference` default; `continuation` and `combined` on VoxCPM2 references require an exact saved/override transcript |
 | `steering_emotion` | Optional installed experimental direction; Qwen CustomVoice presets only; see capabilities |
 | `steering_strength` | Optional 0–12, default 8 when a direction is selected; cannot be supplied without steering_emotion |
-| `ref_text` | Optional exact reference transcript, up to 3000 characters; Qwen reference mode or VoxCPM2 continuation; overrides saved transcript |
+| `ref_text` | Optional exact reference transcript, up to 3000 characters; Qwen reference mode or VoxCPM2 continuation/combined; overrides saved transcript |
 | `language` | `auto` default; Qwen also English, Chinese, Japanese, Korean, German, French, Russian, Portuguese, Spanish, Italian. VoxCPM2 auto-detects from text |
 | `seed` | Default 42, unsigned 32-bit integer; reproducibility input, not a voice identity guarantee |
 | `steps` | VoxCPM2 only, default 10, 1–30, maps to inference_timesteps |
@@ -80,4 +80,12 @@ Read [EXTENSIONS.md](EXTENSIONS.md) for provenance, compatibility and limitation
 
 A preset requires no description. When temperature is omitted with steering, effective temperature is 1.1. Choose `clone_mode: "continuation"` plus a VoxCPM2 voice/reference ID and exact `ref_text` to continue the recorded performance; an empty override with no usable saved transcript returns 422 before inference. New metadata includes `applied_instructions`, extension revision/settings and requested/effective preset, accent and continuation controls. Old 2.0 records remain readable.
 
-VoxCPM2 continuation follows the recorded delivery and accepts no new emotion/accent directions in this service. Use its standard reference mode to apply prompt directions.
+VoxCPM2 continuation and combined cloning follow the recorded delivery and accept no new emotion/accent directions in this service. Use its standard reference mode to apply prompt directions.
+
+## Combined cloning and performance references
+
+VoxCPM2 accepts `clone_mode: "combined"` with a saved `voice_id` or uploaded `reference_id` and an exact saved/override `ref_text`. This sends the same recording as both `ref_audio` (identity) and `prompt_audio` plus `prompt_text` (recorded performance). Continuation and combined modes reject new emotion/accent directions. A reference description is catalog context, not an applied instruction. Default reference behavior is unchanged. Check `modes.reference.clone_modes`; Qwen and other unsupported backends reject combined mode. The full text is synthesized in one call, and its transcript counts toward the input budget.
+
+For expressive variants, upload clean recordings of the **same desired speaker**, save each with a distinct performance name, mood tags and its exact spoken transcript, then select the variant for combined cloning. Preview the reference first: tags are organizational notes, not proof of accent quality. The selected recording supplies both identity and performance; a separate identity anchor is not exposed. Private recordings, transcripts and presets remain outside Git. Accent retention and delivery require listening; no accent guarantee is made.
+
+Longer sentence pauses are not automatically aligned or inferred. Preserve raw full-line takes; do not synthesize tiny sentence fragments or treat energy minima as verified sentence boundaries. Reviewed boundary edits can add silence to reach a desired total gap while preserving voiced samples and longer existing gaps. No speed, temperature or accent-strength control is added for VoxCPM2.

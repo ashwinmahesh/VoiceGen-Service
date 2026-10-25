@@ -52,9 +52,13 @@ class Engine:
         instruction_text = instructions(request,reference)
         common = dict(text=request.text, max_tokens=request.max_tokens)
         if PROFILE['backend'] == 'voxcpm2':
-            conditioning = {'prompt_audio':str(reference),'prompt_text':transcript.rstrip()+' '} if request.clone_mode=='continuation' else {'ref_audio':str(reference) if reference else None}
+            conditioning = {'prompt_audio':str(reference),'prompt_text':transcript.rstrip()+' '} if request.clone_mode in ['continuation','combined'] else {'ref_audio':str(reference) if reference else None}
+            if request.clone_mode=='combined':
+                conditioning['ref_audio']=str(reference)
             return self.model.generate(**common,instruct=instruction_text or None,**conditioning,
                 inference_timesteps=request.steps,cfg_value=request.guidance)
+        if PROFILE['backend'] != 'qwen3':
+            raise ValueError('Unsupported backend: '+PROFILE['backend'])
         common.update(temperature=request.temperature, verbose=False, stream=False)
         if request.preset_voice:
             return self.model.generate_custom_voice(**common,speaker=request.preset_voice,language=request.language,instruct=instruction_text or None)
@@ -62,6 +66,14 @@ class Engine:
             return self.model.generate_voice_design(**common,instruct=instruction_text,language=request.language)
         return self.model.generate(**common, ref_audio=str(reference), ref_text=transcript or None,
                                    lang_code=request.language, split_pattern='')
+
+    def check_input_budget(self, request, reference, transcript):
+        encoded = self.model.tokenizer.encode('\n'.join([request.text, request.description if not reference else '',
+            request.emotion, request.accent,
+            transcript if PROFILE['backend']=='qwen3' or request.clone_mode in ['continuation','combined'] else '']))
+        if len(encoded) > capabilities().limits['input_tokens']:
+            raise ValueError('Input exceeds the documented token limit; shorten text, description, or transcript.')
+        return encoded
 
     def generate(self, request, reference, destination, on_stage=None, transcript=''):
         import mlx.core as mx
@@ -73,10 +85,7 @@ class Engine:
         if on_stage: on_stage('Loading model' if cold else 'Generating speech')
         self.load(variant)
         loaded = time.monotonic()
-        encoded = self.model.tokenizer.encode('\n'.join([request.text, request.description if not reference else '',
-                                                        request.emotion, request.accent, transcript if PROFILE['backend']=='qwen3' or request.clone_mode=='continuation' else '']))
-        if len(encoded) > capabilities().limits['input_tokens']:
-            raise ValueError('Input exceeds the documented token limit; shorten text, description, or transcript.')
+        encoded = self.check_input_budget(request,reference,transcript)
         mx.random.seed(request.seed)
         mx.reset_peak_memory()
         if on_stage: on_stage('Generating speech')

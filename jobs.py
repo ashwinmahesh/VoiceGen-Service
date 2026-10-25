@@ -106,7 +106,7 @@ class JobManager:
             metrics = self.engine.generate(effective,reference,destination,stage,transcript=transcript)
             applied = effective.model_dump(exclude={'idempotency_key'})
             applied['description'] = effective.description if reference is None else ''
-            applied['ref_text'] = (transcript or None) if PROFILE['backend']=='qwen3' or effective.clone_mode=='continuation' else None
+            applied['ref_text'] = (transcript or None) if PROFILE['backend']=='qwen3' or effective.clone_mode in ['continuation','combined'] else None
             applied['output_dir'] = str(destination.parent)
             row = {**effective.model_dump(exclude={'idempotency_key'}),**metrics,'id':identity,
                 'created_at':now(),'api_version':'2.1.0', 'requested':request.model_dump(exclude={'idempotency_key'}),

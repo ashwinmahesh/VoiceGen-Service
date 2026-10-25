@@ -30,6 +30,30 @@ class ExtensionTests(unittest.TestCase):
         call=adapter.model.generate.call_args.kwargs
         self.assertEqual(call['prompt_audio'],str(reference));self.assertEqual(call['prompt_text'].strip(),'These exact words.')
         self.assertNotIn('ref_audio',call);self.assertIsNone(call['instruct'])
+    def test_vox_combined_routing_and_backend_restrictions(self):
+        adapter=engine.Engine();adapter.model=Mock();reference=Path('/tmp/reference.wav')
+        request=self.request(clone_mode='combined',voice_id='a'*32,ref_text='Exact words.')
+        with patch('engine.PROFILE',self.profile('voxcpm2')):
+            adapter.backend_call(request,reference,'Exact words.  \n')
+        call=adapter.model.generate.call_args.kwargs
+        self.assertEqual(call['prompt_audio'],str(reference))
+        self.assertEqual(call['ref_audio'],str(reference))
+        self.assertEqual(call['prompt_text'],'Exact words. ')
+        self.assertIsNone(call['instruct'])
+        for backend in ['qwen3','chatterbox','index','moss','fish','higgs']:
+            with patch('capabilities.PROFILE',self.profile(backend)):
+                with self.assertRaises(ValueError):capabilities.validate_controls(request)
+        with patch('capabilities.PROFILE',self.profile('voxcpm2')):
+            for fields in [dict(emotion='Quiet'),dict(accent='Romanian')]:
+                with self.assertRaises(ValueError):capabilities.validate_controls(request.model_copy(update=fields))
+            self.assertIn('combined',capabilities.capabilities().modes['reference']['clone_modes'])
+    def test_combined_transcript_counts_toward_budget(self):
+        adapter=engine.Engine();adapter.model=Mock()
+        adapter.model.tokenizer.encode.side_effect=lambda text:list(text)
+        with patch('engine.PROFILE',self.profile('voxcpm2')):
+            request=self.request(clone_mode='combined',voice_id='a'*32)
+            with self.assertRaises(ValueError):adapter.check_input_budget(request,Path('/tmp/ref.wav'),'x'*4096)
+            self.assertLess(len(adapter.check_input_budget(request.model_copy(update={'clone_mode':'reference'}),Path('/tmp/ref.wav'),'x'*4096)),4096)
     def test_exclusive_speaker_sources(self):
         for fields in [dict(preset_voice='ryan',voice_id='a'*32),dict(preset_voice='ryan',reference_id='b'*32)]:
             with self.assertRaises(ValueError):self.request(**fields)

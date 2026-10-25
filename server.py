@@ -97,8 +97,8 @@ def generate(request: Generation):
             transcript = request.ref_text if request.ref_text is not None else source.get('transcript','')
             reference_info = {key:source[key] for key in ['id','name','duration','original','effective','sample_rate','channels','source_id','source_kind'] if key in source}
             effective = effective.model_copy(update={'description':source.get('design_description',source.get('description',''))})
-        if effective.clone_mode=='continuation' and not transcript.strip():
-            raise ValueError('Continuation requires the exact transcript of the reference recording')
+        if effective.clone_mode in ['continuation','combined'] and not transcript.strip():
+            raise ValueError('Continuation/combined cloning requires the exact transcript of the reference recording')
         errors = all_errors()
         if errors: raise HTTPException(503,'Incomplete setup. Run make download. '+ '; '.join(errors))
         destination = storage.output_folder(request.output_dir)

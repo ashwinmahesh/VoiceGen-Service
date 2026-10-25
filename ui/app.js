@@ -14,7 +14,7 @@ $('emotion-preset').onchange=()=>{$('emotion').value=presets[$('emotion-preset')
 function count(){$('count').textContent=`${$('text').value.length} / 3000`}count();
 function settings(){
  const referenceMode=mode==='saved'||mode==='upload';
- const direction=!referenceMode||(caps?.modes.reference.emotion&&$('clone-mode').value!=='continuation');
+ const direction=!referenceMode||(caps?.modes.reference.emotion&&$('clone-mode').value==='reference');
  const result={text:$('text').value,description:mode==='design'?$('description').value:'',
    emotion:direction?$('emotion').value:'',accent:direction?$('accent').value:'',
    seed:Number($('seed').value),max_tokens:Number($('max-tokens').value),
@@ -24,7 +24,7 @@ function settings(){
    clone_mode:referenceMode&&caps?.modes.reference.continuation?$('clone-mode').value:'reference',
    language:$('language').value||'auto',output_dir:$('output-dir').value.trim()||null};
  for(const key of ['steps','guidance','temperature'])if(caps?.controls[key])result[key]=Number($(key).value);
- if(referenceMode&&(caps?.backend==='qwen3'||result.clone_mode==='continuation'))result.ref_text=$('ref-text').value||null;
+ if(referenceMode&&(caps?.backend==='qwen3'||['continuation','combined'].includes(result.clone_mode)))result.ref_text=$('ref-text').value||null;
  if(mode==='preset'&&$('steering-emotion').value){result.steering_emotion=$('steering-emotion').value;result.steering_strength=Number($('steering-strength').value)}
  return result;
 }
@@ -32,19 +32,21 @@ function persist(){if(caps)localStorage.setItem(storageKey+'-form',JSON.stringif
 function updateCapabilities(){
  if(!caps)return;
  const referenceMode=mode==='saved'||mode==='upload';
- const direction=!referenceMode||(caps.modes.reference.emotion&&$('clone-mode').value!=='continuation');
+ const direction=!referenceMode||(caps.modes.reference.emotion&&$('clone-mode').value==='reference');
  $('emotion').disabled=$('emotion-preset').disabled=$('accent').disabled=!direction;
- $('emotion-hint').textContent=referenceMode&&$('clone-mode').value==='continuation'?'Continuation follows the reference delivery. Choose Voice reference to direct a different emotion or accent.':direction?'Direct the performance in words. Voice identity and expression are approximate.':'Qwen Base reuses the recorded performance but accepts no direct emotion or accent instructions. Use VoiceDesign or expressive presets for directed speech.';
+ $('emotion-hint').textContent=referenceMode&&['continuation','combined'].includes($('clone-mode').value)?'Continuation and combined cloning follow the reference delivery. Choose Voice reference to direct a different emotion or accent.':direction?'Direct the performance in words. Voice identity and expression are approximate.':'Qwen Base reuses the recorded performance but accepts no direct emotion or accent instructions. Use VoiceDesign or expressive presets for directed speech.';
  $('accent-hint').textContent=direction?'A prompt direction, not a trained accent pack. A recording with the desired accent is usually the stronger cue.':'The reference recording supplies the accent in this mode.';
  for(const key of ['steps','guidance','temperature'])$(key+'-field').hidden=!caps.controls[key];
  document.querySelector('[data-mode="preset"]').hidden=!caps.modes.preset?.available;
  $('language-field').hidden=caps.languages.length<2;
  $('reference-options').hidden=!referenceMode;
+ for(const option of $('clone-mode').options)option.hidden=!(caps.modes.reference.clone_modes||['reference']).includes(option.value);
+ if(!(caps.modes.reference.clone_modes||['reference']).includes($('clone-mode').value))$('clone-mode').value='reference';
  $('clone-mode-field').hidden=!caps.modes.reference.continuation;
- const transcript=referenceMode&&(caps.backend==='qwen3'||$('clone-mode').value==='continuation');
+ const transcript=referenceMode&&(caps.backend==='qwen3'||['continuation','combined'].includes($('clone-mode').value));
  $('transcript-field').hidden=!transcript;
  $('ref-text-label').textContent=caps.backend==='qwen3'?'Exact reference transcript (optional)':'Exact reference transcript (or use saved transcript)';
- $('transcript-hint').textContent=caps.backend==='qwen3'?'An exact transcript improves cloning. Leave blank to use the saved transcript, or speaker embedding mode when none is saved.':'Continuation requires the exact words in the saved recording or uploaded reference. Supply them here or in the voice catalog.';
+ $('transcript-hint').textContent=caps.backend==='qwen3'?'An exact transcript improves cloning. Leave blank to use the saved transcript, or speaker embedding mode when none is saved.':'Continuation and combined cloning require the exact words in the saved recording or uploaded reference. Supply them here or in the voice catalog.';
  $('edit-transcript-field').hidden=false;
  $('steering-field').hidden=!caps.extensions?.emotion_steering;
  $('steering-strength-field').hidden=!$('steering-emotion').value;
@@ -153,7 +155,7 @@ $('search').oninput = () => {
   searchTimer=setTimeout(()=>loadCollection().catch(exc=>error(exc.message)),250);
 };
 function waveform(peaks){const canvas=$('waveform'),ratio=devicePixelRatio||1;canvas.width=canvas.clientWidth*ratio;canvas.height=110*ratio;const c=canvas.getContext('2d');c.clearRect(0,0,canvas.width,canvas.height);c.fillStyle='#c3b9ff';if(!peaks?.length)return;const step=canvas.width/peaks.length;peaks.forEach((peak,i)=>{const h=Math.max(2*ratio,peak*canvas.height*.9);c.fillRect(i*step,(canvas.height-h)/2,Math.max(1,step*.55),h)})}
-function showResult(row){latest=row;const details=[row.preset_voice?'Preset '+row.preset_voice:'',row.clone_mode==='continuation'?'Continued reference performance':'',row.accent?'Accent direction: '+row.accent:'',row.steering_emotion?`Experimental ${row.steering_emotion} steering · ${row.steering_strength}`:''].filter(Boolean);$('direction-summary').textContent=details.join(' · ');$('direction-summary').hidden=!details.length;$('empty').hidden=true;$('working').hidden=true;$('result').hidden=false;$('player').src=row.audio_url;$('download').href=row.audio_url+'?download=true';$('metrics').textContent=`${row.duration.toFixed(1)} seconds · ${row.sample_rate/1000} kHz · Synthesis ${row.generation_seconds}s${row.cold_load?` · Load ${row.load_seconds}s`:``}`;$('result-seed').textContent=`Seed ${row.seed}`;$('path').textContent=row.path;$('truncated').hidden=!row.possibly_truncated;$('save-hint').textContent='Use a clean, natural take as your character reference. Up to the first 30 seconds are saved.';waveform(row.waveform)}
+function showResult(row){latest=row;const details=[row.preset_voice?'Preset '+row.preset_voice:'',row.clone_mode==='combined'?'Combined identity and recorded performance':row.clone_mode==='continuation'?'Continued reference performance':'',row.accent?'Accent direction: '+row.accent:'',row.steering_emotion?`Experimental ${row.steering_emotion} steering · ${row.steering_strength}`:''].filter(Boolean);$('direction-summary').textContent=details.join(' · ');$('direction-summary').hidden=!details.length;$('empty').hidden=true;$('working').hidden=true;$('result').hidden=false;$('player').src=row.audio_url;$('download').href=row.audio_url+'?download=true';$('metrics').textContent=`${row.duration.toFixed(1)} seconds · ${row.sample_rate/1000} kHz · Synthesis ${row.generation_seconds}s${row.cold_load?` · Load ${row.load_seconds}s`:``}`;$('result-seed').textContent=`Seed ${row.seed}`;$('path').textContent=row.path;$('truncated').hidden=!row.possibly_truncated;$('save-hint').textContent='Use a clean, natural take as your character reference. Up to the first 30 seconds are saved.';waveform(row.waveform)}
 $('reuse').onclick=()=>{if(latest){restore(latest);$('text').focus()}};
 async function watch(identity){if(watching===identity)return;watching=identity;busy=true;controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;const started=Date.now();localStorage.setItem(storageKey+'-job',identity);try{while(true){const job=await api('/api/jobs/'+identity);$('stage').textContent=job.stage;$('elapsed').textContent=`${Math.floor((Date.now()-started)/1000)} seconds elapsed`;if(job.status==='done'){localStorage.removeItem(storageKey+'-job');showResult(job.result);await refresh();announce('Speech ready');break}if(job.status==='error'){localStorage.removeItem(storageKey+'-job');throw Error(job.error);}await new Promise(resolve=>setTimeout(resolve,1500))}}catch(exc){error(exc.message);$('working').hidden=true;$('empty').hidden=!latest;if(latest)showResult(latest)}finally{busy=false;watching=null;controls()}}
 $('form').onsubmit=async event=>{event.preventDefault();if(busy||uploading)return;const request=settings();if(mode==='preset'&&!request.preset_voice){error('Choose an expressive preset voice first.');return}if(mode==='saved'&&!request.voice_id){error('Choose a saved voice first.');return}if(mode==='upload'&&!request.reference_id){error('Choose an audio reference first.');return}busy=true;controls();try{pendingKey=pendingKey||crypto.randomUUID();const job=await post('/api/generate',{...request,idempotency_key:pendingKey});pendingKey=null;watch(job.id)}catch(exc){busy=false;controls();error(exc.message)}};
@@ -199,7 +201,7 @@ function openVoiceEditor(context) {
   $('voice-editor-save').textContent = context.edit_id ? 'Save changes' : 'Save voice';
   $('voice-editor-hint').textContent = context.edit_id ?
     'Update the catalog details. The saved recording stays the same.' :
-    'Name this character, describe it, and add tags so you can find it later.';
+    'Save named performance variants of the same speaker with mood tags and the exact transcript. Choose the desired recorded delivery before combined cloning.';
   $('edit-voice-name').value = context.name || '';
   $('edit-voice-description').value = context.description || '';
   $('edit-voice-tags').value = (context.tags || []).join(', ');
