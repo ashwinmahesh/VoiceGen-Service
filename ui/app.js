@@ -244,7 +244,7 @@ $('save-reference').onclick = () => {
     name: (reference.name || 'Uploaded voice').replace(/\.[^.]+$/, '').slice(0, 100), description: '', transcript:$('ref-text').value,tags: []});
 };
 $('unload').onclick=async()=>{try{await post('/api/model/unload',{});announce('Model memory released. It reloads on the next take.');await health()}catch(exc){error(exc.message)}};
-async function health(){try{const state=await api('/health');online=state.downloaded;$('status').dataset.offline=!online;$('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';busy=state.busy;if(state.active_job&&!watching)watch(state.active_job);await refreshQueue()}catch{online=false;$('status').textContent='Server offline';$('status').dataset.offline=true}controls()}
+async function health(){try{const state=await api('/health');online=state.downloaded&&!state.runtime_errors?.length;$('status').dataset.offline=!online;$('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';busy=state.busy;if(state.active_job&&!watching)watch(state.active_job);await refreshQueue()}catch{online=false;$('status').textContent='Server offline';$('status').dataset.offline=true}controls()}
 let queueOffset=0,queuePage=null,queueRequest=0;
 async function refreshQueue(){
  const token=++queueRequest;

@@ -63,7 +63,7 @@ class JobManager:
                     try:
                         if not self._reconcile(row):
                             self.store.change(row['id'],status='queued',stage='Recovered after restart',error=None)
-                    except (OSError,ValueError,KeyError,RuntimeError,wave.Error) as exc:
+                    except Exception as exc:
                         self.store.change(row['id'],status='error',stage='Recovery needs review',error=str(exc))
                 # Pre-queue JSON lacks the inputs needed to safely replay. Preserve IDs/keys.
                 for path in (self.root/'jobs').glob('*.json'):
@@ -193,6 +193,10 @@ class JobManager:
             model = self.profile.get('modes',{}).get(mode,self.profile['id'])
             spec = MODEL_SPECS.get(model,{})
             payload['model_identity'] = {k:spec.get(k) for k in ['repo','revision']}
+            payload['aux_references'] = {}
+            if effective.emotion_reference_id:
+                path = validate_mount(self.root/'references'/f'{effective.emotion_reference_id}.wav')
+                payload['aux_references']['emotion'] = {'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
             key = hashlib.sha256(request.idempotency_key.encode()).hexdigest() if request.idempotency_key else None
             try:
                 row = self.store.admit(self.profile['backend'],model,mode,request.generate_immediately,
@@ -231,7 +235,7 @@ class JobManager:
             handle = None
             try:
                 with self.guard:
-                    if not self._stop.is_set():
+                    if not self._stop.is_set() and self.store.has_pending(self.profile['backend']):
                         handle = self.reserve()
                         row = self.store.claim(self.profile['backend'])
                         if row:
@@ -285,23 +289,29 @@ class JobManager:
                     raise ValueError('Queued reference is unavailable; reconnect its storage before retrying')
                 if hashlib.sha256(reference.read_bytes()).hexdigest() != payload['reference_sha256']:
                     raise ValueError('Queued reference bytes changed; inspect the recording before resubmitting')
+            for auxiliary in payload.get('aux_references',{}).values():
+                path = validate_mount(auxiliary['path'])
+                if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != auxiliary['sha256']:
+                    raise ValueError('Queued emotion reference is missing or changed; restore admitted bytes before retrying')
             def stage(value):
                 self.stage = 'loading' if value=='Loading model' else 'generating'
                 self.update(identity,stage=value)
             with inherit_reservations(self._owner,handle,self.data_owner):
                 metrics = self.engine.generate(effective,reference,destination,stage,transcript=payload['transcript'])
-            applied = generation_metadata(effective)
-            applied.pop('generate_immediately',None)
+            metadata_settings = generation_metadata(effective)
+            metadata_settings.pop('generate_immediately',None)
+            applied = dict(metadata_settings)
             applied['description'] = effective.description if reference is None else ''
             applied['ref_text'] = (payload['transcript'] or None) if self.profile['backend'] in ('qwen3','fish','higgs') or effective.clone_mode in ['continuation','combined'] else None
             applied['output_dir'] = str(destination.parent)
-            result = {**applied,**metrics,'id':identity,'backend':queued['backend'],
+            result = {**metadata_settings,**metrics,'id':identity,'backend':queued['backend'],
                 'model':metrics.get('model',queued['model']),'queue_model':queued['model'],
                 'created_at':now(),'api_version':'2.1.0',
-                'requested':generation_metadata(request),'effective':applied,
+                'requested':payload['requested'],'effective':applied,
                 'audio_url':f'/api/audio/outputs/{identity}','path':str(destination),
                 'metadata_path':str(destination.with_suffix('.json')),
                 'reference':{'path':str(reference),'transcript':payload['transcript'],**(payload['reference_info'] or {})} if reference else None}
+            result['input_references'] = payload.get('aux_references',{})
             backend=self.profile['backend']
             if isinstance(applied.get(backend),dict) and isinstance(metrics.get(backend),dict):
                 result[backend]={**applied[backend],**metrics[backend]}

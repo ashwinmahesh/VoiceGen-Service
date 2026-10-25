@@ -78,6 +78,8 @@ class QueueStore:
             if key_hash:
                 old = db.execute('SELECT * FROM entries WHERE key_hash=?', (key_hash,)).fetchone()
                 if old:
+                    if old['backend'] != backend:
+                        raise QueueConflict('This idempotency key belongs to another backend')
                     if old['fingerprint'] != fingerprint:
                         raise QueueConflict('This idempotency key was used with different settings')
                     return self.decode(old)
@@ -105,6 +107,10 @@ class QueueStore:
             db.execute('UPDATE entries SET '+','.join(f'{k}=?' for k in changes)+' WHERE id=?',
                        (*changes.values(),identity))
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+
+    def has_pending(self, backend):
+        with self.transaction() as db:
+            return db.execute("SELECT 1 FROM entries WHERE status='queued' AND backend=? LIMIT 1",(backend,)).fetchone() is not None
 
     def claim(self, backend):
         with self.transaction() as db:

@@ -48,7 +48,7 @@ class ContractTests(unittest.TestCase):
         self.engine=FakeEngine();self.manager=JobManager(self.engine,self.root,self.root/'gpu.lock')
         self.stack=ExitStack()
         for target,value in [('server.ROOT',self.root),('storage.ROOT',self.root),('storage.OUTPUT_DIR',self.root/'outputs'),
-                             ('server.engine',self.engine),('server.manager',self.manager),('server.all_errors',lambda:[]),
+                             ('server.engine',self.engine),('server.manager',self.manager),('server.all_errors',lambda:[]),('server.runtime_errors',lambda:[]),
                              ('server.prepare_storage',lambda:None)]:
             self.stack.enter_context(patch(target,value))
         self.client=TestClient(server.app);self.client.__enter__()
@@ -125,7 +125,7 @@ class ContractTests(unittest.TestCase):
         import jobs,capabilities
         for backend,options in [('chatterbox',{'exaggeration':.7}),('indextts',{'duration_factor':1.2,'emotion_vector':[.1]*8,'emotion_alpha':.5})]:
             profile=json.loads((PROJECT_ROOT/'backends'/backend/'service.json').read_text())
-            with patch('server.PROFILE',profile),patch('jobs.PROFILE',profile),patch('capabilities.PROFILE',profile):
+            with patch('server.PROFILE',profile),patch.object(self.manager,'profile',profile),patch('capabilities.PROFILE',profile):
                 job=self.generate(reference_id=reference['id'],language='English',**{backend:options}).json()
                 result=self.finish(job)['result']
                 self.assertNotIn('exaggeration',result['requested']);self.assertNotIn('duration_factor',result['effective'])

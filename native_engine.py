@@ -12,6 +12,7 @@ import time
 from assets import all_errors
 from config import MODEL_DIR, MODEL_SPECS, PROFILE, PROJECT_ROOT, ROOT
 from directions import instructions
+from inference_locks import reservation_descriptors
 
 from backend_selection import AUDIOCPP_REVISION
 
@@ -54,7 +55,7 @@ class NativeEngine:
         try:
             with log.open('w') as stream:
                 result=subprocess.run(['/usr/bin/time','-l',*args],stdout=stream,stderr=subprocess.STDOUT,
-                                      cwd=PROJECT_ROOT,check=False)
+                                      cwd=PROJECT_ROOT,check=False,pass_fds=reservation_descriptors())
             if result.returncode:raise RuntimeError(f'Native runtime exited {result.returncode}; inspect {log}')
             data,sr=sf.read(temporary,dtype='float32')
             if data.ndim!=1 or not data.size or not np.isfinite(data).all() or float(np.max(np.abs(data)))<1e-5:

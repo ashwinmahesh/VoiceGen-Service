@@ -9,7 +9,7 @@ import time
 import unittest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
-from config import ROOT
+from config import ROOT, PROJECT_ROOT
 from durable_queue import QueueStore, QueueConflict
 from jobs import JobManager, BusyError
 from schemas import Generation
@@ -155,11 +155,14 @@ class QueueTests(QueueFixture):
         manager=self.manager();manager.engine.gate=threading.Event();manager.recover()
         peer=self.manager()
         with self.assertRaises(BusyError):peer.recover()
-        root=self.root/'peer';(root/'jobs').mkdir(parents=True)
+        root=self.root/'peer'
+        for name in ['jobs','artifact-index','outputs']:(root/name).mkdir(parents=True,exist_ok=True)
         other=self.manager(root=root,lock=self.root/'gpu.lock');other.recover()
         first=self.submit(manager);self.assertTrue(manager.engine.started.wait(2))
         second=self.submit(other,'Peer.');time.sleep(.25);self.assertEqual(other.engine.calls,[])
-        manager.engine.gate.set();self.done(manager,first['id']);self.done(other,second['id'])
+        manager.engine.gate.set()
+        self.assertEqual(self.done(manager,first['id'])['status'],'done')
+        self.assertEqual(self.done(other,second['id'])['status'],'done')
     def test_concurrent_identical_admission_is_one_entry(self):
         manager=self.manager();barrier=threading.Barrier(5);rows=[]
         def submit():barrier.wait();rows.append(self.submit(manager,idempotency_key='race'))
@@ -184,6 +187,96 @@ class QueueTests(QueueFixture):
         old.close();new=self.manager();new.recover()
         self.assertEqual(new.read(row['id'])['status'],'error');self.assertEqual(new.engine.calls,[])
 
+    def test_all_backend_namespaces_defaults_and_transcripts_survive_queue_restart(self):
+        from capabilities import validate_controls
+        cases={
+            'voxcpm2':{'steps':12},'qwen3':{'temperature':.8},
+            'chatterbox':{'chatterbox':{'exaggeration':.7,'cfg_weight':.3}},
+            'indextts':{'language':'English','indextts':{'duration_factor':1.2,'interval_silence':650,'emotion_vector':[.1]*8,'emotion_alpha':.6}},
+            'moss':{'language':'English'},'fish':{'ref_text':'Exact frozen words.'},'higgs':{'ref_text':'Exact frozen words.'}}
+        reference=self.root/'references'/('a'*32+'.wav');reference.write_bytes(wav())
+        for backend,settings in cases.items():
+            with self.subTest(backend=backend):
+                directory=PROJECT_ROOT/'backends'/backend
+                profile=json.loads((directory/'service.json').read_text())
+                specs=json.loads((directory/'model_specs.json').read_text())
+                referenced=backend in ['chatterbox','indextts','fish','higgs']
+                request=Generation(text='Backend fixture.',description='' if referenced else 'A calm voice.',
+                    reference_id='a'*32 if referenced else None,**settings)
+                with patch('capabilities.PROFILE',profile),patch('capabilities.MODEL_SPECS',specs),patch('capabilities.EXTENSION_SPECS',{}),patch('jobs.MODEL_SPECS',specs):
+                    effective=validate_controls(request)
+                    manager=self.manager(backend=backend);manager.profile=profile
+                    row=manager.submit(request,effective,reference if referenced else None,
+                        request.ref_text or '',self.root/'outputs')
+                    frozen=manager.store.read(row['id'])['payload']['effective']
+                    manager.close()
+                    fresh=self.manager(backend=backend);fresh.profile=profile;fresh.recover()
+                    result=self.done(fresh,row['id']);self.assertEqual(result['status'],'done',result)
+                    applied=fresh.engine.calls[0][0]
+                    self.assertEqual(applied.temperature,effective.temperature)
+                    self.assertEqual(result['backend'],backend)
+                    self.assertEqual(result['result']['description'],effective.description)
+                    self.assertEqual(result['result']['effective']['temperature'],frozen['temperature'])
+                    if backend in ['chatterbox','indextts']:
+                        self.assertEqual(result['result']['effective'][backend],frozen[backend])
+                        self.assertNotIn('duration_factor',result['effective'])
+                        self.assertEqual(applied.duration_factor,effective.duration_factor)
+                    if backend in ['fish','higgs']:
+                        self.assertEqual(fresh.engine.calls[0][2],'Exact frozen words.')
+                        self.assertEqual(result['result']['effective']['ref_text'],'Exact frozen words.')
+                    fresh.close()
+
+    def test_emotion_reference_hash_blocks_changed_secondary_conditioning(self):
+        from capabilities import validate_controls
+        profile=json.loads((PROJECT_ROOT/'backends/indextts/service.json').read_text())
+        speaker=self.root/'references'/('a'*32+'.wav');speaker.write_bytes(wav())
+        emotion=self.root/'references'/('b'*32+'.wav');emotion.write_bytes(wav())
+        manager=self.manager(backend='indextts');manager.profile=profile
+        for fields in [{'indextts':{'emotion_reference_id':'b'*32}}, {'emotion_reference_id':'b'*32}]:
+            with patch('capabilities.PROFILE',profile):
+                request=Generation(text='Emotion fixture.',reference_id='a'*32,language='English',**fields)
+                effective=validate_controls(request)
+                row=manager.submit(request,effective,speaker,'',self.root/'outputs')
+                self.assertIn('emotion',manager.store.read(row['id'])['payload']['aux_references'])
+        emotion.write_bytes(wav(seconds=3));manager.recover()
+        page=manager.listing(statuses=())
+        for row in page['data']:
+            self.assertEqual(self.done(manager,row['id'])['status'],'error')
+        self.assertEqual(manager.engine.calls,[])
+
+    def test_unreadable_wav_marker_fails_job_without_blocking_startup(self):
+        old=self.manager();row=self.submit(old);record=old.store.claim('voxcpm2')
+        destination=Path(record['payload']['destination']);destination.write_bytes(b'RIFF')
+        atomic_json(destination.with_suffix('.json'),dict(id=row['id'],text='Hello.',created_at=row['created_at'],sample_rate=16000,duration=2.))
+        old.close();new=self.manager();new.recover()
+        self.assertEqual(new.read(row['id'])['status'],'error')
+        next_row=self.submit(new,'Valid work after invalid marker.')
+        self.assertEqual(self.done(new,next_row['id'])['status'],'done')
+
+    def test_worker_binds_actual_server_owner_and_accelerator_handles(self):
+        import os
+        from data_owner import own_data_directory
+        from inference_locks import reservation_descriptors
+        manager=self.manager();original=manager.engine.generate;captured=[]
+        with own_data_directory(self.root) as owner:
+            manager.data_owner=owner
+            def generate(*args,**kwargs):
+                descriptors=reservation_descriptors();captured.extend(descriptors)
+                self.assertIn(owner.fileno(),descriptors)
+                self.assertIn(manager._owner.fileno(),descriptors)
+                self.assertEqual(len(descriptors),3)
+                self.assertIn(os.stat(self.root/'gpu.lock').st_ino,[os.fstat(fd).st_ino for fd in descriptors])
+                return original(*args,**kwargs)
+            manager.engine.generate=generate;manager.recover();row=self.submit(manager)
+            self.assertEqual(self.done(manager,row['id'])['status'],'done')
+            manager.close()
+        self.assertEqual(len(captured),3)
+
+    def test_same_key_cannot_change_backend(self):
+        manager=self.manager();self.submit(manager,idempotency_key='backend')
+        other=self.manager(backend='qwen3')
+        with self.assertRaises(BusyError):self.submit(other,idempotency_key='backend')
+
     def test_reference_is_pinned_to_admitted_bytes_and_transcript(self):
         manager=self.manager();reference=self.root/'references'/('a'*32+'.wav');reference.write_bytes(wav())
         request=Generation(text='Reference.',reference_id='a'*32,ref_text=None)
@@ -198,7 +291,7 @@ class QueueAPITests(QueueFixture):
         import server
         manager=self.manager();manager.engine.gate=threading.Event()
         with ExitStack() as stack:
-            for key,value in [('manager',manager),('engine',manager.engine),('all_errors',lambda:[]),('prepare_storage',lambda:None),('ROOT',self.root)]:
+            for key,value in [('manager',manager),('engine',manager.engine),('all_errors',lambda:[]),('runtime_errors',lambda:[]),('prepare_storage',lambda:None),('ROOT',self.root)]:
                 stack.enter_context(patch('server.'+key,value))
             with TestClient(server.app) as client:
                 body={'text':'API fixture.','description':'A calm voice.'}

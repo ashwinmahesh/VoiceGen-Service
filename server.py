@@ -35,12 +35,14 @@ async def lifespan(app):
     notice=notice_for(PROFILE['backend'])
     if notice:logging.warning('%s License: %s',notice['notice'],notice['license_url'])
     from data_owner import own_data_directory
-    with own_data_directory(ROOT):
+    with own_data_directory(ROOT) as owner:
+        manager.data_owner = owner
         manager.recover()
         try:
             yield
         finally:
             await asyncio.to_thread(manager.close)
+            manager.data_owner = None
 
 
 app = FastAPI(title='Local Voice Studio API',version='2.1.0',lifespan=lifespan)

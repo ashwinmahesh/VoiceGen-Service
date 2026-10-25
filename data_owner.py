@@ -10,4 +10,4 @@ def own_data_directory(root):
             fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:
             raise RuntimeError('Another Voice Studio server owns this DATA_DIR. Choose an isolated data directory.') from None
-        yield
+        yield handle
