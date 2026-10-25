@@ -2,7 +2,7 @@
   "id": "fish",
   "name": "Fish Audio S2 Pro",
   "backend": "fish",
-  "port": 8003,
+  "port": 5743,
   "quantization": "8-bit",
   "sample_rate": 44100,
   "modes": {

@@ -2,7 +2,7 @@
   "id": "indextts",
   "name": "IndexTTS 2.5",
   "backend": "indextts",
-  "port": 8003,
+  "port": 5743,
   "quantization": "FP32",
   "sample_rate": 22050,
   "license": "LicenseRef-Bilibili-IndexTTS",

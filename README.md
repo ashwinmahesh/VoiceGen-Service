@@ -67,7 +67,7 @@ Plain `make serve` in a terminal shows a numbered list of **already set-up model
 
 Restricted models print a prominent **MODEL LICENSE WARNING** on every server startup, including explicit and noninteractive serving. `make start` also prints it in the launching terminal, while the server keeps it in its log. The warning names the model, explains when commercial generation/use of audio requires a separate license, and links the full terms. Fish, Higgs and IndexTTS have different conditions: Higgs retains its conditional Creator Use Grant, and IndexTTS identifies its organization-size thresholds. VoxCPM2, Qwen3-TTS, Chatterbox and MOSS do not show this commercial-license warning. The notice is informational and does not block startup. Full model-specific summaries remain visible in the UI and API; uploaded/reference recordings are not reclassified as generated audio.
 
-Default port comes from the selected backend profile: VoxCPM2 8003; Qwen3-TTS 8004. UI at `http://127.0.0.1:PORT/`, OpenAPI at `/openapi.json`, interactive docs at `/docs`. One startup backend owns the shared library and project-local queue at a time; another server against the same data/queue is rejected even on another port. Stop the active backend before selecting another, using the same MODEL/PORT used to start it. The configured shared GPU reservation serializes cooperating model services but does not evict resident weights. Unrelated image servers are never stopped or modified.
+All backend profiles default to port **5743**. UI at **http://localhost:5743/** (also `http://127.0.0.1:5743/`), OpenAPI at `/openapi.json`, interactive docs at `/docs`. Use `PORT=<number>` to override it. One startup backend owns the shared library and project-local queue at a time; another server against the same data/queue is rejected even on another port. Stop the active backend before selecting another, using the same MODEL/PORT used to start it. The configured shared GPU reservation serializes cooperating model services but does not evict resident weights. Unrelated image servers are never stopped or modified.
 
 ```sh
 # All commands run from this checkout; Qwen reuses the shared .venv-mlx.
@@ -84,14 +84,14 @@ make start MODEL=voxcpm2
 Describe a voice, choose emotion/delivery and enter a short line. Generate, play/download the WAV, then save a named voice with description and tags. Use the searchable, paginated catalog to reuse the recording for more lines; editing catalog details preserves the original design and audio. Uploads preserve originals and create bounded normalized copies. Qwen accepts optional exact reference transcripts; these can be edited in saved voice details. History search/pagination includes custom output destinations. Reuse settings fills the form; submission creates the new take.
 
 ```sh
-curl -s http://127.0.0.1:8003/api/capabilities
-curl -s http://127.0.0.1:8003/api/generate -H 'Content-Type: application/json' \
+curl -s http://127.0.0.1:5743/api/capabilities
+curl -s http://127.0.0.1:5743/api/generate -H 'Content-Type: application/json' \
   -d '{"text":"Welcome home.","description":"A warm, rich baritone.","emotion":"Quietly amused.","max_tokens":500,"idempotency_key":"welcome-take-1"}'
 # Poll the returned ID:
-curl -s http://127.0.0.1:8003/api/jobs/JOB_ID
+curl -s http://127.0.0.1:5743/api/jobs/JOB_ID
 ```
 
-Use port 8004 for Qwen. The shared schema deliberately rejects unsupported controls. VoxCPM2 supports description and reference-conditioned emotion, steps and guidance. Qwen VoiceDesign supports description+emotion; Qwen Base reuses saved/uploaded recordings and does not accept direct emotion instructions. Qwen switches checkpoints automatically, unloading the previous variant first. It uses transcript-assisted cloning when an exact transcript is available, or speaker embedding conditioning otherwise. Voice/accent/emotion matching is approximate and should be auditioned. Vox/Qwen expose no speed control or speech streaming endpoint. Other backend controls are documented in BACKENDS.md. Token caps may cut off long passages; start short. Full limits and retry/error semantics are in API.md.
+Qwen uses the same default port, 5743. The shared schema deliberately rejects unsupported controls. VoxCPM2 supports description and reference-conditioned emotion, steps and guidance. Qwen VoiceDesign supports description+emotion; Qwen Base reuses saved/uploaded recordings and does not accept direct emotion instructions. Qwen switches checkpoints automatically, unloading the previous variant first. It uses transcript-assisted cloning when an exact transcript is available, or speaker embedding conditioning otherwise. Voice/accent/emotion matching is approximate and should be auditioned. Vox/Qwen expose no speed control or speech streaming endpoint. Other backend controls are documented in BACKENDS.md. Token caps may cut off long passages; start short. Full limits and retry/error semantics are in API.md.
 
 Jobs, WAV/JSON results, voice samples, tags and reference transcripts persist locally. A client timeout does not cancel the job. Poll its ID or retry the same request with the same idempotency key; a new key can generate a duplicate. SQLite jobs survive restarts and are consumed automatically in original order; complete WAV/sidecar artifacts are reconciled before synthesis. Legacy unfinished JSON jobs lack replay inputs and remain interrupted errors. Model loading time is separate from synthesis time. Metadata reports actual sample rate/duration/channels, requested/effective settings, model/revision/runtime, timings and waveform peaks. Existing pre-v2 outputs/voices are retained and supported; legacy records naturally lack the newer provenance fields.
 
@@ -118,8 +118,8 @@ See service.json for the selected backend and model_specs.json for immutable rev
 
 | Backend | Port / output | Pinned weights |
 | --- | --- | --- |
-| VoxCPM2 | 8003 / 48 kHz | BF16, 4.96 GB; a7fb80d9056983135a54ca3f71fcc5a637ccddf5 |
-| Qwen3-TTS | 8004 / 24 kHz | VoiceDesign 8-bit, 3.08 GB; f90d617701d9f7f4ca499291e0b57f2b3c2fd2ee; Base 8-bit, 3.10 GB; e7dd0585652209fa0d7783659aad4e8a324de11c |
+| VoxCPM2 | 5743 / 48 kHz | BF16, 4.96 GB; a7fb80d9056983135a54ca3f71fcc5a637ccddf5 |
+| Qwen3-TTS | 5743 / 24 kHz | VoiceDesign 8-bit, 3.08 GB; f90d617701d9f7f4ca499291e0b57f2b3c2fd2ee; Base 8-bit, 3.10 GB; e7dd0585652209fa0d7783659aad4e8a324de11c |
 
 ## Expressiveness additions (API 2.1)
 

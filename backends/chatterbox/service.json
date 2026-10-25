@@ -2,7 +2,7 @@
   "id": "chatterbox",
   "name": "Chatterbox Original",
   "backend": "chatterbox",
-  "port": 8003,
+  "port": 5743,
   "quantization": "FP32",
   "sample_rate": 24000,
   "license": "MIT",

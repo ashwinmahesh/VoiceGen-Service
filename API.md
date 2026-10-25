@@ -133,7 +133,7 @@ Generation `requested`/`effective` settings remain unchanged. `transformation` s
 In the webpage, open a completed/history take and choose **Adjust pauses**. Listen or seek, copy playback time into the start/end fields (or enter measured times), listen to the selection, and add/remove reviewed gaps. Set the desired total and confirm every selection was reviewed, then create a separate longer-pause version. Raw audio remains available in History. This workflow does not automatically enforce 750ms sentence pauses.
 ## Additional startup backends
 
-See BACKENDS.md for exact capabilities, storage/locks, licenses and validation. Start with `make serve MODEL=chatterbox|indextts|moss|fish|higgs PORT=...`; selection is not a per-generation request field. Existing Vox/Qwen profiles are also available. Health/capabilities identify the active backend. Unsupported controls fail with 422 before reserving the GPU.
+See BACKENDS.md for exact capabilities, storage/locks, licenses and validation. All backends default to `http://localhost:5743/`. Start with `make serve MODEL=chatterbox|indextts|moss|fish|higgs`; an optional `PORT=<number>` overrides the port. Selection is not a per-generation request field. Existing Vox/Qwen profiles are also available. Health/capabilities identify the active backend. Unsupported controls fail with 422 before reserving the GPU.
 
 | Additional field | Accepted backend and behavior |
 | --- | --- |

@@ -2,7 +2,7 @@
   "id": "higgs",
   "name": "Higgs TTS 3",
   "backend": "higgs",
-  "port": 8003,
+  "port": 5743,
   "quantization": "Q8_0",
   "sample_rate": 24000,
   "modes": {
