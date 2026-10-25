@@ -11,6 +11,7 @@ from config import ROOT, GPU_LOCK_FILE, PROFILE, MODEL_SPECS, PROJECT_ROOT, vali
 from durable_queue import QueueStore, QueueConflict
 from voice_catalog import now, atomic_json, IDENTITY
 from schemas import Generation, generation_metadata, MODEL_OPTIONS
+from inference_locks import inherit_reservations
 
 
 class BusyError(QueueConflict):
@@ -30,6 +31,7 @@ class JobManager:
         self.stage = 'unloaded'
         self._initialized = False
         self._owner = None
+        self.data_owner = None
         self._thread = None
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -286,7 +288,8 @@ class JobManager:
             def stage(value):
                 self.stage = 'loading' if value=='Loading model' else 'generating'
                 self.update(identity,stage=value)
-            metrics = self.engine.generate(effective,reference,destination,stage,transcript=payload['transcript'])
+            with inherit_reservations(self._owner,handle,self.data_owner):
+                metrics = self.engine.generate(effective,reference,destination,stage,transcript=payload['transcript'])
             applied = generation_metadata(effective)
             applied.pop('generate_immediately',None)
             applied['description'] = effective.description if reference is None else ''
