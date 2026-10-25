@@ -57,7 +57,7 @@ function updateCapabilities(){
  $('max-tokens-field').hidden=!!caps.limits.max_tokens_fixed;
  $('index-emotion').hidden=!caps.controls[caps.backend]?.emotion_vector;
  $('inline-hint').hidden=!caps.limits.inline_controls;
- $('inline-hint').textContent=caps.backend==='fish'?'Inline delivery: [whisper], [pause], [with strong accent]. Tags guide delivery; audition accent retention.':caps.backend==='higgs'?'Inline delivery: <|emotion:amusement|>, <|prosody:expressive_high|>, <|prosody:pause|>, <|prosody:long_pause|>. Sound events also need matching written sounds.':'';
+ $('inline-hint').textContent=caps.backend==='fish'?'Manual local tags such as [whisper] and [pause] remain available. Delivery tags guide performance; audition accent retention.':caps.backend==='higgs'?'Manual local tokens such as <|prosody:pause|> and <|prosody:long_pause|> remain available. They do not specify exact milliseconds.':'';
  $('reference-options').hidden=!referenceMode;
  for(const option of $('clone-mode').options)option.hidden=!(caps.modes.reference.clone_modes||['reference']).includes(option.value);
  if(!(caps.modes.reference.clone_modes||['reference']).includes($('clone-mode').value))$('clone-mode').value='reference';
