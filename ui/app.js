@@ -29,14 +29,18 @@ function settings(){
  const modelControls=caps?.controls[caps?.backend]||{},options={};
  for(const key of ['exaggeration','cfg_weight','duration_factor','interval_silence'])if(modelControls[key])options[key]=Number($(key).value);
  if(modelControls.emotion_vector){
-   if($('emotion-reference-id').value)options.emotion_reference_id=$('emotion-reference-id').value;
-   if($('emotion-vector').value.trim())options.emotion_vector=$('emotion-vector').value.split(',').map(Number);
+   const source=$('index-emotion-mode').value;
+   if(source==='audio'&&$('emotion-reference-id').value)options.emotion_reference_id=$('emotion-reference-id').value;
+   if(source==='vector'){options.emotion_vector=readIndexVector();if(options.emotion_vector.reduce((a,b)=>a+b,0)>1.000000001)throw Error('Emotion mixture total must not exceed 1.');}
    if(options.emotion_reference_id||options.emotion_vector)options.emotion_alpha=Number($('emotion_alpha').value);
  }
+ if(caps?.backend==='fish'){options.delivery_tags=$('fish-delivery-tags').value.split('\n').map(x=>x.trim()).filter(Boolean);}
+ if(caps?.backend==='higgs')for(const key of ['emotion','prosody','style'])if($('higgs-'+key).value)options[key]=$('higgs-'+key).value;
+ if(modelControls.top_p){options.top_p=Number($('model-top-p').value);options.top_k=Number($('model-top-k').value);}
  if(Object.keys(options).length)result[caps.backend]=options;
  return result;
 }
-function persist(){if(caps)localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(),description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}
+function persist(){if(caps)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(),description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
 function updateCapabilities(){
  if(!caps)return;
  const referenceMode=mode==='saved'||mode==='upload';
@@ -64,6 +68,7 @@ function updateCapabilities(){
  $('transcript-hint').textContent=caps.modes.reference.transcript_required?'This model requires the exact words in the reference recording. Supply them here or in the saved voice.':caps.backend==='qwen3'?'An exact transcript improves cloning. Leave blank to use the saved transcript, or speaker embedding mode when none is saved.':'Continuation and combined cloning require the exact words in the saved recording or uploaded reference. Supply them here or in the voice catalog.';
  count();
  $('edit-transcript-field').hidden=false;
+ updatePerformancePreview();
  $('steering-field').hidden=!caps.extensions?.emotion_steering;
  $('steering-strength-field').hidden=!$('steering-emotion').value;
 }
@@ -82,9 +87,9 @@ function restore(row){
  for(const key of ['exaggeration','cfg_weight','duration_factor','interval_silence','emotion_alpha'])if($(key))$(key).value=row[caps.backend]?.[key]??row[key]??caps.controls[caps.backend]?.[key]?.default??1;
  $('emotion-reference-id').value=row[caps.backend]?.emotion_reference_id||row.emotion_reference_id||'';$('emotion-vector').value=(row[caps.backend]?.emotion_vector||row.emotion_vector)?.join(',')||'';
  $('emotion-reference-info').textContent=(row[caps.backend]?.emotion_reference_id||row.emotion_reference_id)?'Using the saved emotion recording.':'';
- $('ref-text').value=row.ref_text||'';updateCapabilities();count();persist();
+ restorePerformance(row);$('ref-text').value=row.ref_text||'';updateCapabilities();count();persist();
 }
-$('form').addEventListener('input',()=>{pendingKey=null;count();persist()});$('form').addEventListener('change',()=>{pendingKey=null;persist()});
+$('form').addEventListener('input',()=>{pendingKey=null;count();updatePerformancePreview();persist()});$('form').addEventListener('change',()=>{pendingKey=null;persist()});
 $('new-seed').onclick=()=>{pendingKey=null;$('seed').value=crypto.getRandomValues(new Uint32Array(1))[0];persist();announce('New seed selected')};
 function voicePreview(){const row=voiceRows.find(v=>v.id===$('voice').value);$('voice-preview').hidden=!row;if(row){$('ref-text').value=row.transcript||'';$('voice-preview').src=row.audio_url;$('voice-hint').textContent=row.description||'Reference identity is reused; emotion is directed separately.'}}$('voice').onchange=voicePreview;
 async function refresh() {
@@ -225,7 +230,7 @@ async function watch(identity){
  finally{if(watching===identity){watching=null;controls();refreshQueue().catch(()=>{})}}
 }
 $('form').onsubmit=async event=>{
- event.preventDefault();if(submitting||uploading)return;const request=settings();
+ event.preventDefault();if(submitting||uploading)return;let request;try{request=settings()}catch(exc){error(exc.message);return}
  if(mode==='preset'&&!request.preset_voice){error('Choose an expressive preset voice first.');return}
  if(mode==='saved'&&!request.voice_id){error('Choose a saved voice first.');return}
  if(mode==='upload'&&!request.reference_id){error('Choose an audio reference first.');return}
@@ -236,7 +241,7 @@ $('form').onsubmit=async event=>{
 document.addEventListener('keydown',event=>{if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();if(!$('generate').disabled)$('form').requestSubmit()}});
 $('save-voice').onclick = () => {
   if (latest) openVoiceEditor({output_id: latest.id, name: $('voice-name').value,
-    description: latest.description || '', transcript:latest.duration<=30?latest.text:'',tags: []});
+    description: latest.description || '', transcript:latest.duration<=30?spokenTranscript(latest):'',tags: []});
 };
 $('reference').onchange=async()=>{const file=$('reference').files[0];reference=null;$('reference-preview').hidden=true;$('save-reference').hidden=true;if(!file)return;uploading=true;controls();$('reference-info').textContent='Preparing reference…';try{if(file.size>25*1024*1024)throw Error('Choose a file under 25 MB.');const body=new FormData();body.append('file',file);body.append('transcript',$('ref-text').value);reference=await api('/api/references',{method:'POST',body});$('reference-info').textContent=`${reference.name} · ${reference.duration}s`;$('reference-preview').src=reference.audio_url;$('reference-preview').hidden=false;$('save-reference').hidden=false}catch(exc){$('reference-info').textContent='';error(exc.message)}finally{uploading=false;controls()}};
 $('save-reference').onclick = () => {
@@ -349,7 +354,7 @@ $('browse-voices').onclick = $('catalog-link').onclick = event => {
   event.preventDefault(); setCollection('voices'); $('voice-catalog').scrollIntoView({block: 'start'});
 };
 $('page-size').onchange=()=>{pageSize=Number($('page-size').value);catalogOffset=0;loadCollection().catch(exc=>error(exc.message))};
-(async()=>{try{caps=await api('/api/capabilities');storageKey=caps.service;document.title=caps.name+' Voice Studio';$('brand-name').textContent=caps.name;$('model-badge').textContent=`${caps.sample_rate/1000} kHz · ${caps.quantization} · On your Mac`;$('model-footer').textContent=`${caps.name} · ${caps.quantization} · ${caps.limits.runtime||'MLX'} on Apple Silicon`;$('storage-footer').textContent=caps.storage;$('output-dir').placeholder=caps.output_dir;$('language').replaceChildren(...caps.languages.map(x=>new Option(x,x)));$('preset-voice').replaceChildren(...caps.presets.map(x=>new Option(`${x.name} · ${x.language}`,x.id)));for(const emotion of caps.extensions?.emotion_steering?.emotions||[])$('steering-emotion').append(new Option(emotion[0].toUpperCase()+emotion.slice(1),emotion));$('settings-hint').textContent=(caps.limits.max_tokens_fixed?'This upstream Chatterbox API uses a fixed 1000-token ceiling. ':caps.backend==='moss'?'The audio-frame ceiling can be raised by the upstream text-derived minimum. ':'The audio token limit is a safety cap. Reaching it can cut a take short. ')+(caps.limits.memory_note||'A matching seed alone does not lock a voice.');const notice=caps.models[caps.backend];if(notice?.notice){$('license-text').textContent=notice.notice;$('license-link').href=notice.license_url;$('license-notice').hidden=false}buildBackendSettings();updateCapabilities();await refresh();const saved=JSON.parse(localStorage.getItem(storageKey+'-form')||'null');if(saved)restore(saved);else setMode(caps.modes.design.available===false?'upload':'design');await health();const job=localStorage.getItem(storageKey+'-job');if(job&&!watching)watch(job)}catch(exc){error(exc.message)}setInterval(health,5000)})();
+(async()=>{try{caps=await api('/api/capabilities');storageKey=caps.service;document.title=caps.name+' Voice Studio';$('brand-name').textContent=caps.name;$('model-badge').textContent=`${caps.sample_rate/1000} kHz · ${caps.quantization} · On your Mac`;$('model-footer').textContent=`${caps.name} · ${caps.quantization} · ${caps.limits.runtime||'MLX'} on Apple Silicon`;$('storage-footer').textContent=caps.storage;$('output-dir').placeholder=caps.output_dir;$('language').replaceChildren(...caps.languages.map(x=>new Option(x,x)));$('preset-voice').replaceChildren(...caps.presets.map(x=>new Option(`${x.name} · ${x.language}`,x.id)));for(const emotion of caps.extensions?.emotion_steering?.emotions||[])$('steering-emotion').append(new Option(emotion[0].toUpperCase()+emotion.slice(1),emotion));$('settings-hint').textContent=(caps.limits.max_tokens_fixed?'This upstream Chatterbox API uses a fixed 1000-token ceiling. ':caps.backend==='moss'?'The audio-frame ceiling can be raised by the upstream text-derived minimum. ':'The audio token limit is a safety cap. Reaching it can cut a take short. ')+(caps.limits.memory_note||'A matching seed alone does not lock a voice.');const notice=caps.models[caps.backend];if(notice?.notice){$('license-text').textContent=notice.notice;$('license-link').href=notice.license_url;$('license-notice').hidden=false}buildBackendSettings();buildPerformanceControls();updateCapabilities();await refresh();const saved=JSON.parse(localStorage.getItem(storageKey+'-form')||'null');if(saved)restore(saved);else setMode(caps.modes.design.available===false?'upload':'design');await health();const job=localStorage.getItem(storageKey+'-job');if(job&&!watching)watch(job)}catch(exc){error(exc.message)}setInterval(health,5000)})();
 
 function buildBackendSettings(){
  $('backend-settings').replaceChildren();
@@ -357,7 +362,7 @@ function buildBackendSettings(){
   const spec=caps.controls[caps.backend]?.[key];if(!spec)continue;
   const names={exaggeration:'Exaggeration',cfg_weight:'Voice guidance',duration_factor:'Duration factor · higher is slower',interval_silence:'Pause between generated segments (ms)',emotion_alpha:'Emotion blend'};
   const label=el('label',names[key]);label.htmlFor=key;const input=el('input');input.id=key;input.type='number';input.min=spec.min;input.max=spec.max;input.step=key==='interval_silence'?50:.05;input.value=spec.default;
-  $('backend-settings').append(label,input);
+  const field=el('div');field.id=key+'-field';field.append(label,input);$('backend-settings').append(field);
  }
  for(const key of ['steps','guidance','temperature'])if(caps.controls[key])$(key).value=caps.controls[key].default;
  for(const option of $('max-tokens').options){option.disabled=Number(option.value)>caps.controls.max_tokens.max;if(caps.backend==='moss')option.textContent=option.value+' audio frames'}
@@ -366,7 +371,89 @@ function buildBackendSettings(){
 $('emotion-reference').onchange=async()=>{
  const file=$('emotion-reference').files[0];if(!file)return;
  uploading=true;controls();
- try{if(file.size>25*1024*1024)throw Error('Choose a file under 25 MB.');const body=new FormData();body.append('file',file);const record=await api('/api/references',{method:'POST',body});$('emotion-reference-id').value=record.id;$('emotion-reference-info').textContent=record.name+' · '+record.duration+'s';$('emotion-vector').value='';pendingKey=null;persist()}
+ try{if(file.size>25*1024*1024)throw Error('Choose a file under 25 MB.');const body=new FormData();body.append('file',file);const record=await api('/api/references',{method:'POST',body});$('emotion-reference-id').value=record.id;$('emotion-reference-info').textContent=record.name+' · '+record.duration+'s';$('emotion-vector').value='';$('index-emotion-mode').value='audio';updateIndexEmotion(true);pendingKey=null;persist()}
  catch(exc){error(exc.message)}finally{uploading=false;controls()}
 };
-$('clear-emotion-reference').onclick=()=>{$('emotion-reference-id').value='';$('emotion-reference').value='';$('emotion-reference-info').textContent='';pendingKey=null;persist()};
+$('clear-emotion-reference').onclick=()=>{$('emotion-reference-id').value='';$('emotion-reference').value='';$('emotion-reference-info').textContent='';$('index-emotion-mode').value='follow';updateIndexEmotion();pendingKey=null;persist()};
+
+
+function spokenTranscript(row){const backend=row.backend||caps.backend;return (backend==='fish'?row.text.replace(/\[[^\[\]]*\]\s*/g,''):backend==='higgs'?row.text.replace(/<\|[^|>]+\|>\s*/g,''):row.text).trim()}
+function readIndexVector(){return ['happy','angry','sad','afraid','disgusted','melancholic','surprised','calm'].map(name=>Number($('index-vector-'+name)?.value||0))}
+function updateIndexEmotion(chosen=false){
+ if(caps?.backend!=='indextts')return;
+ const source=$('index-emotion-mode').value;
+ $('index-audio-options').hidden=source!=='audio';$('index-vector-options').hidden=source!=='vector';
+ if($('emotion_alpha-field'))$('emotion_alpha-field').hidden=source==='follow';
+ if(chosen&&source!=='follow')$('emotion_alpha').value='.4';
+ const sum=readIndexVector().reduce((a,b)=>a+b,0);$('emotion-vector-sum').textContent=`Total ${sum.toFixed(2)} / 1${sum>1?' — reduce the mixture':''}`;
+}
+$('index-emotion-mode').onchange=()=>{updateIndexEmotion(true);pendingKey=null;persist()};
+function buildPerformanceControls(){
+ $('performance-guidance').textContent=caps.limits.performance_guidance||'';
+ $('performance-controls').replaceChildren();$('backend-presets').replaceChildren();
+ $('rendered-preview-field').hidden=!['fish','higgs'].includes(caps.backend);
+ if(caps.backend==='chatterbox'){
+  const label=el('label','Delivery candidate');label.htmlFor='chatterbox-delivery-preset';const select=el('select');select.id='chatterbox-delivery-preset';
+  for(const [id,name] of [['custom','Current settings'],['default','Default'],['deliberate','More deliberate'],['expressive','More expressive · experimental']])select.append(new Option(name,id));
+  select.onchange=()=>{const values={default:[.5,.5],deliberate:[.5,.3],expressive:[.7,.3]}[select.value];if(values){$('exaggeration').value=values[0];$('cfg_weight').value=values[1];$('temperature').value='.8';pendingKey=null;persist()}};
+  $('backend-presets').append(label,select);
+ }
+ if(caps.backend==='indextts'){
+  for(const [name,value] of [['Default duration',1],['Slightly slower · 1.1',1.1]]){const button=el('button',name,'secondary');button.type='button';button.onclick=()=>{$('duration_factor').value=value;pendingKey=null;persist()};$('backend-presets').append(button)}
+  $('emotion-vector-fields').replaceChildren();
+  for(const name of ['happy','angry','sad','afraid','disgusted','melancholic','surprised','calm']){
+   const label=el('label',name[0].toUpperCase()+name.slice(1));label.htmlFor='index-vector-'+name;
+   const input=el('input');input.id=label.htmlFor;input.type='number';input.min=0;input.max=1;input.step=.05;input.value=0;input.oninput=()=>updateIndexEmotion();
+   $('emotion-vector-fields').append(label,input);
+  }updateIndexEmotion();
+ }
+ if(caps.backend==='fish'){
+  const label=el('label','Delivery tags · one per line');label.htmlFor='fish-delivery-tags';const input=el('textarea');input.id=label.htmlFor;input.maxLength=244;input.placeholder='low voice';
+  $('performance-controls').append(label,input,el('p','Up to four short directions. Brackets are added for you. Leave empty to follow the reference; acting can change the accent.','hint'));
+ }
+ if(caps.backend==='higgs')for(const key of ['emotion','prosody','style']){
+  const label=el('label',key[0].toUpperCase()+key.slice(1));label.htmlFor='higgs-'+key;const select=el('select');select.id=label.htmlFor;select.append(new Option('Follow recording',''));
+  for(const value of caps.controls.higgs[key].values)select.append(new Option(value.replaceAll('_',' '),value));$('performance-controls').append(label,select);
+ }
+ if(caps.controls[caps.backend]?.top_p){
+  const details=el('details'),summary=el('summary','Advanced sampling');details.append(summary);
+  for(const [key,id,name] of [['top_p','model-top-p','Nucleus sampling'],['top_k','model-top-k','Sampling candidates']]){const spec=caps.controls[caps.backend][key];const label=el('label',name);label.htmlFor=id;const input=el('input');input.id=id;input.type='number';input.min=spec.min;input.max=spec.max;input.step=key==='top_p'?.05:1;input.value=spec.default;details.append(label,input)}
+  $('performance-controls').append(details);
+ }
+ if(caps.backend==='qwen3'){
+  document.querySelector('[data-mode="design"]').textContent='Design a new voice';document.querySelector('[data-mode="preset"]').textContent='Preset speakers';
+  document.querySelector('[data-mode="saved"]').textContent='Clone saved voice';document.querySelector('[data-mode="upload"]').textContent='Clone reference';
+ }
+}
+function restorePerformance(row){
+ const options=row[caps.backend]||{};
+ if(caps.backend==='fish')$('fish-delivery-tags').value=(options.delivery_tags||[]).join('\n');
+ if(caps.backend==='higgs')for(const key of ['emotion','prosody','style'])$('higgs-'+key).value=options[key]||'';
+ if(caps.controls[caps.backend]?.top_p){$('model-top-p').value=options.top_p??caps.controls[caps.backend].top_p.default;$('model-top-k').value=options.top_k??caps.controls[caps.backend].top_k.default;}
+ if(caps.backend==='indextts'){
+  const vector=options.emotion_vector||row.emotion_vector,reference=options.emotion_reference_id||row.emotion_reference_id;
+  $('index-emotion-mode').value=vector?'vector':reference?'audio':'follow';
+  ['happy','angry','sad','afraid','disgusted','melancholic','surprised','calm'].forEach((name,index)=>$('index-vector-'+name).value=vector?.[index]||0);
+  updateIndexEmotion();
+ }
+ updatePerformancePreview();
+}
+function updatePerformancePreview(){
+ if(!caps||!['fish','higgs'].includes(caps.backend))return;
+ let text=$('text').value;
+ try{
+  if(caps.backend==='fish'){
+   const tags=$('fish-delivery-tags').value.split('\n').map(x=>x.trim()).filter(Boolean);
+   if(tags.length>4||tags.some(x=>x.length>60||/[\[\]<>|{}\x00-\x1f\x7f]/.test(x)))throw Error('Use up to four tags without brackets or control delimiters.');
+   if(tags.length&&/^\s*\[/.test(text))throw Error('Choose structured tags or manual leading tags, not both.');
+   const manual=[...text.matchAll(/\[([^\[\]]+)\]/g)].map(x=>x[1].trim().toLowerCase());
+   if(new Set(tags.map(x=>x.toLowerCase())).size!==tags.length||tags.some(x=>manual.includes(x.toLowerCase())))throw Error('A delivery tag is duplicated.');
+   text=tags.map(x=>'['+x+'] ').join('')+text;
+  }else{
+   const leading=text.match(/^\s*((?:<\|[^|>]+\|>\s*)+)/)?.[0]||'';let prefix='';
+   for(const category of ['emotion','prosody','style']){const value=$('higgs-'+category).value;if(value){if(leading.includes('<|'+category+':'))throw Error('Choose a structured or manual leading '+category+' directive, not both.');prefix+='<|'+category+':'+value+'|>';}}
+   if(prefix)text=prefix+' '+text;
+  }
+  $('rendered-preview').textContent=text;
+ }catch(exc){$('rendered-preview').textContent=exc.message}
+}

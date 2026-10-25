@@ -7,6 +7,7 @@ from assets import verify_assets
 from capabilities import capabilities
 from directions import instructions, variant_for
 from emotion_steering import emotion_context
+from performance_controls import rendered_text,applied_performance,qwen_sampling
 
 
 def create_engine():
@@ -64,13 +65,13 @@ class Engine:
 
     def backend_call(self, request, reference, transcript):
         instruction_text = instructions(request,reference)
-        common = dict(text=request.text, max_tokens=request.max_tokens)
+        common = dict(text=rendered_text(request,PROFILE['backend']), max_tokens=request.max_tokens)
         if PROFILE['backend']=='fish':
             from mlx_audio.utils import load_audio
             waveform=load_audio(str(reference),sample_rate=self.model.sample_rate) if reference else None
             return self.model.generate(**common,ref_audio=waveform,
                 ref_text=transcript or None,temperature=request.temperature,stream=False,verbose=False,
-                chunk_length=300)
+                chunk_length=300,top_p=request.fish.top_p if request.fish else .7,top_k=request.fish.top_k if request.fish else 30)
         if PROFILE['backend'] == 'voxcpm2':
             conditioning = {'prompt_audio':str(reference),'prompt_text':transcript.rstrip()+' '} if request.clone_mode in ['continuation','combined'] else {'ref_audio':str(reference) if reference else None}
             if request.clone_mode=='combined':
@@ -88,7 +89,7 @@ class Engine:
                                    lang_code=request.language, split_pattern='')
 
     def check_input_budget(self, request, reference, transcript):
-        encoded = self.model.tokenizer.encode('\n'.join([request.text, request.description if not reference else '',
+        encoded = self.model.tokenizer.encode('\n'.join([rendered_text(request,PROFILE['backend']), request.description if not reference else '',
             request.emotion, request.accent,
             transcript if PROFILE['backend'] in ('qwen3','fish') or request.clone_mode in ['continuation','combined'] else '']))
         if len(encoded) > capabilities().limits['input_tokens']:
@@ -143,6 +144,7 @@ class Engine:
                 'waveform':peaks, 'model':MODEL_SPECS[variant]['repo'],
                 'model_revision':MODEL_SPECS[variant]['revision'], 'variant':variant,
                 'runtime':{key:version(key) for key in ['mlx','mlx-audio','transformers']},
+                **({PROFILE['backend']:applied_performance(request,PROFILE['backend'])} if PROFILE['backend']=='fish' else {'qwen3':qwen_sampling(self.model,request,reference,transcript)} if PROFILE['backend']=='qwen3' else {}),
                 'quantization':PROFILE['quantization'],'applied_instructions':instructions(request,reference),
                 'extensions':({'emotion_steering':{'emotion':request.steering_emotion,'strength':request.steering_strength,
                     'layers':[21,25],'decay':.985,'revision':__import__('config').EXTENSION_SPECS['emotion_steering']['revision'],

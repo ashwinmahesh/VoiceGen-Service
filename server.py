@@ -120,6 +120,8 @@ def generate(request: Generation):
             source = json.loads(reference.with_suffix('.json').read_text())
             transcript = request.ref_text if request.ref_text is not None else source.get('transcript','')
             reference_info = {key:source[key] for key in ['id','name','duration','original','effective','sample_rate','channels','source_id','source_kind'] if key in source}
+            import hashlib
+            reference_info['sha256']=hashlib.sha256(reference.read_bytes()).hexdigest()
             effective = effective.model_copy(update={'description':source.get('design_description',source.get('description',''))})
         if effective.clone_mode in ['continuation','combined'] and not transcript.strip():
             raise ValueError('Continuation/combined cloning requires the exact transcript of the reference recording')
@@ -313,7 +315,7 @@ def save_voice(request: SaveVoice):
            "duration": round(len(data) / sr, 3), "sample_rate": sr, "channels": 1,
            "audio_url": f"/api/audio/voices/{identity}",
            "transcript": request.transcript if request.transcript is not None else
-               (original.get("text", original.get("transcript", "")) if original.get("duration",0) <= 30 else "")}
+               (__import__("performance_controls").spoken_transcript(original) if original.get("duration",0) <= 30 else "")}
     temporary = target.with_suffix(".tmp.wav")
     try:
         sf.write(temporary, data, sr, subtype="PCM_16")

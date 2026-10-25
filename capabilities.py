@@ -20,6 +20,23 @@ def capabilities():
     notice=notice_for(PROFILE['backend'])
     if notice:
         caps.models={key:{**spec,**(notice if key==PROFILE['backend'] else {})} for key,spec in caps.models.items()}
+    from performance_controls import HIGGS_CATALOG,HIGGS_CATALOG_SOURCE
+    backend=PROFILE['backend']
+    if backend in ('fish','higgs'):
+        caps.controls[backend]={'top_p':{'default':.7 if backend=='fish' else .8,'min':.1,'max':1},'top_k':{'default':30,'min':1,'max':100}}
+        if backend=='fish':caps.controls[backend]['delivery_tags']={'max_items':4,'max_characters':60,'examples':['low voice','quietly amused']}
+        else:caps.controls[backend].update({key:{'values':values} for key,values in HIGGS_CATALOG.items()});caps.limits['control_catalog_source']=HIGGS_CATALOG_SOURCE
+    if backend=='chatterbox':
+        caps.controls[backend]['delivery_candidates']=[{'name':'Default','exaggeration':.5,'cfg_weight':.5,'temperature':.8},{'name':'More deliberate','exaggeration':.5,'cfg_weight':.3,'temperature':.8},{'name':'More expressive · experimental','exaggeration':.7,'cfg_weight':.3,'temperature':.8}]
+    if backend=='indextts':caps.controls[backend]['delivery_candidates']=[{'name':'Slightly slower','duration_factor':1.1,'experimental':True}]
+    caps.limits['performance_guidance']={
+        'voxcpm2':'A matching accented reference plus exact transcript in combined mode preserves recorded context. New directions are disabled there; whole-line synthesis remains intact.',
+        'qwen3':'Base clones the recording: exact transcript enables in-context performance conditioning, without acting/accent instructions. VoiceDesign creates a voice; CustomVoice directs a fixed speaker. ICL repetition penalty has a runtime floor of 1.5.',
+        'chatterbox':'Original English model: first 6s condition speech tokens, first 10s condition the decoder, full waveform supplies voice embedding. Keep a clean accented opening. More exaggeration can speed delivery; presets are experiments.',
+        'indextts':'Follow recording retains the original speaker anchor. A separate emotion recording or named vector can change delivery; alpha 0.3–0.5 is an experimental starting point. Segment gaps do not mean every sentence.',
+        'fish':'Use a matching accented reference and exact transcript. Explicit bracket tags guide delivery; acting can weaken accent. No repetition-penalty or speed control is exposed.',
+        'higgs':'Use a matching accented reference and exact transcript. Structured controls add a visible global prefix; manual local tags remain possible. Pause tags do not promise milliseconds.',
+        'moss':'Voice design only; temperature 1.5 is the model baseline. A seed does not preserve one identity across new lines. Save an output and clone it with a reference-capable backend if desired.'}.get(backend,'Read the selected backend capabilities.')
     return caps
 
 
@@ -121,7 +138,7 @@ def torch_capabilities():
                 'upload_bytes':25*1024*1024,'reference_seconds':[1,30],'reference_sample_rate':[8000,96000],
                 'reference_channels':2,'single_worker':True,'token_limit_is_per_segment':True,
                 'runtime':'PyTorch MPS','experimental':PROFILE.get('experimental',False),'memory_note':PROFILE.get('memory_note'),
-                'reference_conditioning_seconds':{'speaker':6,'decoder':10} if chatter else {'speaker':15,'emotion':15},
+                'reference_conditioning_seconds':{'speech_tokens':6,'decoder':10,'voice_encoder':'full waveform'} if chatter else {'speaker':15,'emotion':15},
                 'max_tokens_fixed':chatter,'phoneme_annotations':not chatter},storage=str(ROOT),output_dir=str(OUTPUT_DIR))
 
 
@@ -186,4 +203,12 @@ def validate_additional_controls(request,caps):
     if len(request.text)>caps.limits['text_characters']:raise ValueError('Text exceeds backend character limit')
     if request.steps is not None or request.guidance is not None:raise ValueError('Steps/guidance are unsupported by this backend')
     if request.temperature is not None and not .05<=request.temperature<=2:raise ValueError('Temperature must be between .05 and 2')
-    return request.model_copy(update={'temperature':request.temperature if request.temperature is not None else caps.controls['temperature']['default']})
+    effective=request.model_copy(update={'temperature':request.temperature if request.temperature is not None else caps.controls['temperature']['default']})
+    backend=PROFILE['backend']
+    if backend in ('fish','higgs'):
+        options=getattr(request,backend) or MODEL_OPTIONS[backend]()
+        values=options.model_dump();values['top_p']=values['top_p'] if values['top_p'] is not None else caps.controls[backend]['top_p']['default'];values['top_k']=values['top_k'] if values['top_k'] is not None else 30
+        effective=effective.model_copy(update={backend:MODEL_OPTIONS[backend](**values)})
+        from performance_controls import rendered_text
+        rendered_text(effective,backend)
+    return effective

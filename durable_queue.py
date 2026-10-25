@@ -93,14 +93,14 @@ class QueueStore:
                 row[key] = json.loads(row[key])
         return row
 
-    def existing(self, key_hash, fingerprint):
+    def existing(self, key_hash, fingerprint, compatible=()):
         if not key_hash:
             return None
         with self.transaction() as db:
             row = db.execute('SELECT * FROM entries WHERE key_hash=?', (key_hash,)).fetchone()
             if row is None:
                 return None
-            if row['fingerprint'] != fingerprint:
+            if row['fingerprint'] not in (fingerprint,*compatible):
                 raise QueueConflict('This idempotency key was used with different settings')
             return self.decode(row)
 

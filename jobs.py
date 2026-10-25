@@ -127,7 +127,8 @@ class JobManager:
         self._ready()
         key = hashlib.sha256(request.idempotency_key.encode()).hexdigest()
         try:
-            row = self.store.existing(key,self.fingerprint(request))
+            compatible = [self.fingerprint(request,{'fish','higgs'})] if request.fish is None and request.higgs is None else []
+            row = self.store.existing(key,self.fingerprint(request),compatible)
         except QueueConflict as exc:
             raise BusyError(str(exc)) from None
         if row:
@@ -151,9 +152,11 @@ class JobManager:
             if previous_backend != self.profile['backend']:
                 raise BusyError('This idempotency key belongs to another backend. Recover that job before choosing a new key.')
             added={'preset_voice':None,'accent':'','clone_mode':'reference','steering_emotion':None,'steering_strength':None}
-            new={'exaggeration','cfg_weight','emotion_reference_id','emotion_vector','emotion_alpha','duration_factor','interval_silence','chatterbox','indextts'}
+            new={'exaggeration','cfg_weight','emotion_reference_id','emotion_vector','emotion_alpha','duration_factor','interval_silence','chatterbox','indextts','fish','higgs'}
             exclusions=[set()]
             if not request.generate_immediately:exclusions.append({'generate_immediately'})
+            if request.fish is None and request.higgs is None:
+                exclusions += [excluded|{'fish','higgs'} for excluded in exclusions.copy()]
             fingerprints=set()
             for excluded in exclusions:
                 fingerprints.add(self.fingerprint(request,excluded))
@@ -273,7 +276,7 @@ class JobManager:
             request = Generation.model_validate(payload['requested'])
             effective = Generation.model_validate(payload['effective'])
             options = getattr(effective,self.profile['backend'],None)
-            if self.profile['backend'] in MODEL_OPTIONS and options is not None:
+            if self.profile['backend'] in ('chatterbox','indextts') and options is not None:
                 effective = effective.model_copy(update=options.model_dump())
             current_model = self.profile.get('modes',{}).get(queued['mode'],self.profile['id'])
             spec = MODEL_SPECS.get(current_model,{})
@@ -307,6 +310,9 @@ class JobManager:
             applied['description'] = effective.description if reference is None else ''
             applied['ref_text'] = (payload['transcript'] or None) if self.profile['backend'] in ('qwen3','fish','higgs') or effective.clone_mode in ['continuation','combined'] else None
             applied['output_dir'] = str(destination.parent)
+            backend=self.profile['backend']
+            if isinstance(metrics.get(backend),dict):
+                applied[backend]={**(applied.get(backend) or {}),**metrics[backend]}
             result = {**metadata_settings,**metrics,'id':identity,'backend':queued['backend'],
                 'model':metrics.get('model',queued['model']),'queue_model':queued['model'],
                 'created_at':now(),'api_version':'2.1.0',

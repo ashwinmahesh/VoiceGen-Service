@@ -137,3 +137,7 @@ Admission freezes effective settings, model/mode, reference transcript/metadata 
 `make test` includes fake-engine FIFO/priority, restart/reconciliation, keyed retries, backend isolation, reference hash, deletion/claim race, shared-lock/one-owner and API validation tests without GPU inference. On this installation use an isolated SSD DATA_DIR for tests; no live Vox/Qwen data root is needed.
 
 If moving an existing source checkout, stop its verified idle managed server first. Python environments contain absolute config/entrypoint paths and native CMake caches contain build paths; repair and validate them carefully or recreate from the pinned runtime locks at the new location. Rebuild native code at the final source path. Preserve storage.json and external model/data mappings; renaming source does not require copying or redownloading weights.
+
+## Accent and delivery workflow
+
+Use the model-specific controls and exact backend-text preview in the studio. Optional Chatterbox/Index candidates and Fish/Higgs structured directions keep their existing defaults until selected. Accented reference quality remains the primary cue; stronger expression is not proof of stronger accent. API.md documents the typed namespaces, accepted sampling bounds, manual-tag conflicts, requested/effective provenance and each model's real limitations. Qwen Base requires transcript conditioning for recorded performance context; MOSS designs voices and cannot lock a saved speaker across lines. Raw takes and reviewed pause derivatives remain separate.

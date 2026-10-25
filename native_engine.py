@@ -14,6 +14,8 @@ from config import MODEL_DIR, MODEL_SPECS, PROFILE, PROJECT_ROOT, ROOT
 from directions import instructions
 from inference_locks import reservation_descriptors
 
+from performance_controls import rendered_text,applied_performance
+
 from backend_selection import AUDIOCPP_REVISION
 
 
@@ -31,7 +33,7 @@ class NativeEngine:
         weight=next(item['path'] for item in spec['files'] if item['path'].endswith('.gguf'))
         moss=PROFILE['backend']=='moss'
         args=[str(binary),'--family',PROFILE['family'],'--model',str(MODEL_DIR/weight),
-              '--backend','metal','--task','vdes' if moss else 'clon','--text',request.text,
+              '--backend','metal','--task','vdes' if moss else 'clon','--text',rendered_text(request,PROFILE['backend']),
               '--out',str(destination),'--metrics','--temperature',str(request.temperature),
               '--request-option','seed='+str(request.seed if not moss or request.seed<2**31 else request.seed-2**32),
               '--text-chunk-size','1000' if moss else '1024']
@@ -39,6 +41,8 @@ class NativeEngine:
             args+=['--language',request.language,'--request-option','instruct='+instructions(request,None),
                    '--request-option','max_frames='+str(request.max_tokens)]
         else:
+            if request.higgs:
+                args+=['--top-p',str(request.higgs.top_p),'--top-k',str(request.higgs.top_k)]
             args+=['--voice-ref',str(reference),'--reference-text',transcript,'--max-tokens',str(request.max_tokens)]
         return args
 
@@ -73,6 +77,6 @@ class NativeEngine:
             model=spec['repo'],model_revision=spec['revision'],variant=PROFILE['backend'],
             backend=PROFILE['backend'],runtime={'audio.cpp':AUDIOCPP_REVISION,'backend':'Metal'},
             quantization=PROFILE['quantization'],applied_instructions=instructions(request,None) if PROFILE['backend']=='moss' else '',
-            **{PROFILE['backend']:{'native_log_path':str(log)}},input_tokens=None,possibly_truncated=None,
+            **{PROFILE['backend']:{'native_log_path':str(log),**applied_performance(request,PROFILE['backend'])}},input_tokens=None,possibly_truncated=None,
             truncation_detection='Higgs errors on missing EOC; MOSS frame ceiling may truncate; audition complete text',
             waveform=[round(float(np.max(np.abs(x))),4) for x in np.array_split(data,min(200,len(data)))],extensions={})

@@ -63,7 +63,7 @@ open:
 	open http://127.0.0.1:$(PORT)/
 test:
 	"$(PYTHON)" -c 'from config import prepare_storage; prepare_storage()'
-	"$(PYTHON)" -m unittest -v test_contract test_extensions test_storage_configuration test_backends test_pause_edits test_queue test_inference_locks
+	"$(PYTHON)" -m unittest -v test_contract test_extensions test_storage_configuration test_backends test_pause_edits test_queue test_inference_locks test_performance_controls
 smoke:
 	"$(PYTHON)" smoke_test.py --port $(PORT)
 sync-check:

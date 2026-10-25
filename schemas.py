@@ -28,8 +28,37 @@ class IndexTTSOptions(BaseModel):
         return self
 
 
-MODEL_OPTIONS={'chatterbox':ChatterboxOptions,'indextts':IndexTTSOptions}
-LEGACY_BACKEND_FIELDS=set().union(*(model.model_fields for model in MODEL_OPTIONS.values()))
+class FishOptions(BaseModel):
+    model_config = ConfigDict(extra='forbid',allow_inf_nan=False)
+    delivery_tags: list[str] = Field(default_factory=list,max_length=4)
+    top_p: float | None = Field(default=None,ge=.1,le=1)
+    top_k: int | None = Field(default=None,ge=1,le=100)
+
+    @model_validator(mode='after')
+    def safe_tags(self):
+        import unicodedata
+        cleaned=[]
+        for value in self.delivery_tags:
+            tag=value.strip()
+            if not 1<=len(tag)<=60 or any(c in '[]<>|{}' or unicodedata.category(c).startswith('C') for c in value):
+                raise ValueError('Fish tags need 1–60 visible characters without brackets or control delimiters')
+            if tag.casefold() in {x.casefold() for x in cleaned}:raise ValueError('Fish delivery tags must be unique')
+            cleaned.append(tag)
+        self.delivery_tags=cleaned
+        return self
+
+
+class HiggsOptions(BaseModel):
+    model_config = ConfigDict(extra='forbid',allow_inf_nan=False)
+    emotion: Literal['affection','amusement','anger','arousal','awe','bitterness','confusion','contemplation','contentment','determination','disgust','elation','enthusiasm','fear','helplessness','longing','pride','relief','sadness','shame','surprise'] | None = None
+    prosody: Literal['speed_very_slow','speed_slow','speed_fast','speed_very_fast','pitch_low','pitch_high','expressive_high','expressive_low'] | None = None
+    style: Literal['singing','shouting','whispering'] | None = None
+    top_p: float | None = Field(default=None,ge=.1,le=1)
+    top_k: int | None = Field(default=None,ge=1,le=100)
+
+
+MODEL_OPTIONS={'chatterbox':ChatterboxOptions,'indextts':IndexTTSOptions,'fish':FishOptions,'higgs':HiggsOptions}
+LEGACY_BACKEND_FIELDS=set(ChatterboxOptions.model_fields)|set(IndexTTSOptions.model_fields)
 
 
 class Generation(BaseModel):
@@ -52,6 +81,8 @@ class Generation(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     chatterbox: ChatterboxOptions | None = None
     indextts: IndexTTSOptions | None = None
+    fish: FishOptions | None = None
+    higgs: HiggsOptions | None = None
     exaggeration: float | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0, le=1)
     cfg_weight: float | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0, le=1)
     emotion_reference_id: str | None = Field(default=None, json_schema_extra={'deprecated':True}, pattern=r'^[a-f0-9]{32}$')
@@ -67,7 +98,7 @@ class Generation(BaseModel):
     @model_validator(mode='after')
     def combinations(self):
         for backend,model in MODEL_OPTIONS.items():
-            if getattr(self,backend) is not None and any(getattr(self,key) is not None for key in model.model_fields):
+            if getattr(self,backend) is not None and any(getattr(self,key) is not None for key in model.model_fields if key in LEGACY_BACKEND_FIELDS):
                 raise ValueError(f'Choose {backend} options or legacy flat aliases, not both')
         if not self.text.strip():
             raise ValueError('Enter some text to speak')
@@ -90,7 +121,7 @@ def generation_metadata(request):
     result=request.model_dump(exclude={'idempotency_key',*LEGACY_BACKEND_FIELDS})
     for backend,model in MODEL_OPTIONS.items():
         if result[backend] is None:
-            aliases={key:getattr(request,key) for key in model.model_fields if getattr(request,key) is not None}
+            aliases={key:getattr(request,key) for key in model.model_fields if key in LEGACY_BACKEND_FIELDS and getattr(request,key) is not None}
             if aliases:result[backend]=aliases
     return result
 

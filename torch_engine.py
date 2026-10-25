@@ -109,5 +109,6 @@ class TorchEngine:
             applied_instructions='',extensions={},**{PROFILE['backend']:{
                 'mps_driver_allocated_gb_before_cache_release':driver_memory,'mps_active_allocated_gb':active_memory,
                 'emotion_reference_path':str(emotion_reference) if emotion_reference else None,
+                'emotion_reference_sha256':__import__('hashlib').sha256(emotion_reference.read_bytes()).hexdigest() if emotion_reference else None,
                 'text_normalization':'upstream Chatterbox punctuation normalization' if chatter else 'disabled; phoneme annotations are explicit',
                 'watermarked':chatter}})

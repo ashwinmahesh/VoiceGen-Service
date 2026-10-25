@@ -139,7 +139,7 @@ class ContractTests(unittest.TestCase):
         if server.PROFILE['backend']!='voxcpm2':return
         request=Generation(text='Welcome home.',description='A calm baritone.',voice_id='a'*32,
             clone_mode='combined',idempotency_key='prior-combined')
-        added={'exaggeration','cfg_weight','emotion_reference_id','emotion_vector','emotion_alpha','duration_factor','interval_silence','chatterbox','indextts'}
+        added={'exaggeration','cfg_weight','emotion_reference_id','emotion_vector','emotion_alpha','duration_factor','interval_silence','chatterbox','indextts','fish','higgs'}
         fingerprint=hashlib.sha256(request.model_dump_json(exclude={'idempotency_key',*added}).encode()).hexdigest()
         identity='c'*32
         from voice_catalog import atomic_json,now
