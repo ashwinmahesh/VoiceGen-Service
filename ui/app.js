@@ -5,6 +5,7 @@ if(collectionPage){$('page-title').textContent='Your collection';$('page-descrip
 $(collectionPage?'catalog-link':'studio-link').setAttribute('aria-current','page');
 let pageSize = 24, caps=null, storageKey='voice-studio', historyPage={data:[],total:0,has_more:false}, pendingKey=null;
 let voicePage = {data: [], total: 0, has_more: false};
+let currentCandidates=null, candidateCards=new Map();
 let catalogOffset = 0, searchTimer = null, catalogRequest = 0, voiceEditor = null, voiceSaving = false;
 const presets={natural:'Natural, conversational delivery with relaxed pacing.',joy:'Excited and joyful, with an audible smile and lively pacing.',sadness:'Quiet sadness and disappointment, speaking slowly with a trembling voice.',anger:'Angry and frustrated, with firm emphasis and a tense, forceful delivery.',fear:'Frightened and anxious, with a trembling voice and urgent, uneven pacing.',relief:'Deeply relieved, softening into warmth with a gentle exhale.',sarcasm:'Dry, understated sarcasm with deliberate pauses and restrained emphasis.',whisper:'A soft, intimate whisper, speaking gently and slowly.',custom:''};
 async function api(path,options={}){const response=await fetch(path,options);if(!response.ok){let body;try{body=await response.json()}catch{}throw Error(typeof body?.detail==='string'?body.detail:body?.detail?.[0]?.msg||`Request failed (${response.status})`)}return response.json()}
@@ -18,7 +19,7 @@ function count(){$('count').textContent=`${$('text').value.length} / ${caps?.lim
 function settings(){
  const referenceMode=mode==='saved'||mode==='upload';
  const direction=referenceMode?(caps?.modes.reference.emotion&&$('clone-mode').value==='reference'):mode==='preset'||caps?.modes.design.emotion;
- const result={generate_immediately:$('generate-immediately').checked,text:$('text').value,description:mode==='design'?$('description').value:'',
+ const result={candidate_count:Number($('candidate-count').value),generate_immediately:$('generate-immediately').checked,text:$('text').value,description:mode==='design'?$('description').value:'',
    emotion:direction?$('emotion').value:'',accent:direction?$('accent').value:'',
    seed:Number($('seed').value),max_tokens:caps?.limits.max_tokens_fixed?1000:Number($('max-tokens').value),
    preset_voice:mode==='preset'?$('preset-voice').value||null:null,
@@ -80,6 +81,7 @@ function updateCapabilities(){
 $('clone-mode').onchange=()=>{updateCapabilities();persist()};
 $('steering-emotion').onchange=()=>{if($('steering-emotion').value){if($('emotion-preset').value==='natural'){$('emotion').value='';$('emotion-preset').value='custom'}if(Number($('temperature').value)===.9)$('temperature').value='1.1'}updateCapabilities();persist()};
 function restore(row){
+ $('candidate-count').value=String(row.candidate_count??2);
  $('text').value=row.text||'';$('description').value=row.description||'';$('emotion').value=row.preset_voice&&!row.mode?[row.description,row.emotion].filter(Boolean).map(x=>x.trim().replace(/\.+$/,'')).join('. '):row.emotion||'';
  $('accent').value=row.accent||'';$('emotion-preset').value='custom';
  $('clone-mode').value=row.clone_mode||'reference';$('steering-emotion').value=row.steering_emotion||'';
@@ -169,6 +171,7 @@ function renderCards() {
       const edit = el('button', 'Edit details', 'secondary'); edit.type = 'button';
       edit.onclick = () => openVoiceEditor({edit_id: row.id, ...row}); actions.append(edit);
     } else {
+      if(row.candidate_batch_id){const options=el('button','View all options','secondary');options.type='button';options.onclick=()=>watchCandidates(row.candidate_batch_id);actions.append(options);}
       const reuse = el('button', 'Reuse settings', 'secondary'); reuse.type = 'button';
       reuse.onclick = () => { if(collectionPage){location.href='/?reuse='+encodeURIComponent(row.id);return}restore(row); $('text').focus(); }; actions.append(reuse);
       const pauses=el('button','Adjust pauses','secondary');pauses.type='button';pauses.onclick=()=>openPauseEditor(row);actions.append(pauses);
@@ -185,7 +188,7 @@ $('search').oninput = () => {
   searchTimer=setTimeout(()=>loadCollection().catch(exc=>error(exc.message)),250);
 };
 function waveform(peaks){const canvas=$('waveform'),ratio=devicePixelRatio||1;canvas.width=canvas.clientWidth*ratio;canvas.height=110*ratio;const c=canvas.getContext('2d');c.clearRect(0,0,canvas.width,canvas.height);c.fillStyle='#c3b9ff';if(!peaks?.length)return;const step=canvas.width/peaks.length;peaks.forEach((peak,i)=>{const h=Math.max(2*ratio,peak*canvas.height*.9);c.fillRect(i*step,(canvas.height-h)/2,Math.max(1,step*.55),h)})}
-function showResult(row){if(collectionPage){location.href='/?artifact='+encodeURIComponent(row.id);return}latest=row;const details=[row.preset_voice?'Preset '+row.preset_voice:'',row.clone_mode==='combined'?'Combined identity and recorded performance':row.clone_mode==='continuation'?'Continued reference performance':'',row.accent?'Accent direction: '+row.accent:'',row.steering_emotion?`Experimental ${row.steering_emotion} steering · ${row.steering_strength}`:''].filter(Boolean);$('direction-summary').textContent=details.join(' · ');$('direction-summary').hidden=!details.length;$('empty').hidden=true;$('working').hidden=true;$('result').hidden=false;$('player').src=row.audio_url;$('download').href=row.audio_url+'?download=true';$('metrics').textContent=`${row.duration.toFixed(1)} seconds · ${row.sample_rate/1000} kHz · ${row.transformation?`Pause edit ${row.transformation.processing_seconds}s · Original ${row.timing_scope?'process total':'synthesis'}`:row.timing_scope?'Total process':'Synthesis'} ${row.generation_seconds}s${row.cold_load&&Number.isFinite(row.load_seconds)?` · Load ${row.load_seconds}s`:``}`;$('result-seed').textContent=`Seed ${row.seed}`;$('path').textContent=row.path;$('truncated').hidden=!row.possibly_truncated;$('save-hint').textContent='Use a clean, natural take as your character reference. Up to the first 30 seconds are saved.';waveform(row.waveform)}
+function showResult(row){if(collectionPage){location.href='/?artifact='+encodeURIComponent(row.id);return}latest=row;for(const [id,card] of candidateCards)card.element.dataset.selected=String(id===row.id);if(currentCandidates&&row.candidate_batch_id!==currentCandidates.id)$('candidate-results').hidden=true;$('result-title').textContent=row.candidate_index?'Option '+row.candidate_index+' · selected take':'Your latest take';const details=[row.preset_voice?'Preset '+row.preset_voice:'',row.clone_mode==='combined'?'Combined identity and recorded performance':row.clone_mode==='continuation'?'Continued reference performance':'',row.accent?'Accent direction: '+row.accent:'',row.steering_emotion?`Experimental ${row.steering_emotion} steering · ${row.steering_strength}`:''].filter(Boolean);$('direction-summary').textContent=details.join(' · ');$('direction-summary').hidden=!details.length;$('empty').hidden=true;$('working').hidden=true;$('result').hidden=false;$('player').src=row.audio_url;$('download').href=row.audio_url+'?download=true';$('metrics').textContent=`${row.duration.toFixed(1)} seconds · ${row.sample_rate/1000} kHz · ${row.transformation?`Pause edit ${row.transformation.processing_seconds}s · Original ${row.timing_scope?'process total':'synthesis'}`:row.timing_scope?'Total process':'Synthesis'} ${row.generation_seconds}s${row.cold_load&&Number.isFinite(row.load_seconds)?` · Load ${row.load_seconds}s`:``}`;$('result-seed').textContent=`Seed ${row.seed}`;$('path').textContent=row.path;$('truncated').hidden=!row.possibly_truncated;$('save-hint').textContent='Use a clean, natural take as your character reference. Up to the first 30 seconds are saved.';waveform(row.waveform)}
 let pauseSource=null,pauseSpans=[],pausePreviewEnd=null,pausePreviewTimer=null,pausePendingKey=null,pauseSaving=false;
 function pauseError(message){$('pause-error').textContent=message;$('pause-error').hidden=false}
 function renderPauseSpans(){
@@ -222,8 +225,47 @@ $('pause-editor-form').onsubmit=async event=>{
  catch(exc){pauseError(exc.message)}finally{pauseSaving=false;for(const id of ['pause-create','pause-cancel','pause-add','pause-minimum','pause-output-dir','pause-reviewed'])$(id).disabled=false;renderPauseSpans()}
 };
 $('reuse').onclick=()=>{if(latest){restore(latest);$('text').focus()}};
+function renderCandidates(batch){
+ if(currentCandidates?.id!==batch.id){candidateCards.clear();$('candidate-cards').replaceChildren();latest=null;$('result').hidden=true;}
+ currentCandidates=batch;$('candidate-results').hidden=false;
+ $('candidate-summary').textContent=`${batch.done_count} of ${batch.candidate_count} ready · ${batch.status==='done'?'Choose a favorite to save':batch.status==='partial'?'Some options failed or were removed':batch.status==='error'?'Generation failed':batch.status==='deleted'?'Pending options removed':'Options generate one at a time'}`;
+ for(const job of batch.jobs){
+  const signature=JSON.stringify([job.status,job.stage,job.error,job.result?.id]);
+  const previous=candidateCards.get(job.id);
+  if(previous?.signature===signature)continue;
+  const card=el('div',null,'card');card.dataset.option=job.candidate_index;card.dataset.selected=String(latest?.id===job.id);
+  const title=el('div',null,'card-title');title.append(el('strong','Option '+job.candidate_index),el('span','Seed '+job.requested.seed,'tiny'));card.append(title);
+  card.append(el('p',job.paused?'Waiting for '+job.backend+' startup':job.status==='done'?`${job.result.duration.toFixed(1)} seconds · Ready`:job.error||job.stage));
+  if(job.result){
+   const audio=el('audio');audio.controls=true;audio.preload='none';audio.src=job.result.audio_url;audio.setAttribute('aria-label','Listen to option '+job.candidate_index);card.append(audio);
+   const actions=el('div',null,'card-actions'),select=el('button','Select option','secondary'),save=el('button','Save voice','secondary'),download=el('a','Download WAV','secondary');
+   select.type=save.type='button';select.onclick=()=>showResult(job.result);
+   save.onclick=()=>openVoiceEditor({output_id:job.result.id,name:'',description:job.result.description||'',transcript:job.result.duration<=30?spokenTranscript(job.result):'',tags:[]});
+   download.href=job.result.audio_url+'?download=true';download.download='';actions.append(select,save,download);card.append(actions);
+  }else if(job.status==='error'&&!job.paused&&job.backend===caps?.backend){
+   const retry=el('button','Retry this option','secondary');retry.type='button';retry.onclick=async()=>{try{await post('/api/queue/'+job.id+'/retry',{});watchCandidates(batch.id)}catch(exc){error(exc.message)}};card.append(retry);
+  }
+  if(previous)previous.element.replaceWith(card);else $('candidate-cards').append(card);
+  candidateCards.set(job.id,{signature,element:card});
+ }
+}
+async function watchCandidates(identity){
+ if(collectionPage){location.href='/?candidates='+encodeURIComponent(identity);return}
+ const token='candidates:'+identity;if(watching===token)return;
+ if(latest?.candidate_batch_id!==identity){latest=null;$('result').hidden=true;}
+ watching=token;controls();$('error').hidden=true;$('empty').hidden=true;$('working').hidden=true;
+ localStorage.setItem(storageKey+'-candidates',identity);localStorage.removeItem(storageKey+'-job');
+ try{while(watching===token){
+  const batch=await api('/api/candidates/'+identity);if(watching!==token)return;
+  renderCandidates(batch);
+  if(!latest){const first=batch.jobs.find(job=>job.result);if(first)showResult(first.result)}
+  if(!['queued','running'].includes(batch.status)){await refresh();announce(`${batch.done_count} of ${batch.candidate_count} voice options ready.`);break}
+  await new Promise(resolve=>setTimeout(resolve,1500));
+ }}catch(exc){if(watching===token)error(exc.message+' Your accepted options remain in Queue; reload to reconnect.')}
+ finally{if(watching===token){watching=null;controls();refreshQueue().catch(()=>{})}}
+}
 async function watch(identity){
- if(collectionPage){location.href='/?job='+encodeURIComponent(identity);return}if(watching===identity)return;watching=identity;controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
+ if(collectionPage){location.href='/?job='+encodeURIComponent(identity);return}if(watching===identity)return;localStorage.removeItem(storageKey+'-candidates');$('candidate-results').hidden=true;watching=identity;controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
  const started=Date.now();localStorage.setItem(storageKey+'-job',identity);
  try{while(watching===identity){const job=await api('/api/jobs/'+identity);if(watching!==identity)return;
   $('stage').textContent=job.paused?'Waiting for '+job.backend+' startup':job.stage;
@@ -240,7 +282,7 @@ $('form').onsubmit=async event=>{
  if(mode==='saved'&&!request.voice_id){error('Choose a saved voice first.');return}
  if(mode==='upload'&&!request.reference_id){error('Choose an audio reference first.');return}
  submitting=true;controls();
- try{pendingKey=pendingKey||crypto.randomUUID();const job=await post('/api/generate',{...request,idempotency_key:pendingKey});pendingKey=null;watch(job.id);await refreshQueue()}
+ try{pendingKey=pendingKey||crypto.randomUUID();const batch=await post('/api/candidates',{...request,idempotency_key:pendingKey});pendingKey=null;watchCandidates(batch.id);await refreshQueue()}
  catch(exc){error(exc.message)}finally{submitting=false;controls()}
 };
 document.addEventListener('keydown',event=>{if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();if(!$('generate').disabled)$('form').requestSubmit()}});
@@ -254,7 +296,7 @@ $('save-reference').onclick = () => {
     name: (reference.name || 'Uploaded voice').replace(/\.[^.]+$/, '').slice(0, 100), description: '', transcript:$('ref-text').value,tags: []});
 };
 $('unload').onclick=async()=>{try{await post('/api/model/unload',{});announce('Model memory released. It reloads on the next take.');await health()}catch(exc){error(exc.message)}};
-async function health(){try{const state=await api('/health');online=state.downloaded&&!state.runtime_errors?.length;$('status').dataset.offline=!online;$('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';busy=state.busy;if(state.active_job&&!watching&&!collectionPage)watch(state.active_job);await refreshQueue()}catch{online=false;$('status').textContent='Server offline';$('status').dataset.offline=true}controls()}
+async function health(){try{const state=await api('/health');online=state.downloaded&&!state.runtime_errors?.length;$('status').dataset.offline=!online;$('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';busy=state.busy;if(state.active_job&&!watching&&!collectionPage&&!localStorage.getItem(storageKey+'-candidates'))watch(state.active_job);await refreshQueue()}catch{online=false;$('status').textContent='Server offline';$('status').dataset.offline=true}controls()}
 let queueOffset=0,queuePage=null,queueRequest=0;
 async function refreshQueue(){
  const token=++queueRequest;
@@ -270,6 +312,7 @@ async function refreshQueue(){
   card.append(el('p',row.requested?.text||row.id),el('p',row.paused?'Paused until '+row.backend+' is selected at startup':row.stage,'hint'));
   if(row.error)card.append(el('p',row.error,'error'));
   const actions=el('div',null,'card-actions');
+  if(row.candidate_batch_id){const options=el('button','View all options','secondary');options.type='button';options.onclick=()=>{$('queue-dialog').close();watchCandidates(row.candidate_batch_id)};actions.append(options);}
   const inspect=el('button',row.status==='done'?'Open take':'Monitor','secondary');inspect.type='button';inspect.onclick=()=>{$('queue-dialog').close();row.result?showResult(row.result):watch(row.id)};actions.append(inspect);
   if(row.status==='queued'){const remove=el('button','Remove pending','secondary');remove.type='button';remove.onclick=async()=>{try{await api('/api/queue/'+row.id,{method:'DELETE'});await refreshQueue()}catch(exc){error(exc.message)}};actions.append(remove)}
   if(row.status==='error'&&!row.paused&&row.backend===caps?.backend){const retry=el('button','Retry same entry','secondary');retry.type='button';retry.onclick=async()=>{try{const job=await post('/api/queue/'+row.id+'/retry',{});$('queue-dialog').close();watch(job.id);await refreshQueue()}catch(exc){error(exc.message)}};actions.append(retry)}
@@ -375,7 +418,7 @@ $('voice-prev').onclick = () => {catalogOffset = Math.max(0, catalogOffset - pag
 $('voice-next').onclick = () => {catalogOffset += pageSize; loadCollection().catch(exc => error(exc.message));};
 $('browse-voices').onclick=()=>{location.href='/collection?tab=voices'};
 $('page-size').onchange=()=>{pageSize=Number($('page-size').value);catalogOffset=0;loadCollection().catch(exc=>error(exc.message))};
-(async()=>{try{caps=await api('/api/capabilities');storageKey=caps.service;document.title=caps.name+' Voice Studio';$('brand-name').textContent=caps.name;$('model-badge').textContent=`${caps.sample_rate/1000} kHz · ${caps.quantization} · On your Mac`;$('model-footer').textContent=`${caps.name} · ${caps.quantization} · ${caps.limits.runtime||'MLX'} on Apple Silicon`;$('storage-footer').textContent=caps.storage;$('output-dir').placeholder=caps.output_dir;$('language').replaceChildren(...caps.languages.map(x=>new Option(x,x)));$('preset-voice').replaceChildren(...caps.presets.map(x=>new Option(`${x.name} · ${x.language}`,x.id)));for(const emotion of caps.extensions?.emotion_steering?.emotions||[])$('steering-emotion').append(new Option(emotion[0].toUpperCase()+emotion.slice(1),emotion));$('settings-hint').textContent=(caps.limits.max_tokens_fixed?'This upstream Chatterbox API uses a fixed 1000-token ceiling. ':caps.backend==='moss'?'The audio-frame ceiling can be raised by the upstream text-derived minimum. ':'The audio token limit is a safety cap. Reaching it can cut a take short. ')+(caps.limits.memory_note||'A matching seed alone does not lock a voice.');const notice=caps.models[caps.backend];if(notice?.notice){$('license-text').textContent=notice.notice;$('license-link').href=notice.license_url;$('license-notice').hidden=false}buildBackendSettings();buildPerformanceControls();updateCapabilities();await refresh();const saved=JSON.parse(localStorage.getItem(storageKey+'-form')||'null');if(saved)restore(saved);else setMode(caps.modes.design.available===false?'upload':'design');await health();await openPageSelection();const job=localStorage.getItem(storageKey+'-job');if(job&&!watching&&!collectionPage)watch(job)}catch(exc){error(exc.message)}setInterval(health,5000)})();
+(async()=>{try{caps=await api('/api/capabilities');storageKey=caps.service;document.title=caps.name+' Voice Studio';$('brand-name').textContent=caps.name;$('model-badge').textContent=`${caps.sample_rate/1000} kHz · ${caps.quantization} · On your Mac`;$('model-footer').textContent=`${caps.name} · ${caps.quantization} · ${caps.limits.runtime||'MLX'} on Apple Silicon`;$('storage-footer').textContent=caps.storage;$('output-dir').placeholder=caps.output_dir;$('language').replaceChildren(...caps.languages.map(x=>new Option(x,x)));$('preset-voice').replaceChildren(...caps.presets.map(x=>new Option(`${x.name} · ${x.language}`,x.id)));for(const emotion of caps.extensions?.emotion_steering?.emotions||[])$('steering-emotion').append(new Option(emotion[0].toUpperCase()+emotion.slice(1),emotion));$('settings-hint').textContent=(caps.limits.max_tokens_fixed?'This upstream Chatterbox API uses a fixed 1000-token ceiling. ':caps.backend==='moss'?'The audio-frame ceiling can be raised by the upstream text-derived minimum. ':'The audio token limit is a safety cap. Reaching it can cut a take short. ')+(caps.limits.memory_note||'A matching seed alone does not lock a voice.');const notice=caps.models[caps.backend];if(notice?.notice){$('license-text').textContent=notice.notice;$('license-link').href=notice.license_url;$('license-notice').hidden=false}buildBackendSettings();buildPerformanceControls();updateCapabilities();await refresh();const saved=JSON.parse(localStorage.getItem(storageKey+'-form')||'null');if(saved)restore(saved);else setMode(caps.modes.design.available===false?'upload':'design');await health();await openPageSelection();const batch=localStorage.getItem(storageKey+'-candidates'),job=localStorage.getItem(storageKey+'-job');if(!watching&&!collectionPage){if(batch)watchCandidates(batch);else if(job)watch(job)}}catch(exc){error(exc.message)}setInterval(health,5000)})();
 
 function buildBackendSettings(){
  $('backend-settings').replaceChildren();
@@ -516,6 +559,7 @@ $('open-queue').onclick=()=>{$('queue-error').hidden=true;$('queue-dialog').show
 $('close-queue').onclick=()=>$('queue-dialog').close();
 async function openPageSelection(){
  const params=new URLSearchParams(location.search);
+ if(params.get('candidates')&&!collectionPage){watchCandidates(params.get('candidates'));return}
  if(collectionPage){if(params.get('tab')==='voices')setCollection('voices');return}
  if(/^[a-f0-9]{32}$/.test(params.get('voice')||'')){const row=await api('/api/voices/'+params.get('voice'));chooseVoice(row,false);}
  else if(/^[a-f0-9]{32}$/.test(params.get('artifact')||params.get('reuse')||'')){const row=await api('/api/artifacts/'+(params.get('artifact')||params.get('reuse')));if(params.has('reuse'))restore(row);showResult(row);}

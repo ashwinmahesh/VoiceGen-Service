@@ -144,6 +144,10 @@ def generation_metadata(request):
     return result
 
 
+class CandidateGeneration(Generation):
+    candidate_count: int = Field(default=2, ge=1, le=5, strict=True)
+
+
 class Capabilities(BaseModel):
     api_version: str = '2.1.0'
     service: str
@@ -215,6 +219,19 @@ class Job(BaseModel):
     completed_at: str | None = None
     requested: dict = Field(default_factory=dict)
     effective: dict = Field(default_factory=dict)
+    candidate_batch_id: str | None = None
+    candidate_index: int | None = None
+    candidate_count: int | None = None
+
+
+class CandidateBatch(BaseModel):
+    id: str
+    created_at: str
+    backend: str
+    candidate_count: int
+    status: Literal['queued','running','done','partial','error','deleted']
+    done_count: int
+    jobs: list[Job]
 
 
 class QueuePage(BaseModel):

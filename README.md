@@ -12,9 +12,9 @@ Full-page screenshots of the separate Generate and Collection pages, plus the pa
 
 ### Generate a line
 
-Choose or upload a saved voice, enter the line, then generate and play/download the take.
+Choose or upload a saved voice, enter the line, and choose **1–5 options** (default **2**). Each option has its own player, download and **Save voice** action. Designed voices explore different seeds; saved/reference voices produce alternative takes of the selected voice.
 
-![Full Generate page with an uploaded demo voice, line text, generation controls and playback](docs/images/studio-page.jpg)
+![Full Generate page with two illustrative voice options, independent playback and saving, and the 1–5 option selector](docs/images/studio-page.jpg)
 
 ### Collection
 
@@ -180,3 +180,9 @@ curl -s http://localhost:5743/api/voices/upload \
 ```
 
 A successful response is HTTP 201 with the saved voice's `id` and `audio_url`. Pass that ID as `voice_id` to generation. Uploads use the existing 25 MiB / 1–30 second limits, retain original bytes, and create a mono 16 kHz working reference on the configured data drive. Reference-capable backends can reuse it; MOSS remains voice design only. Catalog notes do not change the recorded voice. The older `POST /api/references` endpoint still creates a reference; `POST /api/voices` can save that reference or an existing generated take.
+
+## Compare generated voice options
+
+**Number of options** accepts 1–5 and defaults to 2. Options generate sequentially with seeds `seed`, `seed+1`, and so on, wrapping within the unsigned 32-bit range. Text, voice/reference, transcript and delivery controls stay the same. Different seeds explore alternatives; they do not guarantee distinct voices or preserve identity by themselves. Preview each option, select it for the larger player/pause editor, or save that option directly into Collection.
+
+The UI uses `POST /api/candidates` with the ordinary generation fields plus `candidate_count` (default 2). Poll `GET /api/candidates/{id}` for the ordered jobs and their completed audio results. The group and all 1–5 jobs are committed together in the project's SQLite database; existing queue priority, restart recovery and per-job failure/removal/retry rules apply. A failed option does not discard successful audio. Reloading reconnects to the latest group; **View all options** in Queue or History also reopens it. Each completed take remains in History, and voices enter Voice library only when explicitly saved. Existing single-take `/api/generate`, `/api/queue` and `/api/jobs` requests remain compatible. See [API.md](API.md) for group status and retry details.

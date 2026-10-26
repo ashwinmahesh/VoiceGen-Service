@@ -65,6 +65,76 @@ class ContractTests(unittest.TestCase):
         self.fail('Job did not finish')
     def upload(self,**kw):
         return self.client.post('/api/references',files={'file':('voice.wav',wav(**kw),'audio/wav')})
+    def test_candidate_defaults_distinct_seeds_and_independent_voice_saves(self):
+        response=self.client.post('/api/candidates',json={'text':'Welcome home.','description':'A calm baritone.'})
+        self.assertEqual(response.status_code,202,response.text)
+        batch=response.json();self.assertEqual(batch['candidate_count'],2)
+        for job in batch['jobs']:self.assertEqual(self.finish(job)['status'],'done')
+        batch=self.client.get('/api/candidates/'+batch['id']).json()
+        self.assertEqual((batch['status'],batch['done_count']),('done',2))
+        self.assertEqual([row['result']['seed'] for row in batch['jobs']],[42,43])
+        self.assertEqual(len({row['result']['path'] for row in batch['jobs']}),2)
+        for index,job in enumerate(batch['jobs'],1):
+            self.assertEqual(job['candidate_index'],index)
+            self.assertEqual(job['result']['candidate_batch_id'],batch['id'])
+            self.assertEqual(job['result']['candidate_count'],2)
+            self.assertEqual(self.client.get(job['result']['audio_url']).status_code,200)
+        chosen=batch['jobs'][1]['result']
+        voice=self.client.post('/api/voices',json={'output_id':chosen['id'],'name':'Chosen second option'}).json()
+        self.assertEqual(voice['source_id'],chosen['id'])
+        self.assertEqual(self.client.get('/api/history').json()['total'],2)
+    def test_candidate_count_validation_one_and_five_and_seed_wrap(self):
+        base={'text':'Welcome home.','description':'A calm baritone.'}
+        for count in [0,6,-1,1.5,True,'2',None]:
+            response=self.client.post('/api/candidates',json={**base,'candidate_count':count})
+            self.assertEqual(response.status_code,422,response.text)
+        for count in (1,5):
+            response=self.client.post('/api/candidates',json={**base,'candidate_count':count,'seed':2**32-1})
+            self.assertEqual(response.status_code,202,response.text)
+            jobs=response.json()['jobs'];self.assertEqual(len(jobs),count)
+            self.assertEqual([row['requested']['seed'] for row in jobs],[(2**32-1+i)%2**32 for i in range(count)])
+            for job in jobs:self.assertEqual(self.finish(job)['status'],'done')
+        self.assertEqual(self.client.get('/api/candidates/not-an-id').status_code,404)
+        self.assertEqual(self.client.get('/api/candidates/'+'0'*32).status_code,404)
+        self.assertEqual(self.generate(candidate_count=2).status_code,422)
+    def test_candidate_idempotency_recovers_original_batch_and_rejects_changes(self):
+        request={'text':'Welcome home.','description':'A calm baritone.','candidate_count':3,'idempotency_key':'same-options'}
+        first=self.client.post('/api/candidates',json=request).json()
+        again=self.client.post('/api/candidates',json=request).json()
+        self.assertEqual(first['id'],again['id'])
+        self.assertEqual([row['id'] for row in first['jobs']],[row['id'] for row in again['jobs']])
+        for change in [{'candidate_count':2},{'seed':99},{'text':'Other words.'}]:
+            self.assertEqual(self.client.post('/api/candidates',json={**request,**change}).status_code,409)
+        for job in first['jobs']:self.finish(job)
+        self.assertEqual(self.client.get('/api/queue',params={'status':'all'}).json()['total'],3)
+    def test_candidates_reuse_the_same_transcribed_reference(self):
+        reference=self.upload().json()
+        request={'text':'Welcome home.','reference_id':reference['id'],'ref_text':'Exact reference words.',
+                 'candidate_count':2,'generate_immediately':True}
+        response=self.client.post('/api/candidates',json=request)
+        self.assertEqual(response.status_code,202,response.text)
+        for job in response.json()['jobs']:
+            self.assertTrue(job['generate_immediately']);self.assertEqual(job['effective']['clone_mode'],'combined' if server.PROFILE['backend']=='voxcpm2' else 'reference')
+            self.assertEqual(self.finish(job)['status'],'done')
+        self.assertEqual([row[2] for row in self.engine.calls],['Exact reference words.']*2)
+        self.assertEqual(len({str(row[1]) for row in self.engine.calls}),1)
+        caps=self.client.get('/api/capabilities').json()['limits']['candidates']
+        self.assertEqual((caps['min'],caps['max'],caps['default']),(1,5,2))
+    def test_failed_candidate_does_not_block_others_and_can_be_retried(self):
+        generate=self.engine.generate
+        def fail_one(request,*args,**kwargs):
+            if request.seed==43:raise RuntimeError('One option failed')
+            return generate(request,*args,**kwargs)
+        with patch.object(self.engine,'generate',side_effect=fail_one):
+            response=self.client.post('/api/candidates',json={'text':'Welcome home.','description':'A calm baritone.','candidate_count':3})
+            self.assertEqual(response.status_code,202,response.text)
+            for job in response.json()['jobs']:self.finish(job)
+        batch=self.client.get('/api/candidates/'+response.json()['id']).json()
+        self.assertEqual((batch['status'],batch['done_count']),('partial',2))
+        self.assertEqual([row['status'] for row in batch['jobs']],['done','error','done'])
+        retried=self.client.post('/api/queue/'+batch['jobs'][1]['id']+'/retry',json={})
+        self.assertEqual(retried.status_code,202);self.assertEqual(self.finish(retried.json())['status'],'done')
+        self.assertEqual(self.client.get('/api/candidates/'+batch['id']).json()['status'],'done')
     def test_direct_voice_upload_enters_collection_preserves_original_and_is_reusable(self):
         original=wav(rate=48000,channels=2)
         response=self.client.post('/api/voices/upload',files={'file':('performance.wav',original,'audio/wav')},

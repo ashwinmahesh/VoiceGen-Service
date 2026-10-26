@@ -5,6 +5,14 @@ description: Operate Local Voice Studio with a startup-selected voice backend, t
 
 # Local Voice Studio
 
+## Generate 1–5 voice options on a running server
+
+For multiple options use POST /api/candidates with the normal generation fields and candidate_count (integer 1–5, default 2). Check health/capabilities first. Poll GET /api/candidates/{id}; the response contains ordered jobs, done_count and group status. Each completed job.result has its own audio_url/path/id; preview each and save the chosen result using POST /api/voices with output_id. The UI defaults to two and offers separate playback, selection, download and Save voice for every option. Reference/saved voices produce alternative takes of that speaker; design modes explore seeds and may change identity. Seeds increment from the base modulo 2**32, with other inputs retained. No guaranteed distinct identity or perceptual improvement is implied.
+
+Groups and all child jobs are committed atomically in the project-local SQLite queue. Use a stable candidate idempotency_key to recover the same group after timeouts/restarts; changed requests with that key fail 409. Candidate and single-take key scopes are separate. Jobs run sequentially with ordinary/immediate queue ordering; one failure does not discard successful options. Monitor partial/error states and explicitly retry only intended failed children through their queue IDs; pending deletion/clear never cancels active work. View all options in History/Queue reopens a group. Existing POST /api/generate remains a single-take API; use /api/candidates for the count selector.
+
+## Connect and manage the service
+
 Locate the checkout from the user's location or service.json with the expected name; do not assume an alias or this Mac's paths. Read README.md and API.md. Every backend defaults to http://localhost:5743/; honor an explicit PORT override. Read GET /health and /api/capabilities on the configured port; fetch /openapi.json for the authoritative schema. Preserve model mode, recordings, catalogs and active work.
 
 First terminal setup asks for a storage folder; Enter selects the project, and an external absolute folder creates links and is remembered. AI/scripts should use make setup NONINTERACTIVE=1 or an explicit DATA_DIR to avoid a prompt. Use make setup only if needed; it installs pinned dependencies and verifies pinned model assets. Honor VENV, BOOTSTRAP_PYTHON, DATA_DIR, OUTPUT_DIR and PORT overrides consistently. Confirm external volumes are mounted before creating storage. On this Mac the serving project and venv are under ~/Documents/models/VoiceGen-Service; ignored storage.json keeps DATA_DIR and the shared GPU lock on the SSD. If present, read that file before setup and preserve all linked data directories. A fresh checkout needs no local settings file. storage.json.example is portable; never copy another machine’s local settings blindly. Serving is offline and must not download missing weights implicitly.

@@ -4,6 +4,22 @@ The startup-selected studio implements one OpenAPI schema at `GET /openapi.json`
 
 ## Generation
 
+### Multiple voice options
+
+`POST /api/candidates` accepts the generation fields below plus integer `candidate_count` **1–5**, default **2**, and returns HTTP 202 `CandidateBatch`. This is a shared control across all backends. Designed voices explore alternative seeds; saved/reference/preset voices produce alternative takes using the same conditioning. It does not select multiple models or guarantee distinct speaker identities.
+
+```json
+{"text":"Welcome home.","description":"A warm, cultured baritone.","candidate_count":2,"seed":42,"idempotency_key":"voice-options-1"}
+```
+
+The response contains `id`, `created_at`, `backend`, `candidate_count`, `done_count`, `status`, and ordered `jobs` (the normal Job schema). Poll **`GET /api/candidates/{id}`**. Every child has its own durable job ID, `candidate_batch_id`, 1-based `candidate_index`, `candidate_count`, frozen requested/effective settings and result. Seeds are `(base_seed + index - 1) % 2**32`; all other generation inputs remain identical. Artifacts retain the same group/index/count provenance. Child `result.audio_url` and paths exist after successful completion. Play/download or save a particular child `result.id` through `POST /api/voices` with `output_id`.
+
+Group status is `queued`/`running` while any child is pending/active, `done` when all succeed, `partial` when terminal with some successes, `deleted` when all were removed, otherwise `error`. `done_count` counts successful options. The entire group and its jobs are admitted in one SQLite transaction before acknowledgment and run sequentially under the existing worker/GPU reservation. Immediate priority is per child; another already running job finishes first. Queue listing/deletion/clear/retry operate on individual jobs. A failed child never blocks later options; successful results remain available. Retrying a child updates that same group's status. There is no group-wide active cancellation.
+
+Candidate idempotency keys are scoped to `/api/candidates`. The same key and request recover the original group and original ordered child IDs, including across restart; changed count, seed, text, controls or backend return 409. Deleted children stay deleted on a submission retry. A new key intentionally creates another group. Invalid counts (including booleans, strings or fractions) return 422. A missing group returns 404. `/api/capabilities` advertises bounds/default under `limits.candidates`. The UI defaults to two options and keeps its latest group ID for reload/reconnection.
+
+### Compatible single-take generation
+
 `POST /api/generate` returns 202 and a durable job. Minimal design request:
 
 ```json

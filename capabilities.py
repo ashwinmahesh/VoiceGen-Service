@@ -12,6 +12,9 @@ def with_pause_editing(caps):
 
 def capabilities():
     caps=backend_capabilities()
+    caps.limits['candidates']={'min':1,'max':5,'default':2,'sequential':True,
+        'seed_strategy':'Base seed plus option index, wrapping at 2**32',
+        'submit_url':'/api/candidates','status_url':'/api/candidates/{id}'}
     caps.limits.update({'queue':{'durable':True,'database':str(PROJECT_ROOT/'state/queue.sqlite3'),'api_generate_immediately_default':False,'ui_generate_immediately_default':True,
                          'ordering':'Immediate FIFO before normal FIFO; active inference is never interrupted',
                          'backend_policy':'Only the startup backend executes; other pending backends are paused',

@@ -29,6 +29,8 @@ class BackendTests(unittest.TestCase):
                 self.assertTrue(caps.limits['pause_adjustment']['reviewed_spans'])
                 self.assertFalse(caps.limits['pause_adjustment']['automatic_alignment'])
                 self.assertEqual(caps.modes['reference'].get('combined',False),backend=='voxcpm2')
+                self.assertEqual({key:caps.limits['candidates'][key] for key in ('min','max','default')},
+                                 {'min':1,'max':5,'default':2})
 
     def test_interactive_model_selection_defaults_overrides_and_pty(self):
         import io,json,subprocess,sys,pty

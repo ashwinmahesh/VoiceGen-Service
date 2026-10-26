@@ -103,6 +103,8 @@ class JobManager:
             result['stage'] = 'Paused: select '+row['backend']+' at startup'
         result['requested'] = {k:v for k,v in row['payload']['requested'].items() if k!='idempotency_key'}
         result['effective'] = {k:v for k,v in row['payload']['effective'].items() if k!='idempotency_key'}
+        result.update({key:row['payload'][key] for key in ('candidate_batch_id','candidate_index','candidate_count')
+                       if key in row['payload']})
         return result
 
     def read(self, identity):
@@ -202,24 +204,28 @@ class JobManager:
             raise BusyError('Another local voice studio is generating or unloading. Wait for it to finish.') from None
         return handle
 
+    def _payload(self, request, effective, reference, transcript, destination, reference_info):
+        payload = dict(fingerprint_version=2,requested=generation_metadata(request),effective=generation_metadata(effective),
+            reference=str(reference) if reference else None,
+            reference_sha256=hashlib.sha256(Path(reference).read_bytes()).hexdigest() if reference else None,transcript=transcript,
+            destination=str(destination),reference_info=reference_info)
+        mode = 'reference' if reference else 'preset' if request.preset_voice else 'design'
+        model = self.profile.get('modes',{}).get(mode,self.profile['id'])
+        spec = MODEL_SPECS.get(model,{})
+        payload['model_identity'] = {k:spec.get(k) for k in ['repo','revision']}
+        payload['aux_references'] = {}
+        if effective.emotion_reference_id:
+            path = validate_mount(self.root/'references'/f'{effective.emotion_reference_id}.wav')
+            payload['aux_references']['emotion'] = {'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+        return payload, mode, model
+
     def submit(self, request, effective, reference, transcript, destination, reference_info=None):
         self._ready()
         with self.guard:
             existing = self.existing(request)
             if existing:
                 return existing
-            payload = dict(fingerprint_version=2,requested=generation_metadata(request),effective=generation_metadata(effective),
-                reference=str(reference) if reference else None,
-                reference_sha256=hashlib.sha256(Path(reference).read_bytes()).hexdigest() if reference else None,transcript=transcript,
-                destination=str(destination),reference_info=reference_info)
-            mode = 'reference' if reference else 'preset' if request.preset_voice else 'design'
-            model = self.profile.get('modes',{}).get(mode,self.profile['id'])
-            spec = MODEL_SPECS.get(model,{})
-            payload['model_identity'] = {k:spec.get(k) for k in ['repo','revision']}
-            payload['aux_references'] = {}
-            if effective.emotion_reference_id:
-                path = validate_mount(self.root/'references'/f'{effective.emotion_reference_id}.wav')
-                payload['aux_references']['emotion'] = {'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+            payload, mode, model = self._payload(request,effective,reference,transcript,destination,reference_info)
             key = hashlib.sha256(request.idempotency_key.encode()).hexdigest() if request.idempotency_key else None
             try:
                 row = self.store.admit(self.profile['backend'],model,mode,request.generate_immediately,
@@ -228,6 +234,58 @@ class JobManager:
                 raise BusyError(str(exc)) from None
             self._wake.set()
             return self.public(row)
+
+    @staticmethod
+    def candidate_fingerprint(request):
+        return hashlib.sha256(request.model_dump_json(exclude={'idempotency_key'}).encode()).hexdigest()
+
+    def public_candidates(self, batch):
+        jobs = [self.public(row) for row in batch['jobs']]
+        statuses = [row['status'] for row in jobs]
+        done = statuses.count('done')
+        status = ('running' if 'running' in statuses else 'queued' if 'queued' in statuses else
+                  'done' if done == len(jobs) else 'partial' if done else
+                  'deleted' if all(value=='deleted' for value in statuses) else 'error')
+        return dict(id=batch['id'],backend=batch['backend'],created_at=batch['created_at'],
+                    candidate_count=len(jobs),status=status,done_count=done,jobs=jobs)
+
+    def read_candidates(self, identity):
+        if not IDENTITY.fullmatch(identity):
+            raise FileNotFoundError('Candidate batch not found')
+        self._ready()
+        return self.public_candidates(self.store.read_candidates(identity))
+
+    def existing_candidates(self, request):
+        if not request.idempotency_key:
+            return None
+        self._ready()
+        key = hashlib.sha256(request.idempotency_key.encode()).hexdigest()
+        try:
+            row = self.store.existing_candidates(self.profile['backend'],key,self.candidate_fingerprint(request))
+        except QueueConflict as exc:
+            raise BusyError(str(exc)) from None
+        return self.public_candidates(row) if row else None
+
+    def submit_candidates(self, request, effective, reference, transcript, destination, reference_info=None):
+        self._ready()
+        with self.guard:
+            payload, mode, model = self._payload(request,effective,reference,transcript,destination,reference_info)
+            from copy import deepcopy
+            payloads = []
+            for index in range(request.candidate_count):
+                item = deepcopy(payload)
+                for key in ('requested','effective'):
+                    item[key].pop('candidate_count',None)
+                    item[key]['seed'] = (request.seed + index) % (2**32)
+                payloads.append(item)
+            key = hashlib.sha256(request.idempotency_key.encode()).hexdigest() if request.idempotency_key else None
+            try:
+                row = self.store.admit_candidates(self.profile['backend'],model,mode,request.generate_immediately,
+                                                  payloads,key,self.candidate_fingerprint(request))
+            except QueueConflict as exc:
+                raise BusyError(str(exc)) from None
+            self._wake.set()
+            return self.public_candidates(row)
 
     def _reconcile(self, row):
         destination = Path(row['payload']['destination'])
@@ -338,6 +396,7 @@ class JobManager:
                 'metadata_path':str(destination.with_suffix('.json')),
                 'reference':{'path':str(reference),'transcript':payload['transcript'],**(payload['reference_info'] or {})} if reference else None}
             result['input_references'] = payload.get('aux_references',{})
+            result.update({key:payload[key] for key in ('candidate_batch_id','candidate_index','candidate_count') if key in payload})
             backend=self.profile['backend']
             if isinstance(applied.get(backend),dict) and isinstance(metrics.get(backend),dict):
                 result[backend]={**applied[backend],**metrics[backend]}

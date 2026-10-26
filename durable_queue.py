@@ -81,6 +81,9 @@ class QueueStore:
                 payload TEXT NOT NULL, key_hash TEXT UNIQUE, fingerprint TEXT NOT NULL,
                 stage TEXT NOT NULL, error TEXT, result TEXT)''')
             db.execute('CREATE INDEX IF NOT EXISTS runnable ON entries(status,backend,generate_immediately DESC,sequence)')
+            db.execute('''CREATE TABLE IF NOT EXISTS candidate_batches (
+                id TEXT PRIMARY KEY, backend TEXT NOT NULL, created_at TEXT NOT NULL,
+                key_hash TEXT UNIQUE, fingerprint TEXT NOT NULL, job_ids TEXT NOT NULL)''')
 
     @staticmethod
     def decode(row):
@@ -128,6 +131,55 @@ class QueueStore:
     def read(self, identity):
         with self.transaction() as db:
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+
+    def _candidate_batch(self, db, row):
+        if row is None:
+            raise FileNotFoundError('Candidate batch not found')
+        result = dict(row)
+        result['jobs'] = [self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+                          for identity in json.loads(result.pop('job_ids'))]
+        return result
+
+    def read_candidates(self, identity):
+        with self.transaction() as db:
+            return self._candidate_batch(db, db.execute('SELECT * FROM candidate_batches WHERE id=?',(identity,)).fetchone())
+
+    def existing_candidates(self, backend, key_hash, fingerprint):
+        if not key_hash:
+            return None
+        with self.transaction() as db:
+            row = db.execute('SELECT * FROM candidate_batches WHERE key_hash=?',(key_hash,)).fetchone()
+            if row is None:
+                return None
+            if row['backend'] != backend or row['fingerprint'] != fingerprint:
+                raise QueueConflict('This candidate idempotency key was used with another backend or different settings')
+            return self._candidate_batch(db, row)
+
+    def admit_candidates(self, backend, model, mode, immediate, payloads, key_hash, fingerprint):
+        """Commit the group and all options together before the worker can claim one."""
+        timestamp = now()
+        with self.transaction() as db:
+            if key_hash:
+                old = db.execute('SELECT * FROM candidate_batches WHERE key_hash=?',(key_hash,)).fetchone()
+                if old:
+                    if old['backend'] != backend or old['fingerprint'] != fingerprint:
+                        raise QueueConflict('This candidate idempotency key was used with another backend or different settings')
+                    return self._candidate_batch(db, old)
+            batch_id = uuid4().hex
+            identities = []
+            for index, payload in enumerate(payloads, 1):
+                identity = uuid4().hex
+                identities.append(identity)
+                payload = {**payload, 'destination':str(Path(payload['destination'])/f'{identity}.wav'),
+                           'candidate_batch_id':batch_id, 'candidate_index':index, 'candidate_count':len(payloads)}
+                db.execute('''INSERT INTO entries
+                    (id,backend,model,mode,status,generate_immediately,created_at,updated_at,
+                     payload,key_hash,fingerprint,stage) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    (identity,backend,model,mode,'queued',int(immediate),timestamp,timestamp,
+                     json.dumps(payload,allow_nan=False),None,fingerprint,'Waiting for execution slot'))
+            db.execute('INSERT INTO candidate_batches VALUES (?,?,?,?,?,?)',
+                       (batch_id,backend,timestamp,key_hash,fingerprint,json.dumps(identities)))
+            return self._candidate_batch(db, db.execute('SELECT * FROM candidate_batches WHERE id=?',(batch_id,)).fetchone())
 
     def change(self, identity, **changes):
         allowed = {'status','stage','error','result','started_at','completed_at'}

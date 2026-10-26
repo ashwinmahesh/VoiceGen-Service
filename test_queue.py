@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from config import ROOT, PROJECT_ROOT
 from durable_queue import QueueStore, QueueConflict
 from jobs import JobManager, BusyError
-from schemas import Generation
+from schemas import Generation, CandidateGeneration
 from test_contract import FakeEngine, wav
 from voice_catalog import atomic_json
 
@@ -52,6 +52,57 @@ class QueueFixture(unittest.TestCase):
 
 
 class QueueTests(QueueFixture):
+    def candidates(self,manager,**kwargs):
+        request=CandidateGeneration(text='Welcome home.',description='A calm baritone.',**kwargs)
+        return manager.submit_candidates(request,request,None,'',self.root/'outputs')
+    def test_candidate_batch_survives_restart_and_interrupted_option(self):
+        old=self.manager();batch=self.candidates(old,candidate_count=5,idempotency_key='persistent-options')
+        old.store.claim('voxcpm2');old.close()
+        new=self.manager();new.recover()
+        for row in batch['jobs']:self.done(new,row['id'])
+        recovered=new.read_candidates(batch['id'])
+        self.assertEqual((recovered['status'],recovered['done_count']),('done',5))
+        self.assertEqual([call[0].seed for call in new.engine.calls],list(range(42,47)))
+        self.assertEqual(self.candidates(new,candidate_count=5,idempotency_key='persistent-options')['id'],batch['id'])
+    def test_candidate_admission_is_atomic_and_concurrent_retries_share_one_group(self):
+        manager=self.manager()
+        real_dumps=json.dumps;calls=[]
+        def fail_second_payload(value,*args,**kwargs):
+            if isinstance(value,dict) and 'candidate_batch_id' in value:
+                calls.append(value)
+                if len(calls)==2:raise OSError('simulated serialization failure')
+            return real_dumps(value,*args,**kwargs)
+        with patch('durable_queue.json.dumps',side_effect=fail_second_payload):
+            with self.assertRaises(OSError):self.candidates(manager,candidate_count=3)
+        self.assertEqual(manager.listing()['total'],0)
+        from concurrent.futures import ThreadPoolExecutor
+        peer=self.manager()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            groups=list(pool.map(lambda i:self.candidates(peer if i%2 else manager,candidate_count=3,idempotency_key='raced'),range(4)))
+        self.assertEqual(len({group['id'] for group in groups}),1)
+        self.assertEqual(manager.listing()['total'],3)
+        with manager.store.transaction() as db:self.assertEqual(db.execute('SELECT count(*) FROM candidate_batches').fetchone()[0],1)
+    def test_candidate_failures_clear_and_retry_preserve_successes(self):
+        manager=self.manager();batch=self.candidates(manager,candidate_count=3)
+        first=manager.store.claim('voxcpm2');manager.store.change(first['id'],status='error',error='test failure')
+        self.assertEqual(manager.remove(batch['jobs'][1]['id'])['deleted'],1)
+        manager.recover();self.done(manager,batch['jobs'][2]['id'])
+        partial=manager.read_candidates(batch['id']);self.assertEqual(partial['status'],'partial')
+        self.assertEqual(partial['done_count'],1)
+        manager.retry(first['id']);self.done(manager,first['id'])
+        self.assertEqual(manager.read_candidates(batch['id'])['done_count'],2)
+        self.assertEqual(manager.remove()['deleted'],0)
+        self.assertTrue(Path(partial['jobs'][2]['result']['path']).is_file())
+    def test_candidate_priority_preserves_fifo_and_does_not_preempt(self):
+        manager=self.manager();manager.engine.gate=threading.Event();manager.recover()
+        active=self.submit(manager,'Active.');self.assertTrue(manager.engine.started.wait(2))
+        normal=self.submit(manager,'Normal.')
+        batch=self.candidates(manager,candidate_count=2,generate_immediately=True)
+        self.assertEqual(len(manager.engine.calls),1)
+        manager.engine.gate.set();self.done(manager,normal['id'])
+        self.assertEqual([call[0].text for call in manager.engine.calls],['Active.','Welcome home.','Welcome home.','Normal.'])
+        self.assertEqual(manager.read(active['id'])['status'],'done')
+        self.assertEqual(manager.read_candidates(batch['id'])['status'],'done')
     def test_startup_consumes_surviving_queue_and_retains_effective_settings(self):
         old=self.manager()
         row=self.submit(old,steps=12,idempotency_key='restart')

@@ -17,7 +17,7 @@ import pause_edits
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
-from schemas import Generation, Health, Capabilities, Job, Artifact, ArtifactPage, Reference, Unloaded, TagsPage, PauseAdjustment, QueuePage, QueueRemoval
+from schemas import Generation, CandidateGeneration, CandidateBatch, Health, Capabilities, Job, Artifact, ArtifactPage, Reference, Unloaded, TagsPage, PauseAdjustment, QueuePage, QueueRemoval
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from body_limit import BodyLimit
 import voice_catalog
@@ -108,8 +108,23 @@ def health():
 @app.post('/api/queue',status_code=202,response_model=Job)
 @app.post('/api/generate',status_code=202,response_model=Job)
 def generate(request: Generation):
+    return admit_generation(request)
+
+
+@app.post('/api/candidates',status_code=202,response_model=CandidateBatch)
+def generate_candidates(request: CandidateGeneration):
+    return admit_generation(request,candidates=True)
+
+
+@app.get('/api/candidates/{identity}',response_model=CandidateBatch)
+def candidate_status(identity: str):
+    try: return manager.read_candidates(identity)
+    except (OSError,ValueError): raise HTTPException(404,'Candidate batch not found') from None
+
+
+def admit_generation(request, candidates=False):
     try:
-        existing = manager.existing(request)
+        existing = manager.existing_candidates(request) if candidates else manager.existing(request)
         if existing: return existing
         effective = validate_controls(request)
         reference = None
@@ -134,7 +149,8 @@ def generate(request: Generation):
         errors = all_errors()+runtime_errors()
         if errors: raise HTTPException(503,'Incomplete setup. Run make setup for the selected MODEL. '+ '; '.join(errors))
         destination = storage.output_folder(request.output_dir)
-        return manager.submit(request,effective,reference,transcript,destination,reference_info)
+        submit = manager.submit_candidates if candidates else manager.submit
+        return submit(request,effective,reference,transcript,destination,reference_info)
     except BusyError as exc:
         raise HTTPException(409,str(exc)) from None
     except (ValueError,OSError,RuntimeError) as exc:
