@@ -24,7 +24,7 @@ Search History and Voice library, edit names/descriptions/tags, or use **Upload 
 
 ### Queue
 
-Open **Queue** from the header on either page. The modal lists jobs with status filters, paging, pending removal/clear and failed-job retry. Each entry's action buttons are stacked vertically on the right.
+Open **Queue** from the header on either page. The centered modal fills nearly the full screen height, with entries scrolling between the filters and pagination. It lists jobs with status filters, paging, pending removal/clear and failed-job retry. Each entry's action buttons are stacked vertically on the right.
 
 ![Full page with the Queue modal showing queued demo takes and Monitor/Remove actions stacked on the right](docs/images/queue-modal.jpg)
 

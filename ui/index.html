@@ -14,7 +14,10 @@ html[data-page="studio"] #voice-catalog,html[data-page="collection"] #studio-lay
 html[data-page="collection"] #voice-catalog{margin-top:0}
 html[data-page="collection"] #cards{max-height:none;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
 .header-links a[aria-current="page"]{color:var(--accent)}
-.queue-dialog{width:min(850px,calc(100vw - 32px))}
+.queue-dialog{width:min(850px,calc(100vw - 32px));height:calc(100vh - 32px);max-height:calc(100vh - 32px);height:calc(100dvh - 32px);max-height:calc(100dvh - 32px);margin:auto}
+.queue-dialog[open]{display:flex;flex-direction:column}
+.queue-dialog> :not(#queue-entries){flex-shrink:0}
+#queue-entries{flex:1;min-height:0;max-height:none;overflow-y:auto;overscroll-behavior:contain;align-content:start}
 .queue-entry{display:grid;grid-template-columns:minmax(0,1fr) max-content;gap:16px;align-items:start}
 .queue-entry-content{min-width:0;overflow-wrap:anywhere}
 .queue-actions{margin:0;flex-direction:column;align-items:stretch;flex-wrap:nowrap}
