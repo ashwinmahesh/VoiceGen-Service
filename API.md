@@ -732,6 +732,8 @@ History uses `limit` 1–100 (default 24) and nonnegative `offset`, with totals 
 
 Generator health uses `service:"voicegen-service"`, `mode:"generator"`, `api_version:"4.0.0"`, `queue_scope:"shared"` and `runtime_model_switching:true`. Identify the service by these fields plus `project` and `queue_database`; do not identify it by the selected or active model. `default_model` is the saved admission default, `active_model` is the actual loading/resident speech backend (or null), and `queue_paused` reports the shared normal-queue switch. `blocked_models` contains latest readiness errors. Switching model does not require restarting the generator.
 
+Queue health uses `service:"voicegen-queue"`, `role:"queue-crud"`, `api_version:"4.0.0"`, `queue_scope:"shared"`, `project`, and `queue_database`. It also reports `status`, `default_model`, and `paused`. Both VoiceGen health endpoints publish **`api_version`**, not `version`. External launchers such as Daemon Monitor must check these published identities rather than assume another project's health field names.
+
 | Method | Endpoint | Service | Purpose |
 | --- | --- | --- | --- |
 | GET | `/health` | Both | Check service/database status. Generator health also reports model readiness, current work, and errors. |

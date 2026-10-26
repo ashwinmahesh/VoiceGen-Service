@@ -11,6 +11,8 @@ Locate the checkout from the user’s configured projects; this installation is 
 
 Generator health has stable identity `service:voicegen-service`, `mode:generator`, `api_version:4.0.0`, `queue_scope:shared`, `runtime_model_switching:true`, plus project and database paths. `default_model` is the saved admission default; `active_model` is the backend loading/holding speech weights, or null. A model change never requires a new generator process. Do not identify a service or kill a process by its model.
 
+Queue health identifies `service:voicegen-queue`, `role:queue-crud`, `api_version:4.0.0`, `queue_scope:shared`, plus `project` and `queue_database`. Both APIs use `api_version`, not `version`; generator identity is `voicegen-service`, not an inferred family name. Match each actual contract when integrating external launchers.
+
 `GET /v1/models` on either API returns ready-only `data` descriptors (`id`, `name`, `modes`, `is_default`), `default_model`, `active_model` and `runtime_model_switching`. The queue has no backend process and reports active null. Registry order is Higgs, VoxCPM2, Qwen, Chatterbox, IndexTTS, MOSS, Fish. Missing models are set up with `make setup MODEL=<id>`; never silently download during serving.
 
 ## Start and stop
