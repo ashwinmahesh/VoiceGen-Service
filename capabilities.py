@@ -1,5 +1,5 @@
 from config import PROFILE, MODEL_SPECS, EXTENSION_SPECS, ROOT, OUTPUT_DIR, PROJECT_ROOT
-from schemas import Capabilities, MODEL_OPTIONS
+from schemas import Capabilities, MODEL_OPTIONS, LEGACY_BACKEND_FIELDS
 from directions import PRESETS, EMOTIONS
 
 
@@ -30,6 +30,16 @@ def capabilities():
     if backend=='chatterbox':
         caps.controls[backend]['delivery_candidates']=[{'name':'Recommended · provisional','exaggeration':.3,'cfg_weight':.5,'temperature':.8},{'name':'Upstream neutral','exaggeration':.5,'cfg_weight':.5,'temperature':.8},{'name':'More deliberate','exaggeration':.5,'cfg_weight':.3,'temperature':.8},{'name':'More expressive · experimental','exaggeration':.7,'cfg_weight':.3,'temperature':.8}]
     if backend=='indextts':caps.controls[backend]['delivery_candidates']=[{'name':'Slightly slower','duration_factor':1.1,'experimental':True}]
+    from punctuation_pacing import BACKENDS as PACED,DEFAULT_SENTENCE_MS,DEFAULT_COMMA_MS,MAX_PHRASES
+    if backend in (*PACED,'moss'):
+        controls=caps.controls.setdefault(backend,{})
+        controls.update(punctuation_pauses={'default':True,'requires_reference_or_preset':backend!='moss'},
+            sentence_pause_ms={'default':DEFAULT_SENTENCE_MS,'min':0,'max':3000},
+            comma_pause_ms={'default':DEFAULT_COMMA_MS,'min':0,'max':1500})
+        caps.limits['punctuation_pacing']={'max_phrases':MAX_PHRASES,'extra_silence':True,
+            'method':'Separate phrase synthesis with the same reference/fixed speaker; no audio alignment or trimming',
+            'voice_design':False,'manual_fish_tags':'whole-line by default; use native pause tags or structured delivery tags'}
+        if backend=='moss':caps.limits['punctuation_pacing']={'method':'Native description guidance in one pass; timings are approximate targets, not inserted gaps','voice_design':True,'exact_timing':False}
     caps.limits['performance_guidance']={
         'voxcpm2':'Auto uses combined conditioning with a reference, exact transcript and no new acting directions. New directions are disabled there; whole-line synthesis remains intact.',
         'qwen3':'Base clones the recording: exact transcript enables in-context performance conditioning, without acting/accent instructions. VoiceDesign creates a voice; CustomVoice directs a fixed speaker. ICL repetition penalty has a runtime floor of 1.5.',
@@ -71,6 +81,12 @@ def backend_capabilities():
 
 
 def validate_controls(request):
+    effective=_validate_controls(request)
+    from punctuation_pacing import resolve
+    return resolve(effective,PROFILE['backend'],MODEL_OPTIONS.get(PROFILE['backend']))
+
+
+def _validate_controls(request):
     caps=capabilities();qwen=PROFILE['backend']=='qwen3';vox=PROFILE['backend']=='voxcpm2'
     for backend in MODEL_OPTIONS:
         if getattr(request,backend) is not None and backend!=PROFILE['backend']:
@@ -126,7 +142,7 @@ def torch_capabilities():
                         emotion_alpha=control(1,0,1),emotion_reference_id={'type':'reference_id'},
                         emotion_vector={'length':8,'min':0,'max':1,'sum_max':1,
                           'order':['happy','angry','sad','afraid','disgusted','melancholic','surprised','calm']})
-    model_controls={key:controls.pop(key) for key in MODEL_OPTIONS[PROFILE['backend']].model_fields}
+    model_controls={key:controls.pop(key) for key in MODEL_OPTIONS[PROFILE['backend']].model_fields if key in controls}
     for key in ['exaggeration','cfg_weight','duration_factor','interval_silence','emotion_alpha','emotion_vector','emotion_reference_id']:controls.pop(key,None)
     controls[PROFILE['backend']]=model_controls
     return Capabilities(service=PROFILE['id'],name=PROFILE['name'],backend=PROFILE['backend'],
@@ -146,7 +162,7 @@ def torch_capabilities():
 def validate_torch_controls(request,caps):
     backend=PROFILE['backend']
     options=getattr(request,backend)
-    if options is not None:request=request.model_copy(update=options.model_dump())
+    if options is not None:request=request.model_copy(update={key:value for key,value in options.model_dump().items() if key in LEGACY_BACKEND_FIELDS})
     controls={**caps.controls,**caps.controls[backend]}
     if not (request.voice_id or request.reference_id):
         raise ValueError(f'{caps.name} requires a saved voice or reference recording; voice design is unsupported')
@@ -165,10 +181,12 @@ def validate_torch_controls(request,caps):
     if request.emotion_alpha is not None and not (request.emotion_reference_id or request.emotion_vector is not None):
         raise ValueError('emotion_alpha requires an emotion reference or vector')
     defaults={key:spec['default'] for key,spec in controls.items() if spec and 'default' in spec
-              and getattr(request,key) is None and key!='emotion_alpha'}
+              and hasattr(request,key) and getattr(request,key) is None and key!='emotion_alpha'}
     if request.emotion_reference_id or request.emotion_vector is not None:defaults.setdefault('emotion_alpha',request.emotion_alpha if request.emotion_alpha is not None else 1.)
     effective=request.model_copy(update=defaults)
-    return effective.model_copy(update={backend:MODEL_OPTIONS[backend](**{key:getattr(effective,key) for key in MODEL_OPTIONS[backend].model_fields})})
+    values=options.model_dump() if options is not None else {}
+    values.update({key:getattr(effective,key) for key in MODEL_OPTIONS[backend].model_fields if key in LEGACY_BACKEND_FIELDS})
+    return effective.model_copy(update={backend:MODEL_OPTIONS[backend](**values)})
 
 
 def additional_capabilities():

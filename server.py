@@ -76,6 +76,8 @@ def asset_path(kind, identity):
 
 
 @app.get('/',include_in_schema=False)
+@app.get('/collection',include_in_schema=False)
+@app.get('/collection/',include_in_schema=False)
 def index(): return FileResponse(PROJECT_ROOT/'ui/index.html')
 
 

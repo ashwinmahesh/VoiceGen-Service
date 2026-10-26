@@ -10,7 +10,7 @@ import wave
 from config import ROOT, GPU_LOCK_FILE, PROFILE, MODEL_SPECS, PROJECT_ROOT, validate_mount
 from durable_queue import QueueStore, QueueConflict
 from voice_catalog import now, atomic_json, IDENTITY
-from schemas import Generation, generation_metadata, MODEL_OPTIONS
+from schemas import Generation, generation_metadata, MODEL_OPTIONS, PACING_FIELDS, LEGACY_BACKEND_FIELDS
 from inference_locks import inherit_reservations
 
 
@@ -119,7 +119,15 @@ class JobManager:
 
     @staticmethod
     def fingerprint(request, exclude=()):
-        return hashlib.sha256(request.model_dump_json(exclude={'idempotency_key',*exclude}).encode()).hexdigest()
+        # New omitted pacing controls must hash exactly like pre-pacing submissions.
+        exclusions={key:True for key in {'idempotency_key',*exclude}}
+        for backend in ('qwen3','moss'):
+            if getattr(request,backend) is None:exclusions[backend]=True
+        for backend in ('qwen3','chatterbox','indextts','fish'):
+            options=getattr(request,backend)
+            if options is not None and backend not in exclusions:
+                exclusions[backend]={key for key in PACING_FIELDS if getattr(options,key) is None}
+        return hashlib.sha256(request.model_dump_json(exclude=exclusions).encode()).hexdigest()
 
     def existing(self, request):
         if not request.idempotency_key:
@@ -286,7 +294,7 @@ class JobManager:
             effective = Generation.model_validate(payload['effective'])
             options = getattr(effective,self.profile['backend'],None)
             if self.profile['backend'] in ('chatterbox','indextts') and options is not None:
-                effective = effective.model_copy(update=options.model_dump())
+                effective = effective.model_copy(update={key:value for key,value in options.model_dump().items() if key in LEGACY_BACKEND_FIELDS})
             current_model = self.profile.get('modes',{}).get(queued['mode'],self.profile['id'])
             spec = MODEL_SPECS.get(current_model,{})
             if payload['model_identity'] != {k:spec.get(k) for k in ['repo','revision']}:

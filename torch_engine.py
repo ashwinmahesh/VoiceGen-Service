@@ -84,7 +84,9 @@ class TorchEngine:
         random.seed(request.seed);np.random.seed(request.seed);torch.manual_seed(request.seed)
         emotion_reference=asset_path('references',request.emotion_reference_id) if request.emotion_reference_id else None
         if on_stage:on_stage('Generating speech')
-        with torch.inference_mode():sr,data=self.backend_call(request,reference,emotion_reference)
+        from punctuation_pacing import synthesize
+        with torch.inference_mode():
+            sr,data,pacing=synthesize(request,PROFILE['backend'],lambda part:self.backend_call(part,reference,emotion_reference),on_stage)
         data=np.asarray(data,dtype=np.float32)
         if not data.size or not np.isfinite(data).all() or float(np.max(np.abs(data)))<1e-5:
             raise RuntimeError('Model produced empty, nonfinite or silent audio')
@@ -107,6 +109,7 @@ class TorchEngine:
             model=spec['repo'],model_revision=spec['revision'],variant=self.variant,backend=PROFILE['backend'],
             runtime={key:version(key) for key in ['torch','torchaudio','transformers']},quantization=PROFILE['quantization'],
             applied_instructions='',extensions={},**{PROFILE['backend']:{
+                'pacing':pacing,
                 'mps_driver_allocated_gb_before_cache_release':driver_memory,'mps_active_allocated_gb':active_memory,
                 'emotion_reference_path':str(emotion_reference) if emotion_reference else None,
                 'emotion_reference_sha256':__import__('hashlib').sha256(emotion_reference.read_bytes()).hexdigest() if emotion_reference else None,

@@ -63,7 +63,7 @@ This is durable admission and practical retry/restart recovery, **not exactly-on
 
 Qwen VoiceDesign handles description+emotion. CustomVoice handles built-in preset speakers with emotion/style/accent instructions and the optional experimental steering pack. Base handles saved/uploaded references. Base accepts no direct emotion instruction: 422 if nonempty. An exact transcript enables in-context reference cloning; without a transcript it uses speaker embedding conditioning. Voice descriptions and accent/emotion are probabilistic; identity is approximate. There is no effective speed control, so the API rejects `speed`.
 
-Conservative combined tokenizer limits: VoxCPM2 4096, Qwen 2048 input tokens for text/instructions/reference transcript used by the adapter. Tokenizer limits are checked after local load, before synthesis. Outputs have a separate maximum of 2000 audio tokens and references are bounded to 30 seconds. The adapter sends one complete text passage (Qwen Base segmentation disabled). Backend token limits may cut audio short; metadata records a warning based on Qwen output token count or VoxCPM2 duration heuristic, not proof that the final words were spoken. Start with short passages.
+Conservative combined tokenizer limits: VoxCPM2 4096, Qwen 2048 input tokens for text/instructions/reference transcript used by the adapter. Tokenizer limits are checked after local load, before synthesis. Outputs have a separate maximum of 2000 audio tokens and references are bounded to 30 seconds. Vox sends one complete text passage. Qwen Base disables upstream automatic segmentation; the optional punctuation pacing described below explicitly generates separate phrases with the same reference. Backend token limits may cut audio short; metadata records a warning based on Qwen output token count or VoxCPM2 duration heuristic, not proof that the final words were spoken. Start with short passages.
 
 Results include an absolute WAV `path` and `metadata_path`, local `audio_url`, actual sample rate/channels/format/duration, separate requested/effective settings, model revision, runtime and quantization, input token count, waveform peaks, cold-load time, synthesis/total time, peak MLX allocation, and `real_time_factor` (synthesis seconds / audio seconds). These paths are on the Mac, not a phone. Audio+sidecar use unique IDs and atomic file replacement; an ignored artifact index resolves custom destinations after restart. Metadata retains reference path/transcript and original/effective upload properties through reference/voice records. Transcripts and audio remain local unless explicitly exported.
 
@@ -163,7 +163,7 @@ Restricted-model notices appear at every server startup, visibly in the webpage,
 
 ## Per-model performance controls
 
-Defaults remain unchanged. A more dramatic take can lose the recorded accent; compare raw whole-line takes and rate accent separately. Vox combined cloning retains recorded context without added instructions; the reviewed pause editor remains the way to enforce a reviewed minimum total gap.
+Sampling and expression defaults remain unchanged; the punctuation-pacing defaults below are enabled for new compatible requests. A more dramatic take can lose the recorded accent; compare raw whole-line takes and rate accent separately. Vox combined cloning retains recorded context without added instructions; the reviewed pause editor remains the way to enforce a reviewed minimum total gap.
 
 New typed options:
 
@@ -189,3 +189,21 @@ Qwen Base uses an exact transcript for ICL and rejects new acting/accent instruc
 ### Recommended defaults and retry compatibility
 
 See [VOICE_QUALITY.md](VOICE_QUALITY.md) for sourced per-model defaults and limitations. `clone_mode` now defaults to `auto`; requested metadata retains auto while effective settings freeze a concrete mode before durable admission. New auto and explicit reference requests have distinct fingerprints. A versioned compatibility path lets omitted-mode retries recover pre-auto SQLite/legacy JSON jobs under their old reference-mode hashes, including absent nullable Fish/Higgs fields. Nonempty new namespaces and explicit combined are not mapped through that mode fallback. Existing pending payloads and their requested JSON stay unchanged. Explicit generation overrides remain effective; changed defaults do not modify admitted jobs. The webpage preserves existing saved forms until Apply recommended defaults is selected.
+
+## Punctuation pacing
+
+Fish, IndexTTS, Chatterbox and Qwen reference/fixed-speaker requests now default to longer punctuation pauses. Optional fields live under the active model ID (`fish`, `indextts`, `chatterbox`, `qwen3`, or `moss`), never as flat request fields:
+
+```json
+{"text":"My guests. You came. Sit, please.","voice_id":"YOUR_VOICE_ID","qwen3":{"punctuation_pauses":true,"sentence_pause_ms":500,"comma_pause_ms":200}}
+```
+
+`sentence_pause_ms` defaults to 500 (integer 0–3000); `comma_pause_ms` defaults to 200 (integer 0–1500). For the four reference-capable models these are **additional silent milliseconds** between separately generated phrases, on top of model-produced leading/trailing pauses, rather than guaranteed total gaps. Sentence boundaries include `.?!` and their CJK counterparts; commas include `,，、`. The planner conservatively protects common abbreviations, initials, decimals, numeric thousands separators, URLs, email addresses and explicit phoneme/tag annotations. Ambiguous punctuation may stay unsplit. Final punctuation adds no trailing pause. Zero skips that boundary class; `punctuation_pauses:false` restores whole-line generation.
+
+The same reference, exact transcript when supported, voice controls and RNG stream are reused throughout a take. Structured Fish delivery tags are applied to each phrase. Manual Fish tags default to whole-line generation so local directions are preserved; explicit pacing with manual tags is rejected. Qwen VoiceDesign defaults to whole-line generation because a seed does not preserve a designed identity between calls; save a voice and clone it to use phrase pacing. At most 32 phrases and 600 seconds of output are allowed. The full original text still undergoes the existing input budget checks; output token limits apply per synthesized phrase. More calls can take longer and change prosodic flow or voice consistency: audition the result and disable pacing when continuous delivery works better.
+
+MOSS accepts the same optional fields under `moss`, but uses them as **approximate total pause targets in a native description instruction**, retaining one complete generation pass to avoid designing a different speaker per phrase. It does not insert measured silence or guarantee exact timings. Set `moss.punctuation_pauses:false` to omit that guidance. Higgs and Vox are unchanged.
+
+Controls are under **Advanced settings** in the UI, and defaults/limits appear under `controls.<model-id>`. Namespaces for inactive models, unknown fields and out-of-range values are rejected. Requested and effective values are frozen at queue admission. Existing queued takes do not gain pacing when their saved settings omitted it, and pre-pacing idempotency keys remain recoverable. `effective.<model-id>.pacing` records actual phrase input text, sample positions and inserted silence, or MOSS's explicitly approximate native guidance. No generated speech samples are trimmed or guessed audio boundaries edited. Existing recordings are never rewritten.
+
+The studio is at `/`; Collection has its own `/collection` page for History and Voice library. Collection actions open the selected voice/take/settings in the studio. The header's Queue button opens a modal on either page, preserving list/remove/clear/retry behavior and the durable API.

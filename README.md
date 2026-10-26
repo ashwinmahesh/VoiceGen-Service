@@ -8,9 +8,9 @@ Read [BACKENDS.md](BACKENDS.md) for the backend matrix, Python environments, con
 
 ## UI preview
 
-The shared studio provides voice design/reference inputs, playback, a persistent generation queue, and a searchable voice library. Screenshots use illustrative characters and queued requests; private recordings and catalogs are not included.
+The studio at `/` provides voice design/reference inputs and playback. Collection at `/collection` holds searchable History and Voice library pages; the header Queue button opens a popup with persistent generation jobs. Screenshots use illustrative characters and queued requests; private recordings and catalogs are not included.
 
-![Voice studio showing voice design, immediate and normal queue entries, and the searchable voice library](docs/images/studio-overview.png)
+![Voice studio with a saved reference, model controls, playback, and separate Collection and Queue navigation](docs/images/studio-page.jpg)
 
 <details>
 <summary>Voice names, descriptions, transcripts and tags</summary>
@@ -24,7 +24,16 @@ The shared studio provides voice design/reference inputs, playback, a persistent
 
 Fish S2 Pro offers explicit delivery tags and a preview of the text sent to the model. Other backends show their supported controls in the same studio.
 
-![Fish S2 Pro reference voice controls, delivery tags and rendered text preview](docs/images/fish-delivery-controls.png)
+![Advanced settings with configurable extra sentence and comma pauses](docs/images/advanced-pacing.jpg)
+
+</details>
+
+<details>
+<summary>Collection page and Queue popup</summary>
+
+![Separate Collection page showing a demo saved voice with tags](docs/images/collection-page.jpg)
+
+![Queue modal with a pending demo take and queue actions](docs/images/queue-modal.jpg)
 
 </details>
 
@@ -62,6 +71,8 @@ make health VENV=/absolute/local/venv DATA_DIR=/absolute/ssd/data PORT=8014
 ## Run and stop
 
 `make serve` retains a foreground process; Ctrl-C stops it. `make start` explicitly starts a managed background process, reuses a matching instance, and records its PID in DATA_DIR/logs. `make stop` checks identity, project/data root, command, cwd and listening PID before stopping a managed idle instance. It refuses unrelated listeners and busy instances. `make status` displays state; `make health` fails for offline/mismatched/error/incomplete services. No login item or automatic launch service is installed. `Start Voice Studio.command` runs the explicit background start/open commands.
+
+For this installation, stop voice servers and temporary UI previews after tests/maintenance. The default final state is stopped; do not automatically restore Vox or another backend unless explicitly requested. Start the service manually when needed.
 
 Plain `make serve` in a terminal shows a numbered list of **already set-up models**, with readable names, model IDs and a marked default. Models not set up or currently unavailable appear separately without numbers, each with its `make setup MODEL=<id>` command; they cannot be selected. Enter a ready model's number/ID, or leave it blank to use VoxCPM2 when available. The list checks verified local assets and the selected model's environment/runtime without loading weights. If VoxCPM2 is not set up, the first ready model is clearly marked as this menu's default; if none are ready, serving lists the unavailable models and stops with setup/remount instructions. `make serve MODEL=qwen3` skips the menu and validates that model. Noninteractive serving keeps the explicit or configured default and fails clearly when it is not ready; it never silently switches to another model or downloads weights.
 
@@ -156,3 +167,9 @@ If moving an existing source checkout, stop its verified idle managed server fir
 ## Accent and delivery workflow
 
 Use the model-specific controls and exact backend-text preview in the studio. Chatterbox uses a provisional conservative .3 exaggeration default; Index follows its reference; Fish/Higgs structured acting remains opt-in. See [VOICE_QUALITY.md](VOICE_QUALITY.md) for all per-model defaults, primary/community evidence, runtime audit and practical recipes. Accented reference quality remains the primary cue; stronger expression is not proof of stronger accent. API.md documents the typed namespaces, accepted sampling bounds, manual-tag conflicts, requested/effective provenance and each model's real limitations. Qwen Base requires transcript conditioning for recorded performance context; MOSS designs voices and cannot lock a saved speaker across lines. Raw takes and reviewed pause derivatives remain separate.
+
+## Punctuation pacing and navigation
+
+Fish, IndexTTS, Chatterbox and Qwen reference/preset voices default to longer punctuation pauses: **500 ms extra after sentences and 200 ms extra after commas**. Open **Advanced settings** to change either value or disable **Longer punctuation pauses** for continuous whole-line delivery. The API uses optional `sentence_pause_ms`, `comma_pause_ms` and `punctuation_pauses` under the active model's key, for example `"fish":{"sentence_pause_ms":700,"comma_pause_ms":300}`. See API.md for bounds and exceptions. Phrase synthesis reuses the same voice conditioning but can change flow and take longer. MOSS exposes the same controls as approximate native pacing targets in a single take, with no exact timing promise. Vox and Higgs retain their existing behavior.
+
+**Collection** is a separate page with History, saved voices, search, tags and pagination. Use a voice, open a take or reuse settings to return to the studio. **Queue** opens a modal from either page; pending removal/clear and failed-entry retry use the same durable APIs. No existing media, voices or queued requests are changed by these UI moves.

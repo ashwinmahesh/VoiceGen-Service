@@ -11,10 +11,10 @@ import time
 
 from assets import all_errors
 from config import MODEL_DIR, MODEL_SPECS, PROFILE, PROJECT_ROOT, ROOT
-from directions import instructions
 from inference_locks import reservation_descriptors
 
 from performance_controls import rendered_text,applied_performance
+from punctuation_pacing import moss_instructions
 
 from backend_selection import AUDIOCPP_REVISION
 
@@ -38,7 +38,7 @@ class NativeEngine:
               '--request-option','seed='+str(request.seed if not moss or request.seed<2**31 else request.seed-2**32),
               '--text-chunk-size','1000' if moss else '1024']
         if moss:
-            args+=['--language',request.language,'--request-option','instruct='+instructions(request,None),
+            args+=['--language',request.language,'--request-option','instruct='+moss_instructions(request),
                    '--request-option','max_frames='+str(request.max_tokens)]
         else:
             if request.higgs:
@@ -76,7 +76,9 @@ class NativeEngine:
             peak_process_rss_gb=round(int(measured[1])/1e9,3) if measured else None,
             model=spec['repo'],model_revision=spec['revision'],variant=PROFILE['backend'],
             backend=PROFILE['backend'],runtime={'audio.cpp':AUDIOCPP_REVISION,'backend':'Metal'},
-            quantization=PROFILE['quantization'],applied_instructions=instructions(request,None) if PROFILE['backend']=='moss' else '',
-            **{PROFILE['backend']:{'native_log_path':str(log),**applied_performance(request,PROFILE['backend'])}},input_tokens=None,possibly_truncated=None,
+            quantization=PROFILE['quantization'],applied_instructions=moss_instructions(request) if PROFILE['backend']=='moss' else '',
+            **{PROFILE['backend']:{'native_log_path':str(log),**applied_performance(request,PROFILE['backend']),
+                **({'pacing':{'strategy':'native_description_guidance','enabled':bool(request.moss and request.moss.punctuation_pauses),
+                    'requested_targets':request.moss.model_dump() if request.moss else None,'exact_timing':False,'single_pass':True}} if PROFILE['backend']=='moss' else {})}},input_tokens=None,possibly_truncated=None,
             truncation_detection='Higgs errors on missing EOC; MOSS frame ceiling may truncate; audition complete text',
             waveform=[round(float(np.max(np.abs(x))),4) for x in np.array_split(data,min(200,len(data)))],extensions={})

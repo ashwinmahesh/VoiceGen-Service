@@ -112,20 +112,16 @@ class Engine:
         mx.random.seed(request.seed)
         mx.reset_peak_memory()
         if on_stage: on_stage('Generating speech')
-        chunks, token_counts = [], []
-        with emotion_context(self.model,request):
-            for result in self.backend_call(request, reference, transcript):
-                data = np.asarray(result.audio, dtype=np.float32).reshape(-1)
-                if not np.isfinite(data).all():
-                    raise RuntimeError('Model produced invalid audio; try another seed.')
-                chunks.append(data)
+        token_counts = []
+        def generate_phrase(part):
+            chunks=[]
+            for result in self.backend_call(part, reference, transcript):
+                chunks.append(np.asarray(result.audio,dtype=np.float32).reshape(-1))
                 token_counts.append(result.token_count)
-        if not chunks or not sum(x.size for x in chunks):
-            raise RuntimeError('Model produced no audio; try another seed.')
-        data = np.concatenate(chunks)
-        if float(np.max(np.abs(data))) < 1e-5:
-            raise RuntimeError('Model produced silent audio; try another seed.')
-        sr = int(self.model.sample_rate)
+            return int(self.model.sample_rate),np.concatenate(chunks) if chunks else np.array([],dtype=np.float32)
+        from punctuation_pacing import synthesize
+        with emotion_context(self.model,request):
+            sr,data,pacing=synthesize(request,PROFILE['backend'],generate_phrase,on_stage)
         temp = destination.with_suffix('.tmp.wav')
         try:
             sf.write(temp, data, sr, subtype='PCM_16')
@@ -146,7 +142,7 @@ class Engine:
                 'waveform':peaks, 'model':MODEL_SPECS[variant]['repo'],
                 'model_revision':MODEL_SPECS[variant]['revision'], 'variant':variant,
                 'runtime':{key:version(key) for key in ['mlx','mlx-audio','transformers']},
-                **({PROFILE['backend']:applied_performance(request,PROFILE['backend'])} if PROFILE['backend']=='fish' else {'qwen3':qwen_sampling(self.model,request,reference,transcript)} if PROFILE['backend']=='qwen3' else {}),
+                **({'fish':{**applied_performance(request,'fish'),'pacing':pacing}} if PROFILE['backend']=='fish' else {'qwen3':{**qwen_sampling(self.model,request,reference,transcript),'pacing':pacing}} if PROFILE['backend']=='qwen3' else {}),
                 'quantization':PROFILE['quantization'],'applied_instructions':instructions(request,reference),
                 'extensions':({'emotion_steering':{'emotion':request.steering_emotion,'strength':request.steering_strength,
                     'layers':[21,25],'decay':.985,'revision':__import__('config').EXTENSION_SPECS['emotion_steering']['revision'],

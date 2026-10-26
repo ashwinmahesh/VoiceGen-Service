@@ -3,13 +3,28 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-class ChatterboxOptions(BaseModel):
+class PacingOptions(BaseModel):
+    model_config = ConfigDict(extra='forbid',allow_inf_nan=False)
+    punctuation_pauses: bool | None = None
+    sentence_pause_ms: int | None = Field(default=None,ge=0,le=3000)
+    comma_pause_ms: int | None = Field(default=None,ge=0,le=1500)
+
+
+class QwenOptions(PacingOptions):
+    pass
+
+
+class MossOptions(PacingOptions):
+    pass
+
+
+class ChatterboxOptions(PacingOptions):
     model_config = ConfigDict(extra='forbid',allow_inf_nan=False)
     exaggeration: float | None = Field(default=None,ge=0,le=1)
     cfg_weight: float | None = Field(default=None,ge=0,le=1)
 
 
-class IndexTTSOptions(BaseModel):
+class IndexTTSOptions(PacingOptions):
     model_config = ConfigDict(extra='forbid',allow_inf_nan=False)
     emotion_reference_id: str | None = Field(default=None,pattern=r'^[a-f0-9]{32}$')
     emotion_vector: list[float] | None = Field(default=None,min_length=8,max_length=8)
@@ -28,7 +43,7 @@ class IndexTTSOptions(BaseModel):
         return self
 
 
-class FishOptions(BaseModel):
+class FishOptions(PacingOptions):
     model_config = ConfigDict(extra='forbid',allow_inf_nan=False)
     delivery_tags: list[str] = Field(default_factory=list,max_length=4)
     top_p: float | None = Field(default=None,ge=.1,le=1)
@@ -57,8 +72,9 @@ class HiggsOptions(BaseModel):
     top_k: int | None = Field(default=None,ge=1,le=100)
 
 
-MODEL_OPTIONS={'chatterbox':ChatterboxOptions,'indextts':IndexTTSOptions,'fish':FishOptions,'higgs':HiggsOptions}
-LEGACY_BACKEND_FIELDS=set(ChatterboxOptions.model_fields)|set(IndexTTSOptions.model_fields)
+PACING_FIELDS=set(PacingOptions.model_fields)
+MODEL_OPTIONS={'chatterbox':ChatterboxOptions,'indextts':IndexTTSOptions,'fish':FishOptions,'higgs':HiggsOptions,'qwen3':QwenOptions,'moss':MossOptions}
+LEGACY_BACKEND_FIELDS=(set(ChatterboxOptions.model_fields)|set(IndexTTSOptions.model_fields))-PACING_FIELDS
 
 
 class Generation(BaseModel):
@@ -83,6 +99,8 @@ class Generation(BaseModel):
     indextts: IndexTTSOptions | None = None
     fish: FishOptions | None = None
     higgs: HiggsOptions | None = None
+    qwen3: QwenOptions | None = None
+    moss: MossOptions | None = None
     exaggeration: float | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0, le=1)
     cfg_weight: float | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0, le=1)
     emotion_reference_id: str | None = Field(default=None, json_schema_extra={'deprecated':True}, pattern=r'^[a-f0-9]{32}$')
