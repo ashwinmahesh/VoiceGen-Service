@@ -1,0 +1,28 @@
+{
+  "id": "moss-voice-guidance",
+  "backend": "moss",
+  "version": 1,
+  "name": "MOSS VoiceGenerator",
+  "summary": "Voice design descriptions in English or Chinese; no reference-cloning or identity-lock promise.",
+  "sources": [
+    "https://huggingface.co/OpenMOSS-Team/MOSS-VoiceGenerator#input-types"
+  ],
+  "modes": {
+    "design": {
+      "available": true,
+      "label": "Voice design",
+      "instructions": "MOSS VoiceGenerator designs a voice from audible instructions, separately from the words to speak. Follow the guidance language (English or Chinese). Develop compatible phrasing and vocal dynamics while retaining explicit traits, accent and restraint. Never promise speaker identity across lines or exact pause durations. Existing sampler and approximate punctuation-pause targets stay unchanged.",
+      "kind": "prose",
+      "target": "description",
+      "limits": {
+        "addition_characters": 600,
+        "addition_words": 60
+      }
+    },
+    "reference": {
+      "available": false,
+      "label": "Reference cloning",
+      "reason": "This MOSS VoiceGenerator adapter designs voices and does not clone reference recordings."
+    }
+  }
+}

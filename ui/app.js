@@ -17,12 +17,16 @@ function clearExpansion(){appliedExpansion=null;pendingExpansion=null;updateProm
 function updatePromptExpansion(){
  if(!caps)return;
  const enabled=!!caps.limits.prompt_expansion?.enabled,backend=caps.backend;
- const supported=(mode==='design'&&['voxcpm2','qwen3','moss'].includes(backend))||(mode==='preset'&&backend==='qwen3')||
-  (['saved','upload'].includes(mode)&&(['fish','higgs'].includes(backend)||(backend==='voxcpm2'&&$('clone-mode').value==='reference')));
+ const profile=caps.models[backend]?.prompt_expansion,profileMode=['saved','upload'].includes(mode)?'reference':mode;
+ const spec=profile?.modes[profileMode];
+ const supported=!!spec?.available&&(!spec.clone_modes||spec.clone_modes.includes($('clone-mode').value));
+ $('expansion-profile').hidden=!profile;
+ $('expansion-profile-info').textContent=profile?`${profile.name} · ${spec?.label||profileMode} · Profile v${profile.version}`:'';
+ $('expansion-profile-rules').textContent=spec?.available?(supported?spec.instructions:'This reference mode follows recorded performance. Choose flexible Voice reference to use delivery instructions.'):spec?.reason||'No expansion specification for this mode.';
  $('expansion-guidance-field').hidden=!enabled||!supported;
  $('expand-guidance').disabled=!online||!enabled||!supported||busy||enhancing||uploading||submitting||!!appliedExpansion;
  $('expand-guidance').textContent=enhancing?'Expanding guidance…':'Preview expanded guidance';
- $('prompt-expansion-hint').textContent=!enabled?'Disabled. Start with make serve WITH_LLM=1 to enable local guidance previews.':!supported?'This mode follows recorded performance or has no written instruction path. Choose a supported design/preset or flexible Vox reference mode.':'Refine written guidance without sending dialogue, transcripts or reference audio to the LLM. Preview, then apply. Fish/Higgs suggestions use supported controls.';
+ $('prompt-expansion-hint').textContent=!enabled?'Disabled. Start with make serve WITH_LLM=1 to enable local guidance previews.':!supported?(spec?.reason||'This mode follows recorded performance. Choose flexible Voice reference to direct a different delivery.'):'Refine written guidance without sending dialogue, transcripts or reference audio to the LLM. Preview, then apply. Fish/Higgs suggestions use supported controls.';
  $('expansion-applied').hidden=!appliedExpansion;$('restore-guidance').hidden=!appliedExpansion;
  renderExpansion(appliedExpansion,'applied-expansion-details','Applied to your next generation');
  if(appliedExpansion)$('expansion-applied').textContent='Expanded guidance applied · '+appliedExpansion.llm.model+' · '+appliedExpansion.llm.seconds+'s. Original retained.';
@@ -50,7 +54,8 @@ function renderExpansion(record,id,caption){
  const content=panel.querySelector('.expansion-content'),original=el('details'),originalText=el('p',guidancePreview(record.original),'expanded-guidance');
  original.append(el('summary','Original guidance'),originalText);
  content.replaceChildren(el('p',caption,'hint'),el('p',guidancePreview(record.updates),'expanded-guidance'),original,
-  el('p',`${record.llm.model} · ${record.llm.seconds}s · ${record.llm.policy_version}`,'hint'));
+  el('p',`${record.llm.model} · ${record.llm.seconds}s · ${record.llm.policy_version}`+
+   (record.llm[record.context.backend]?` · ${record.llm[record.context.backend].label} · Profile v${record.llm[record.context.backend].version}`:''),'hint'));
 }
 $('expand-guidance').onclick=async()=>{
  if(enhancing)return;enhancing=true;controls();$('error').hidden=true;
@@ -59,7 +64,8 @@ $('expand-guidance').onclick=async()=>{
   pendingExpansion=await post('/api/prompts/expand',{generation,guidance:$('expansion-guidance').value});
   $('expansion-original').textContent=guidancePreview(pendingExpansion.original);
   $('expansion-updates').textContent=guidancePreview(pendingExpansion.updates);
-  $('expansion-model').textContent=`${pendingExpansion.llm.model} · ${pendingExpansion.llm.seconds}s · ${pendingExpansion.llm.policy_version}`;
+  const selected=pendingExpansion.llm[caps.backend];
+  $('expansion-model').textContent=`${pendingExpansion.llm.model} · ${pendingExpansion.llm.seconds}s · ${pendingExpansion.llm.policy_version}`+(selected?` · ${selected.label} · Profile v${selected.version}`:'');
   $('expansion-preview').showModal();
  }catch(exc){error(exc.message)}finally{enhancing=false;controls()}
 };

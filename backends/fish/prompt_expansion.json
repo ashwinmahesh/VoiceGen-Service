@@ -1,0 +1,22 @@
+{
+  "id": "fish-voice-guidance",
+  "backend": "fish",
+  "version": 1,
+  "name": "Fish S2 Pro",
+  "summary": "A short natural-language delivery cue rather than a long prose voice description.",
+  "sources": [
+    "https://huggingface.co/fishaudio/s2-pro#fine-grained-inline-control"
+  ],
+  "modes": {
+    "reference": {
+      "available": true,
+      "label": "Reference delivery tags",
+      "instructions": "Fish S2 Pro accepts short natural-language delivery cues rendered as bracket tags by the service. Suggest at most two compatible cues; prefer one combined dominant cue. Preserve requested restraint. Do not invent speaker, accent or pause tokens, sound effects, laughter, events or words to speak. The reference supplies identity and accent; tags do not guarantee either.",
+      "kind": "fish",
+      "target": "fish.delivery_tags",
+      "limits": {
+        "delivery_tags": 2
+      }
+    }
+  }
+}

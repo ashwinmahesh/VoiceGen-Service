@@ -10,17 +10,19 @@ from config import ROOT, PROJECT_ROOT, validate_mount
 from inference_locks import reservation_descriptors
 from performance_controls import HIGGS_CATALOG,rendered_text
 from prompt_policy import POLICY_VERSION
+from prompt_profiles import BACKENDS,load_profile,mode_spec
 from prompt_assets import REPOSITORY,REVISION,check_assets,check_runtime
 from voice_catalog import IDENTITY,atomic_json,now
 
 
 def capability(enabled):
+    profiles={backend:load_profile(backend) for backend in BACKENDS}
     return dict(enabled=enabled,model=REPOSITORY,revision=REVISION,policy_version=POLICY_VERSION,
         preview_url='/api/prompts/expand',application='Preview then apply; dialogue and reference transcripts never enter the LLM',
-        supported={'voxcpm2':['design','reference with flexible delivery'],
-            'qwen3':['VoiceDesign','CustomVoice presets'],'moss':['design'],
-            'fish':['structured delivery tag suggestions'],'higgs':['catalog control suggestions']},
-        unsupported=['Qwen Base reference','Vox combined/continuation or auto-follow-recording','Chatterbox Original','IndexTTS current adapter'])
+        supported={backend:[spec['label'] for spec in profile['modes'].values() if spec['available']]
+                   for backend,profile in profiles.items() if any(spec['available'] for spec in profile['modes'].values())},
+        unsupported=['Vox combined/continuation or auto-follow-recording']+
+                    [profile['name']+' '+spec['label'] for profile in profiles.values() for spec in profile['modes'].values() if not spec['available']])
 
 
 def context(request,effective,backend):
@@ -33,6 +35,8 @@ def context(request,effective,backend):
 def plan(request,effective,backend,guidance=''):
     if request.prompt_expansion_id:raise ValueError('Restore the original guidance before expanding again.')
     ctx=context(request,effective,backend);mode=ctx['mode']
+    profile,spec=mode_spec(backend,mode,effective.clone_mode)
+    selected={**spec,**{key:profile[key] for key in ('id','backend','version','source','sha256')},'mode':mode}
     if backend in ('chatterbox','indextts') or (backend=='qwen3' and mode=='reference'):
         raise ValueError('This backend/mode has no supported written delivery instruction path; use its reference or numeric controls.')
     if backend=='voxcpm2' and effective.clone_mode in ('combined','continuation'):
@@ -48,7 +52,7 @@ def plan(request,effective,backend,guidance=''):
             if '<|' in request.text or (options and any(getattr(options,key) for key in HIGGS_CATALOG)):
                 raise ValueError('Keep existing Higgs tags or clear them before requesting suggestions.')
             original={backend:{key:None for key in HIGGS_CATALOG}}
-        prompt=dict(kind=backend,backend=backend,guidance=guidance)
+        prompt=dict(kind=backend,backend=backend,guidance=guidance,profile_spec=selected)
         if backend=='higgs':prompt['allowed_values']=HIGGS_CATALOG
         return ctx,original,prompt
     if backend not in ('voxcpm2','qwen3','moss'):raise ValueError('Prompt expansion is unsupported for this backend.')
@@ -56,7 +60,7 @@ def plan(request,effective,backend,guidance=''):
     original=getattr(request,target)
     if not original.strip():raise ValueError('Enter a voice description or delivery direction before expanding it.')
     return ctx,{target:original},dict(kind='prose',backend=backend,target=target,original=original,guidance=guidance,
-                                      accent=request.accent,delivery_context=request.emotion if target=='description' else '')
+                                      accent=request.accent,delivery_context=request.emotion if target=='description' else '',profile_spec=selected)
 
 
 def strict_json(text):
@@ -74,17 +78,18 @@ def strict_json(text):
 
 def updates_for(prompt,original,completion):
     value=strict_json(completion)
+    limits=prompt.get('profile_spec',{}).get('limits',{})
     if prompt['kind']=='prose':
         if set(value)!={'addition'} or not isinstance(value['addition'],str):raise ValueError('Invalid prose output schema')
         addition=value['addition']
-        if len(addition)>600 or len(addition.split())>60 or any(unicodedata.category(c).startswith('C') or c in '<>[]{}' for c in addition):
+        if len(addition)>limits.get('addition_characters',600) or len(addition.split())>limits.get('addition_words',60) or any(unicodedata.category(c).startswith('C') or c in '<>[]{}' for c in addition):
             raise ValueError('Invalid prose addition')
         target=prompt['target'];expanded=original[target]+('\n'+addition.strip() if addition.strip() else '')
         if addition.strip() and addition.strip() in original[target]:raise ValueError('The model repeated original guidance instead of adding detail; keep the original or retry.')
         if len(expanded)>(1500 if target=='description' else 1000):raise ValueError('Expanded guidance exceeds the voice field limit; shorten it or keep the original.')
         return {target:expanded}
     if prompt['kind']=='fish':
-        if set(value)!={'delivery_tags'} or not isinstance(value['delivery_tags'],list) or len(value['delivery_tags'])>2:
+        if set(value)!={'delivery_tags'} or not isinstance(value['delivery_tags'],list) or len(value['delivery_tags'])>limits.get('delivery_tags',2):
             raise ValueError('Invalid Fish suggestion schema')
         from schemas import FishOptions
         return {'fish':{'delivery_tags':FishOptions(delivery_tags=value['delivery_tags']).delivery_tags}}
@@ -134,6 +139,7 @@ def expand(request,effective,backend,guidance='',root=ROOT,transcript=''):
                  profile=backend+':'+prompt.get('target',prompt['kind']),policy_source='prompt_policy.py',
                  seconds=round(time.monotonic()-started,3),temperature=0,thinking=False,
                  peak_mlx_memory_gb=data.get('peak_mlx_memory_gb'),peak_process_rss_gb=data.get('peak_process_rss_gb')))
+    record['llm'][backend]=prompt['profile_spec']
     target=validate_mount(Path(root)/'prompt-expansions'/f'{identity}.json');target.parent.mkdir(parents=True,exist_ok=True)
     atomic_json(target,record)
     return record

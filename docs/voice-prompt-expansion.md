@@ -28,7 +28,7 @@ The [official Vox project](https://github.com/OpenBMB/VoxCPM) distinguishes desi
 
 ## Application policy
 
-`prompt_policy.py` separates shared fidelity instructions from trusted backend profiles. `voice-guidance-4` uses compact schemas and distinct examples for prose, Fish and Higgs; Chinese prose gets Chinese examples. Profiles are versioned and recorded with each preview. Temperature0 and disabled thinking are reproducibility choices, not a claim of optimal Qwen sampling.
+`prompt_policy.py` contains shared fidelity instructions; `voice-guidance-5` selects a versioned backend/mode specification from `backends/<model-id>/prompt_expansion.json`. Compact schemas and distinct examples apply to prose, Fish and Higgs; Chinese prose gets Chinese examples. Profiles are validated and recorded with each preview. Temperature0 and disabled thinking are reproducibility choices, not a claim of optimal Qwen sampling.
 
 The application preserves spoken `text` and exact `ref_text` verbatim and excludes both from the LLM payload. No audio, paths or speaker/reference IDs enter that payload. The model sees only written description/delivery/accent constraints. It cannot inspect a reference recording, infer its accent, select a speaker, change a clone mode or modify sampler/pause settings.
 
@@ -46,8 +46,31 @@ Applied receipts persist original/expanded guidance, model/revision, profile/pol
 
 ## What was measured
 
-The final local text-only smoke used seven cases: short Vox design, explicit Romanian-accent constraints, an embedded instruction-overriding request, Qwen preset delivery, Fish tags, Higgs catalog selection and Chinese MOSS design. All seven returned structurally valid previews under `voice-guidance-4`. Latency including the short-lived child was1.54–2.01 seconds; reported MLX peak1.50–1.83GB and process peak RSS1.69GB. These counters overlap and must not be summed. Speech weights were not resident during these measurements; they are not end-to-end TTS benchmarks.
+The initial local text-only smoke under `voice-guidance-4` used seven cases: short Vox design, explicit Romanian-accent constraints, an embedded instruction-overriding request, Qwen preset delivery, Fish tags, Higgs catalog selection and Chinese MOSS design. All seven returned structurally valid previews under `voice-guidance-4`. Latency including the short-lived child was1.54–2.01 seconds; reported MLX peak1.50–1.83GB and process peak RSS1.69GB. These counters overlap and must not be summed. Speech weights were not resident during these measurements; they are not end-to-end TTS benchmarks.
 
 Earlier policies often echoed the original or returned invalid Fish/Higgs shapes. Compact backend-specific prompts improved structural completion, but final prose still sometimes paraphrased the original or suggested an unnecessary register/delivery nuance. Seven valid JSON results do not establish reliable semantic fidelity or improved sound. No new TTS listening comparison was performed for this feature. UI screenshots use synthetic audio and a synthetic suggestion, clearly labeled.
 
 For audio evaluation, compare original and applied guidance with the same reference, text, seed and sampler. Rate word accuracy, identity, accent, pacing and expression separately. Keep the original take and reject a more expressive result if it loses the desired speaker/accent. Existing preferred speech defaults remain unchanged.
+
+
+## Per-model specifications
+
+Every backend has a source-controlled profile, including explicit unsupported-mode entries:
+
+| Model | Specification | Native route |
+| --- | --- | --- |
+| VoxCPM2 | [voxcpm2](../backends/voxcpm2/prompt_expansion.json) | Separate description and flexible-reference delivery rules |
+| Qwen3-TTS | [qwen3](../backends/qwen3/prompt_expansion.json) | Separate VoiceDesign and CustomVoice rules; Base unavailable |
+| MOSS | [moss](../backends/moss/prompt_expansion.json) | English/Chinese design, no speaker-lock or exact-pause claims |
+| Fish | [fish](../backends/fish/prompt_expansion.json) | Prefer one short combined delivery cue, maximum two |
+| Higgs | [higgs](../backends/higgs/prompt_expansion.json) | One existing category/value or no suggestion |
+| Chatterbox | [chatterbox](../backends/chatterbox/prompt_expansion.json) | Original's numeric/reference controls; no prose route |
+| IndexTTS | [indextts](../backends/indextts/prompt_expansion.json) | Installed text-to-emotion classifier remains disabled |
+
+Each profile contains its model ID, integer version, summary, source links and mode specifications. Available modes specify instructions, output kind/native target and bounded limits. Unavailable modes explain why. Startup validates the specifications before queue recovery; request planning rejects unsupported modes before taking the GPU. The UI displays the active model/mode rules; capabilities publish them under `models.<model-id>.prompt_expansion`.
+
+To refine a profile, edit its `instructions`, bump `version`, retain supporting primary links and run `make test`. Restart an idle service before comparing new previews. Limits may be lowered within the shared ceilings; a profile cannot invent a native instruction path, change the protected output target, add controls or alter the shared fidelity policy. `prompt_policy.py` remains authoritative for keeping dialogue/transcripts outside the LLM and for strict structured output. These are trusted source settings, not arbitrary per-request system prompts.
+
+The parent freezes the selected specification before launching the LLM. New receipts retain it under `llm.<model-id>`, including mode, instructions, limits, source and exact file SHA256. Candidate fan-out and queue replay preserve this snapshot. Updating a profile does not rewrite existing receipts or admitted jobs, and older previews without the new profile metadata remain compatible.
+
+A second seven-case real text-only smoke under `voice-guidance-5` returned seven structurally valid previews, with child-inclusive latency1.54–1.82 seconds and reported MLX peak1.47–1.87GB. These were source/profile version1; no speech inference or listening comparison was performed. The prose still sometimes repeated original traits, added an unwanted nuance, or absorbed an embedded task-changing request as delivery text. Dialogue and reference transcripts remained outside the LLM and protected by code. Valid JSON and versioned profiles do not establish semantic fidelity or improved accent; review the displayed suggestion and compare original audio before adopting a direction.

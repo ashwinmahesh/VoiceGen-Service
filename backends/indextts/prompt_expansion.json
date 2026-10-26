@@ -1,0 +1,17 @@
+{
+  "id": "indextts-voice-guidance",
+  "backend": "indextts",
+  "version": 1,
+  "name": "IndexTTS 2.5",
+  "summary": "The installed adapter uses recording, emotion reference/vector and numeric controls.",
+  "sources": [
+    "https://github.com/index-tts/index-tts#5-emotion-control-from-the-text-itself-use_emo_text"
+  ],
+  "modes": {
+    "reference": {
+      "available": false,
+      "label": "Reference and emotion controls",
+      "reason": "The installed Index adapter disables the upstream text-to-emotion classifier. Do not silently enable it or map prose to an uncalibrated emotion vector. Use its existing reference/vector controls."
+    }
+  }
+}

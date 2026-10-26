@@ -1,0 +1,38 @@
+{
+  "id": "voxcpm2-voice-guidance",
+  "backend": "voxcpm2",
+  "version": 1,
+  "name": "VoxCPM2",
+  "summary": "Audible descriptions for design; acting directions for flexible reference cloning.",
+  "sources": [
+    "https://github.com/OpenBMB/VoxCPM",
+    "https://github.com/OpenBMB/VoxCPM/issues/210"
+  ],
+  "modes": {
+    "design": {
+      "available": true,
+      "label": "Voice design",
+      "instructions": "VoxCPM2 accepts an audible voice description. Add compatible intonation, emphasis and phrase-ending detail. Preserve requested timbre, register, restraint and strong foreign accent. Do not invent biography or recording equipment.",
+      "kind": "prose",
+      "target": "description",
+      "limits": {
+        "addition_characters": 600,
+        "addition_words": 60
+      }
+    },
+    "reference": {
+      "available": true,
+      "label": "Flexible voice reference",
+      "instructions": "VoxCPM2 flexible reference cloning accepts delivery instructions. Keep the recorded speaker identity and explicit accent. Develop only requested acting through cadence, word emphasis and dynamic variation. Never redesign timbre or suggest another clone mode. Recorded-performance combined/continuation cloning has no instruction path.",
+      "kind": "prose",
+      "target": "emotion",
+      "limits": {
+        "addition_characters": 600,
+        "addition_words": 60
+      },
+      "clone_modes": [
+        "reference"
+      ]
+    }
+  }
+}

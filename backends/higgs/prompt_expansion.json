@@ -1,0 +1,22 @@
+{
+  "id": "higgs-voice-guidance",
+  "backend": "higgs",
+  "version": 1,
+  "name": "Higgs TTS 3",
+  "summary": "One supported emotion, prosody or style control, with an untagged baseline available.",
+  "sources": [
+    "https://huggingface.co/bosonai/higgs-tts-3-4b/blob/239f63fb7b02b1aa085f98d9efae5e35cc5523e8/PROMPTING.md"
+  ],
+  "modes": {
+    "reference": {
+      "available": true,
+      "label": "Reference catalog control",
+      "instructions": "Higgs T3 uses a closed emotion/prosody/style catalog. Suggest at most one existing control matching the request, prioritizing emotion over speed or style. Return no suggestion when the catalog cannot represent the direction. Preserve the untagged baseline for comparison. Never invent an accent token, pause duration, sound effect or speaker trait; a tag can alter accent/identity and requires listening.",
+      "kind": "higgs",
+      "target": "higgs",
+      "limits": {
+        "controls": 1
+      }
+    }
+  }
+}

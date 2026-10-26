@@ -1,0 +1,17 @@
+{
+  "id": "chatterbox-voice-guidance",
+  "backend": "chatterbox",
+  "version": 1,
+  "name": "Chatterbox Original",
+  "summary": "The installed Original adapter uses recording and numeric expression controls.",
+  "sources": [
+    "https://github.com/resemble-ai/chatterbox#original-chatterbox-tips"
+  ],
+  "modes": {
+    "reference": {
+      "available": false,
+      "label": "Original reference",
+      "reason": "The installed Chatterbox Original adapter has no written delivery instruction path. Do not invent Turbo tags or translate prose to uncalibrated exaggeration/CFG settings."
+    }
+  }
+}

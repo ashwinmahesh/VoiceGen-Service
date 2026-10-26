@@ -39,6 +39,9 @@ class ExpansionTests(unittest.TestCase):
         response=self.preview();self.assertEqual(response.status_code,200,response.text);record=response.json()
         self.assertNotIn('DIALOGUE sentinel',json.dumps(self.calls))
         self.assertEqual(record['original'],{'description':'A calm cultured baritone.'})
+        self.assertEqual(record['llm']['voxcpm2']['id'],'voxcpm2-voice-guidance')
+        self.assertEqual(record['llm']['voxcpm2']['mode'],'design')
+        self.assertEqual(record['llm']['voxcpm2']['source'],'backends/voxcpm2/prompt_expansion.json')
         self.assertTrue(record['updates']['description'].startswith(record['original']['description']+'\n'))
         self.assertEqual(self.f.client.get('/api/queue').json()['total'],0)
         request={'text':text,**record['updates'],'prompt_expansion_id':record['id'],'candidate_count':2,'idempotency_key':'expanded-pair'}
@@ -162,3 +165,40 @@ class ExpansionTests(unittest.TestCase):
             self.assertEqual(download.call_count,1)
             self.assertEqual((folder/'model.safetensors').stat().st_mtime_ns,timestamp)
             self.assertEqual(assets.check_assets(full=True),folder)
+    def test_backend_mode_profiles_select_native_rules_and_publish_namespaced_specs(self):
+        from prompt_policy import messages_for
+        from prompt_profiles import load_profile,BACKENDS
+        profiles={backend:load_profile(backend) for backend in BACKENDS}
+        self.assertEqual(len({profile['id'] for profile in profiles.values()}),7)
+        caps=self.f.client.get('/api/capabilities').json()
+        self.assertEqual(caps['models']['voxcpm2']['prompt_expansion'],profiles['voxcpm2'])
+        cases=[('voxcpm2','design',{}),('voxcpm2','reference',{'reference_id':'a'*32}),
+               ('qwen3','design',{}),('qwen3','preset',{'preset_voice':'ryan'}),('moss','design',{}),
+               ('fish','reference',{'reference_id':'a'*32}),('higgs','reference',{'reference_id':'a'*32})]
+        for backend,mode,values in cases:
+            with self.subTest(backend=backend,mode=mode):
+                request=Generation(text='DIALOGUE sentinel',description='A calm voice.',emotion='Quiet amusement.',
+                                   ref_text='REFERENCE sentinel',clone_mode='reference',**values)
+                _,_,prompt=expansion.plan(request,request,backend,'Restrained amusement.')
+                selected=prompt['profile_spec'];expected=profiles[backend]['modes'][mode]
+                self.assertEqual(selected['instructions'],expected['instructions'])
+                self.assertEqual(selected['sha256'],profiles[backend]['sha256'])
+                messages=messages_for(prompt)
+                self.assertIn(expected['instructions'],messages[0]['content'])
+                self.assertNotIn('DIALOGUE sentinel',json.dumps(messages));self.assertNotIn('REFERENCE sentinel',json.dumps(messages))
+        from prompt_profiles import mode_spec
+        for backend,mode,clone in [('voxcpm2','reference','combined'),('voxcpm2','reference','continuation'),
+                                  ('qwen3','reference','reference'),('chatterbox','reference','reference'),('indextts','reference','reference')]:
+            with self.assertRaises(ValueError):mode_spec(backend,mode,clone)
+    def test_profile_limits_and_native_capability_cannot_be_overridden(self):
+        import prompt_profiles
+        profile=prompt_profiles.load_profile('voxcpm2');profile={k:v for k,v in profile.items() if k not in ('source','sha256')}
+        for invalid in ['limit','target','native-path']:
+            value=json.loads(json.dumps(profile))
+            if invalid=='limit':value['modes']['design']['limits']['addition_characters']=601
+            elif invalid=='target':value['modes']['design']['target']='text'
+            else:value.update(id='chatterbox-voice-guidance',backend='chatterbox')
+            with patch.object(Path,'read_bytes',return_value=json.dumps(value).encode()):
+                with self.assertRaises(ValueError):prompt_profiles.load_profile('chatterbox' if invalid=='native-path' else 'voxcpm2')
+        prompt={'kind':'prose','target':'description','profile_spec':{'limits':{'addition_characters':10,'addition_words':2}}}
+        with self.assertRaises(ValueError):expansion.updates_for(prompt,{'description':'Voice.'},'{"addition":"Three new words"}')

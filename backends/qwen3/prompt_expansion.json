@@ -1,0 +1,39 @@
+{
+  "id": "qwen3-voice-guidance",
+  "backend": "qwen3",
+  "version": 1,
+  "name": "Qwen3-TTS",
+  "summary": "Different instructions for VoiceDesign and fixed CustomVoice speakers; Base follows its recording.",
+  "sources": [
+    "https://github.com/QwenLM/Qwen3-TTS#python-package-usage"
+  ],
+  "modes": {
+    "design": {
+      "available": true,
+      "label": "VoiceDesign",
+      "instructions": "Qwen VoiceDesign accepts natural-language audible voice descriptions. Keep requested identity traits, accent and delivery. Develop concise compatible intonation and rhythm; no invented persona. A matching description or seed does not guarantee the same voice on another line.",
+      "kind": "prose",
+      "target": "description",
+      "limits": {
+        "addition_characters": 600,
+        "addition_words": 60
+      }
+    },
+    "preset": {
+      "available": true,
+      "label": "CustomVoice preset",
+      "instructions": "Qwen CustomVoice accepts delivery instructions for a fixed preset. Keep speaker, language and explicit accent unchanged. Expand only compatible phrasing, word emphasis and intonation. Do not add timbre, pitch-range or identity traits.",
+      "kind": "prose",
+      "target": "emotion",
+      "limits": {
+        "addition_characters": 600,
+        "addition_words": 60
+      }
+    },
+    "reference": {
+      "available": false,
+      "label": "Base reference",
+      "reason": "Qwen Base has no installed free-text acting instruction path. Its recording/transcript and supported sampling controls remain authoritative."
+    }
+  }
+}

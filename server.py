@@ -30,6 +30,8 @@ manager = JobManager(engine, db_path=PROJECT_ROOT/'state/queue.sqlite3')
 @asynccontextmanager
 async def lifespan(app):
     prepare_storage()
+    from prompt_expansion import capability
+    capability(app.state.llm_enabled)  # Validate all published profile specifications before queue recovery.
     if app.state.llm_enabled:
         from prompt_assets import check_assets,check_runtime
         check_assets();check_runtime()
@@ -93,7 +95,9 @@ def app_script(): return FileResponse(PROJECT_ROOT/'ui/app.js',media_type='text/
 @app.get('/api/capabilities',response_model=Capabilities)
 def get_capabilities():
     from prompt_expansion import capability
+    from prompt_profiles import load_profile
     caps=capabilities();caps.limits['prompt_expansion']=capability(app.state.llm_enabled)
+    caps.models[PROFILE['backend']]={**caps.models.get(PROFILE['backend'],{}),'prompt_expansion':load_profile(PROFILE['backend'])}
     return caps
 
 
