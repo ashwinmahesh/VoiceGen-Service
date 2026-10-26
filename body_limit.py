@@ -9,7 +9,7 @@ class BodyLimit:
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http' or scope['method'] not in ['POST','PUT','PATCH']:
             return await self.app(scope,receive,send)
-        limit = 26*1024*1024 if scope['path']=='/api/references' else 128*1024
+        limit = 26*1024*1024 if scope['path'] in ('/api/references','/api/voices/upload') else 128*1024
         headers = dict(scope['headers'])
         try:
             declared = int(headers.get(b'content-length',b'0'))

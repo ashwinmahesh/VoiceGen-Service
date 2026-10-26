@@ -65,6 +65,42 @@ class ContractTests(unittest.TestCase):
         self.fail('Job did not finish')
     def upload(self,**kw):
         return self.client.post('/api/references',files={'file':('voice.wav',wav(**kw),'audio/wav')})
+    def test_direct_voice_upload_enters_collection_preserves_original_and_is_reusable(self):
+        original=wav(rate=48000,channels=2)
+        response=self.client.post('/api/voices/upload',files={'file':('performance.wav',original,'audio/wav')},
+            data={'name':'  Uploaded aristocrat  ','description':'A cultured, calm baritone.',
+                  'transcript':'My guests. You came.','tags':[' Romanian ','Villain','romanian']})
+        self.assertEqual(response.status_code,201,response.text)
+        voice=response.json();self.assertEqual(voice['name'],'Uploaded aristocrat')
+        self.assertEqual(voice['tags'],['romanian','villain']);self.assertEqual(voice['transcript'],'My guests. You came.')
+        found=self.client.get('/api/voices',params={'q':'uploaded cultured','tag':'ROMANIAN'}).json()
+        self.assertEqual([row['id'] for row in found['data']],[voice['id']])
+        self.assertEqual(self.client.get('/api/voices/'+voice['id']).json(),voice)
+        self.assertEqual(self.client.get('/api/references/'+voice['source_id']+'/original').content,original)
+        with sf.SoundFile(self.root/'voices'/f'{voice["id"]}.wav') as audio:
+            self.assertEqual((audio.samplerate,audio.channels,len(audio)),(16000,1,32000))
+        generated=self.generate(voice_id=voice['id']).json()
+        self.assertEqual(self.finish(generated)['status'],'done')
+        self.assertEqual(str(self.engine.calls[-1][1]),str(self.root/'voices'/f'{voice["id"]}.wav'))
+    def test_direct_voice_upload_rejects_bad_metadata_audio_and_size_without_catalog_entries(self):
+        for details in [{'name':' '},{'name':'Named','tags':['x'*41]}, {'name':'Named','tags':['tag']*21}]:
+            response=self.client.post('/api/voices/upload',files={'file':('voice.wav',wav(),'audio/wav')},data=details)
+            self.assertEqual(response.status_code,422,response.text)
+        for raw in [b'not audio',wav(seconds=0)]:
+            response=self.client.post('/api/voices/upload',files={'file':('bad.wav',raw,'audio/wav')},data={'name':'Named'})
+            self.assertEqual(response.status_code,422,response.text)
+        response=self.client.post('/api/voices/upload',content=b'x',headers={'content-length':str(27*1024*1024)})
+        self.assertEqual(response.status_code,413)
+        self.assertFalse(list((self.root/'voices').iterdir()))
+        self.assertFalse(list((self.root/'references').glob('*.wav')))
+    def test_direct_voice_upload_rolls_back_new_reference_if_catalog_save_fails(self):
+        preserved=self.upload().json();before=set((self.root/'references').rglob('*'))
+        with patch('server.save_voice',side_effect=OSError('simulated catalog write failure')):
+            response=self.client.post('/api/voices/upload',files={'file':('new.wav',wav(),'audio/wav')},data={'name':'Named'})
+        self.assertEqual(response.status_code,422)
+        self.assertEqual(set((self.root/'references').rglob('*')),before)
+        self.assertEqual(self.client.get(preserved['audio_url']).status_code,200)
+        self.assertEqual(self.client.get('/api/voices').json()['total'],0)
     def test_unknown_and_invalid_fields(self):
         for body in [{'speed':2},{'text':' '},{'steps':99},{'voice_id':'../bad'},{'max_tokens':1}]:
             self.assertEqual(self.generate(**body).status_code,422)

@@ -5,7 +5,7 @@ if(collectionPage){$('page-title').textContent='Your collection';$('page-descrip
 $(collectionPage?'catalog-link':'studio-link').setAttribute('aria-current','page');
 let pageSize = 24, caps=null, storageKey='voice-studio', historyPage={data:[],total:0,has_more:false}, pendingKey=null;
 let voicePage = {data: [], total: 0, has_more: false};
-let catalogOffset = 0, searchTimer = null, catalogRequest = 0, voiceEditor = null;
+let catalogOffset = 0, searchTimer = null, catalogRequest = 0, voiceEditor = null, voiceSaving = false;
 const presets={natural:'Natural, conversational delivery with relaxed pacing.',joy:'Excited and joyful, with an audible smile and lively pacing.',sadness:'Quiet sadness and disappointment, speaking slowly with a trembling voice.',anger:'Angry and frustrated, with firm emphasis and a tense, forceful delivery.',fear:'Frightened and anxious, with a trembling voice and urgent, uneven pacing.',relief:'Deeply relieved, softening into warmth with a gentle exhale.',sarcasm:'Dry, understated sarcasm with deliberate pauses and restrained emphasis.',whisper:'A soft, intimate whisper, speaking gently and slowly.',custom:''};
 async function api(path,options={}){const response=await fetch(path,options);if(!response.ok){let body;try{body=await response.json()}catch{}throw Error(typeof body?.detail==='string'?body.detail:body?.detail?.[0]?.msg||`Request failed (${response.status})`)}return response.json()}
 function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
@@ -307,9 +307,10 @@ function chooseVoice(row, focus = true) {
 }
 function openVoiceEditor(context) {
   voiceEditor = context;
-  $('voice-editor-title').textContent = context.edit_id ? 'Edit voice details' : 'Save a voice';
-  $('voice-editor-save').textContent = context.edit_id ? 'Save changes' : 'Save voice';
-  $('voice-editor-hint').textContent = context.edit_id ?
+  $('voice-editor-title').textContent = context.upload ? 'Upload a voice' : context.edit_id ? 'Edit voice details' : 'Save a voice';
+  $('voice-editor-save').textContent = context.upload ? 'Upload to Collection' : context.edit_id ? 'Save changes' : 'Save voice';
+  $('voice-upload-field').hidden=!context.upload;$('voice-upload-file').required=!!context.upload;$('voice-upload-file').value='';
+  $('voice-editor-hint').textContent = context.upload ? 'Add your own recording to Collection, with a name, description, tags and optional exact transcript.' : context.edit_id ?
     'Update the catalog details. The saved recording stays the same.' :
     'Save named performance variants of the same speaker with mood tags and the exact transcript. Choose the desired recorded delivery before combined cloning.';
   $('edit-voice-name').value = context.name || '';
@@ -319,9 +320,15 @@ function openVoiceEditor(context) {
   $('voice-editor-error').hidden = true;
   $('voice-editor').showModal(); $('edit-voice-name').focus();
 }
+$('upload-voice').onclick=$('upload-saved-voice').onclick=()=>openVoiceEditor({upload:true});
+$('voice-upload-file').onchange=()=>{
+ const file=$('voice-upload-file').files[0];
+ if(file&&!$('edit-voice-name').value.trim())$('edit-voice-name').value=file.name.replace(/\.[^.]+$/,'').slice(0,100);
+};
 $('voice-editor-cancel').onclick = () => $('voice-editor').close();
+$('voice-editor').addEventListener('cancel',event=>{if(voiceSaving)event.preventDefault()});
 $('voice-editor-form').onsubmit = async event => {
-  event.preventDefault(); if (!voiceEditor) return;
+  event.preventDefault(); if (!voiceEditor||voiceSaving) return;
   const context = voiceEditor;
   const details = {name: $('edit-voice-name').value.trim(), description: $('edit-voice-description').value.trim(),
     tags: $('edit-voice-tags').value.split(',').map(tag => tag.trim()).filter(Boolean),transcript:$('edit-transcript').value.trim()};
@@ -329,10 +336,19 @@ $('voice-editor-form').onsubmit = async event => {
     $('voice-editor-error').textContent = 'Use up to 20 tags, each no more than 40 characters.';
     $('voice-editor-error').hidden = false; return;
   }
+  voiceSaving=true;const saveLabel=$('voice-editor-save').textContent;
   $('voice-editor-save').disabled = true; $('voice-editor-cancel').disabled = true;
+  if(context.upload)$('voice-editor-save').textContent='Uploading…';
   try {
     let row;
-    if (context.edit_id) row = await api('/api/voices/' + context.edit_id,
+    if(context.upload){
+      const file=$('voice-upload-file').files[0];if(!file)throw Error('Choose a voice recording first.');
+      if(file.size>25*1024*1024)throw Error('Choose a file under 25 MB.');
+      const form=new FormData();form.append('file',file);form.append('name',details.name);form.append('description',details.description);form.append('transcript',details.transcript);
+      for(const tag of details.tags)form.append('tags',tag);
+      row=await api('/api/voices/upload',{method:'POST',body:form});
+    }
+    else if (context.edit_id) row = await api('/api/voices/' + context.edit_id,
       {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(details)});
     else row = await post('/api/voices', {...details, output_id: context.output_id || null, reference_id: context.reference_id || null});
     if (!context.edit_id) {
@@ -350,6 +366,7 @@ $('voice-editor-form').onsubmit = async event => {
   } catch (exc) {
     $('voice-editor-error').textContent = exc.message; $('voice-editor-error').hidden = false;
   } finally {
+    voiceSaving=false;$('voice-editor-save').textContent=saveLabel;
     $('voice-editor-save').disabled = false; $('voice-editor-cancel').disabled = false;
   }
 };

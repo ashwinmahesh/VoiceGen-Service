@@ -79,6 +79,7 @@ Results include an absolute WAV `path` and `metadata_path`, local `audio_url`, a
 | `GET /api/audio/{outputs\|voices\|references}/{id}?download=true` | Scoped opaque-ID WAV playback/download; no arbitrary file access |
 | `POST /api/references` | Multipart `file`, optional `transcript`; preserves original plus normalized mono 16 kHz PCM16 working copy |
 | `GET /api/references/{id}/original` | Original upload bytes with original filename |
+| `POST /api/voices/upload` | Multipart `file` + required `name`, optional `description`, `transcript`, repeated `tags`; imports audio and immediately saves a searchable Collection voice, returning HTTP 201 Voice |
 | `POST /api/voices` | Save a sample using `name`, optional `description`, `tags`, `transcript`, and exactly one `output_id` or `reference_id` |
 | `GET /api/voices?q=&tag=&sort=newest&limit=24&offset=0` | All query words match across name, description, original design and tags; accent/case insensitive; exact tag filter; sort newest/updated/name |
 | `GET /api/voices/{id}` | Saved voice details and preview URL |
@@ -87,6 +88,21 @@ Results include an absolute WAV `path` and `metadata_path`, local `audio_url`, a
 | `POST /api/model/unload` | Release this server's model when idle |
 
 Upload limits: file <=25 MiB, complete multipart <=26 MiB, decoded 1–30 seconds, 8–96 kHz, mono/stereo, <=5.76M scalar samples. Headers are checked before decoding. WAV/FLAC/MP3 supported by installed libsndfile; unreadable formats return 422. JSON bodies <=128 KiB. Originals remain in `references/originals`; legacy references created before v2 have no preserved original. Nothing is pruned automatically.
+
+### One-step voice upload
+
+`POST /api/voices/upload` accepts multipart form data, validates metadata before creating stored audio, preserves original upload bytes, and creates a reusable voice in the shared Collection. No generation job is created and no model is loaded. It returns HTTP 201 with the same Voice schema as `POST /api/voices`: use its `id` as `voice_id`. The response includes `source_id` / `source_kind`; original bytes remain accessible through `/api/references/{source_id}/original`. Invalid metadata/audio returns 422, oversized uploads 413. If catalog saving fails, only that newly imported reference is rolled back; existing recordings are preserved. A retry is a new upload and may create another voice.
+
+```sh
+curl -s http://localhost:5743/api/voices/upload \
+  -F 'file=@/absolute/path/voice.mp3' \
+  -F 'name=Romanian aristocrat' \
+  -F 'description=A cultured, calm baritone.' \
+  -F 'transcript=Exact words spoken in this reference.' \
+  -F 'tags=romanian' -F 'tags=aristocrat'
+```
+
+Each `tags` form field is one tag; omit optional fields when unused. The upload uses the same file/decoded-audio limits above. Collection's Upload voice dialog and the studio's Saved voice upload action use this endpoint and refresh the catalog after success. The original two-step reference/save API remains supported.
 
 Voice names: 1–100 trimmed characters. Catalog description: <=2000. Tags: <=20, each 1–40 characters, whitespace collapsed, lowercased and deduplicated. PATCH replaces supplied fields; empty description/tags/transcript clears them, null is rejected. Saved samples are mono, up to the first 30 seconds. A transcript is inherited only when the entire generated recording fits within 30 seconds. For longer takes supply the exact excerpt transcript or leave it empty. Catalog notes describe the character; editing them does not alter the recording that conditions reuse. Library has search, exact-tag filter, sort, pagination/page size and explicit reuse.
 

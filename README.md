@@ -8,34 +8,25 @@ Read [BACKENDS.md](BACKENDS.md) for the backend matrix, Python environments, con
 
 ## UI preview
 
-The studio at `/` provides voice design/reference inputs and playback. Collection at `/collection` holds searchable History and Voice library pages; the header Queue button opens a popup with persistent generation jobs. Screenshots use illustrative characters and queued requests; private recordings and catalogs are not included.
+Full-page screenshots of the separate Generate and Collection pages, plus the page with Queue open. These use synthetic demo audio, illustrative data and example timings; no private recordings or catalogs are shown.
 
-![Voice studio with a saved reference, model controls, playback, and separate Collection and Queue navigation](docs/images/studio-page.jpg)
+### Generate a line
 
-<details>
-<summary>Voice names, descriptions, transcripts and tags</summary>
+Choose or upload a saved voice, enter the line, then generate and play/download the take.
 
-![Voice editor with a character name, description, exact recording transcript and searchable tags](docs/images/voice-details.png)
+![Full Generate page with an uploaded demo voice, line text, generation controls and playback](docs/images/studio-page.jpg)
 
-</details>
+### Collection
 
-<details>
-<summary>Model-specific delivery controls</summary>
+Search History and Voice library, edit names/descriptions/tags, or use **Upload voice** to add your own recording directly.
 
-Fish S2 Pro offers explicit delivery tags and a preview of the text sent to the model. Other backends show their supported controls in the same studio.
+![Full Collection page with a newly uploaded demo voice and searchable tags](docs/images/collection-page.jpg)
 
-![Advanced settings with configurable extra sentence and comma pauses](docs/images/advanced-pacing.jpg)
+### Queue
 
-</details>
+Open **Queue** from the header on either page. The modal lists jobs with status filters, paging, pending removal/clear and failed-job retry.
 
-<details>
-<summary>Collection page and Queue popup</summary>
-
-![Separate Collection page showing a demo saved voice with tags](docs/images/collection-page.jpg)
-
-![Queue modal with a pending demo take and queue actions](docs/images/queue-modal.jpg)
-
-</details>
+![Full page with the Queue modal showing a completed demo take](docs/images/queue-modal.jpg)
 
 ## Setup and storage
 
@@ -173,3 +164,19 @@ Use the model-specific controls and exact backend-text preview in the studio. Ch
 Fish, IndexTTS, Chatterbox and Qwen reference/preset voices default to longer punctuation pauses: **500 ms extra after sentences and 200 ms extra after commas**. Open **Advanced settings** to change either value or disable **Longer punctuation pauses** for continuous whole-line delivery. The API uses optional `sentence_pause_ms`, `comma_pause_ms` and `punctuation_pauses` under the active model's key, for example `"fish":{"sentence_pause_ms":700,"comma_pause_ms":300}`. See API.md for bounds and exceptions. Phrase synthesis reuses the same voice conditioning but can change flow and take longer. MOSS exposes the same controls as approximate native pacing targets in a single take, with no exact timing promise. Vox and Higgs retain their existing behavior.
 
 **Collection** is a separate page with History, saved voices, search, tags and pagination. Use a voice, open a take or reuse settings to return to the studio. **Queue** opens a modal from either page; pending removal/clear and failed-entry retry use the same durable APIs. No existing media, voices or queued requests are changed by these UI moves.
+
+## Upload a voice to Collection
+
+In **Collection → Voice library**, click **Upload voice**, select the recording, and enter a name, description, tags and optional exact transcript. **Upload to Collection** saves the voice immediately; it appears in search and can be selected with **Use this voice**. The studio's Saved voice tab also has **Upload voice to Collection**. No synthesis, training or model loading is needed for an upload.
+
+The one-step API is `POST /api/voices/upload` with multipart `file`, required `name`, and optional `description`, `transcript` and repeated `tags` fields:
+
+```sh
+curl -s http://localhost:5743/api/voices/upload \
+  -F 'file=@/absolute/path/voice.wav' \
+  -F 'name=Romanian aristocrat' \
+  -F 'description=A cultured, calm baritone.' \
+  -F 'tags=romanian' -F 'tags=aristocrat'
+```
+
+A successful response is HTTP 201 with the saved voice's `id` and `audio_url`. Pass that ID as `voice_id` to generation. Uploads use the existing 25 MiB / 1–30 second limits, retain original bytes, and create a mono 16 kHz working reference on the configured data drive. Reference-capable backends can reuse it; MOSS remains voice design only. Catalog notes do not change the recorded voice. The older `POST /api/references` endpoint still creates a reference; `POST /api/voices` can save that reference or an existing generated take.

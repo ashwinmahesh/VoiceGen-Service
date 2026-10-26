@@ -254,6 +254,33 @@ def voices(q: str = Query(default="", max_length=300), tag: str = Query(default=
     return voice_catalog.search(ROOT, q, tag, sort, limit, offset)
 
 
+@app.post('/api/voices/upload',status_code=201,response_model=Voice)
+async def upload_voice(file: UploadFile=File(...),name: str=Form(...,min_length=1,max_length=100),
+                       description: str=Form(default='',max_length=2000),
+                       transcript: str=Form(default='',max_length=3000),tags: list[voice_catalog.Tag]=Form(default=[],max_length=20)):
+    try:
+        details=SaveVoice(name=name,description=description,transcript=transcript,tags=tags)
+    except ValueError as exc:
+        message=exc.errors()[0]['msg'] if hasattr(exc,'errors') else str(exc)
+        raise HTTPException(422,'Invalid voice details: '+message) from None
+    raw=await file.read(25*1024*1024+1)
+    if len(raw)>25*1024*1024:raise HTTPException(413,'Choose a file under 25 MB')
+    def import_voice():
+        reference=storage.preserve_reference(raw,file.filename,details.transcript or '')
+        try:
+            return save_voice(details.model_copy(update={'reference_id':reference['id']}))
+        except BaseException:
+            # Roll back only this new upload if catalog creation fails; preserve all existing data.
+            for path in [ROOT/'references'/f'{reference["id"]}.wav',
+                         ROOT/'references'/f'{reference["id"]}.json',
+                         ROOT/'references/originals'/f'{reference["id"]}.bin']:
+                path.unlink(missing_ok=True)
+            raise
+    try:return await asyncio.to_thread(import_voice)
+    except (OSError,ValueError,RuntimeError) as exc:
+        raise HTTPException(422,'Cannot upload this voice: '+str(exc)) from None
+
+
 @app.get("/api/voice-tags", response_model=TagsPage)
 def voice_tags():
     counts = {}
