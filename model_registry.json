@@ -1,9 +1,9 @@
 [
+  {"id": "higgs", "name": "Higgs TTS 3"},
   {"id": "voxcpm2", "name": "VoxCPM2"},
   {"id": "qwen3", "name": "Qwen3-TTS"},
   {"id": "chatterbox", "name": "Chatterbox Original"},
   {"id": "indextts", "name": "IndexTTS 2.5"},
   {"id": "moss", "name": "MOSS VoiceGenerator"},
-  {"id": "fish", "name": "Fish Audio S2 Pro"},
-  {"id": "higgs", "name": "Higgs TTS 3"}
+  {"id": "fish", "name": "Fish Audio S2 Pro"}
 ]

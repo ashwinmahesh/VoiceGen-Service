@@ -66,11 +66,12 @@ class BackendTests(unittest.TestCase):
         from startup_select import choose_model
         self.assertEqual(choose_model('qwen3',interactive=False),'qwen3')
         self.assertEqual(choose_model('voxcpm2','fish',True,input_fn=lambda: self.fail('unexpected prompt')),'fish')
-        answers=iter(['typo','3'])
+        answers=iter(['typo','4'])
         self.assertEqual(choose_model('voxcpm2',interactive=True,input_fn=lambda:next(answers),stream=io.StringIO()),'chatterbox')
         import config
         from startup_select import model_name
-        for action,answer,expected in [('setup','',default_backend()),('setup','7','higgs')]:
+        for action,answer,expected in [('setup','',default_backend()),('setup','1','higgs'),
+                                       ('setup','2','voxcpm2'),('setup','7','fish')]:
             with self.subTest(action=action,answer=answer):
                 master,slave=pty.openpty()
                 try:
@@ -96,19 +97,35 @@ class BackendTests(unittest.TestCase):
         from startup_select import choose_model
         output=io.StringIO()
         self.assertEqual(choose_model('voxcpm2',interactive=True,input_fn=lambda:'',stream=output,
-                                      choices=['voxcpm2','higgs'],serving=True,unavailable={'qwen3':['missing assets']}),'voxcpm2')
+                                      choices=['higgs','voxcpm2'],serving=True,unavailable={'qwen3':['missing assets']}),'voxcpm2')
         self.assertIn('VoxCPM2 [voxcpm2] (default)',output.getvalue())
         self.assertIn('Higgs TTS 3 [higgs]',output.getvalue())
-        self.assertIn('  2. Higgs TTS 3 [higgs]',output.getvalue())
+        self.assertIn('  1. Higgs TTS 3 [higgs]',output.getvalue())
         self.assertIn('  - Qwen3-TTS [qwen3] — make setup MODEL=qwen3',output.getvalue())
         self.assertNotIn('  3.',output.getvalue())
         self.assertIn('not selectable',output.getvalue())
-        answers=iter(['qwen3','2'])
+        answers=iter(['qwen3','1'])
         self.assertEqual(choose_model('voxcpm2',interactive=True,input_fn=lambda:next(answers),stream=io.StringIO(),
-                                      choices=['voxcpm2','higgs'],serving=True),'higgs')
+                                      choices=['higgs','voxcpm2'],serving=True),'higgs')
         self.assertEqual(choose_model('voxcpm2',interactive=True,input_fn=lambda:'',stream=io.StringIO(),
                                       choices=['higgs'],serving=True),'higgs')
         with self.assertRaises(ValueError):choose_model('voxcpm2',choices=[])
+
+    def test_setup_and_serving_menu_order_and_higgs_default(self):
+        import io
+        from startup_select import choose_model,model_name
+        expected=('higgs','voxcpm2','qwen3','chatterbox','indextts','moss','fish')
+        self.assertEqual(BACKENDS,expected)
+        self.assertEqual(default_backend(),'higgs')
+        for serving in [False,True]:
+            for answer,selected in [('','higgs'),('1','higgs'),('2','voxcpm2')]:
+                output=io.StringIO()
+                self.assertEqual(choose_model(default_backend(),interactive=True,input_fn=lambda:answer,
+                    stream=output,serving=serving),selected)
+                rows=[line for line in output.getvalue().splitlines() if line.startswith('  ')]
+                for number,backend in enumerate(expected,1):
+                    self.assertTrue(rows[number-1].startswith(f'  {number}. {model_name(backend)} [{backend}]'))
+                self.assertIn('(default)',rows[0])
 
     def test_setup_menu_marks_currently_ready_models_and_keeps_every_choice(self):
         import io
@@ -123,7 +140,7 @@ class BackendTests(unittest.TestCase):
                 self.assertIn(model_name(backend)+' ['+backend+']',line)
                 self.assertEqual('[SETUP COMPLETE]' in line,backend in complete)
                 self.assertEqual('(default)' in line,backend=='higgs')
-        self.assertEqual(choose_model('higgs',interactive=True,input_fn=lambda:'3',stream=io.StringIO(),
+        self.assertEqual(choose_model('higgs',interactive=True,input_fn=lambda:'4',stream=io.StringIO(),
                                      setup_complete=['higgs']),'chatterbox')
 
     def test_setup_status_scans_only_for_interactive_menu_and_respects_venv_override(self):
@@ -156,7 +173,7 @@ class BackendTests(unittest.TestCase):
             return [] if backend in ('voxcpm2','higgs') else ['missing runtime or verified assets']
         with patch('startup_select.setup_errors',side_effect=errors):
             ready,unavailable=startup_select.ready_models(PROJECT_ROOT,'voxcpm2')
-        self.assertEqual(ready,['voxcpm2','higgs']);self.assertEqual(len(unavailable),5)
+        self.assertEqual(ready,['higgs','voxcpm2']);self.assertEqual(len(unavailable),5)
         self.assertEqual(startup_select.runtime_python(PROJECT_ROOT,'qwen3','voxcpm2'),PROJECT_ROOT/'.venv-mlx/bin/python')
         self.assertEqual(startup_select.runtime_python(PROJECT_ROOT,'higgs','voxcpm2'),PROJECT_ROOT/'.venv-native/bin/python')
         self.assertEqual(startup_select.runtime_python(PROJECT_ROOT,'voxcpm2','voxcpm2'),PROJECT_ROOT/'.venv/bin/python')

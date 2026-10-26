@@ -20,7 +20,7 @@ make setup
 
 During setup:
 
-1. Choose a speech model from the numbered menu. Models whose required files and environment are ready show **[SETUP COMPLETE]** beside their names. All models remain selectable, including ones you want to set up again. **Enter selects Higgs.**
+1. Choose a speech model from the numbered menu: **1 is Higgs TTS 3**, **2 is VoxCPM2**, followed by Qwen, Chatterbox, IndexTTS, MOSS, and Fish. Models whose required files and environment are ready show **[SETUP COMPLETE]** beside their names. All models remain selectable, including ones you want to set up again. **Enter selects Higgs.**
 2. On first setup, choose the folder for model files and recordings. Enter uses the project folder. To keep large files off your Mac's internal drive, enter an absolute SSD path, such as `/Volumes/ASH-SSD/models/VoiceGen`. The choice is remembered.
 3. Wait for the environments and downloads to finish. Setup selects Python for each environment, installs the chosen speech model, queue dependencies, and **Qwen3.5-2B 4-bit**, the local LLM for prompt expansion. Existing compatible environments and verified model files are reused.
 
@@ -38,7 +38,7 @@ From the project folder:
 make serve
 ```
 
-Choose an installed model from the numbered list. Enter chooses Higgs when it is ready. Models still needing setup appear separately with installation instructions.
+Choose an installed model from the numbered list, in the same order as setup: Higgs first, then VoxCPM2 and the remaining models. Enter chooses Higgs when it is ready. Models still needing setup appear separately with installation instructions; only ready models receive selection numbers.
 
 Startup asks whether to enable the local LLM. **Enter keeps it on.** Open **[http://localhost:5743](http://localhost:5743/)** and keep the terminal open while using the studio.
 
