@@ -8,6 +8,13 @@ BACKENDS = tuple(model['id'] for model in json.loads((Path(__file__).resolve().p
 AUDIOCPP_REVISION = '082177ecac45f1965929ded33cd81a85c13542f1'
 
 
+def voice_design_models():
+    """Static supported models, in menu order; no runtime or asset probing."""
+    root=Path(__file__).resolve().parent
+    return [model for model in json.loads((root/'model_registry.json').read_text())
+            if 'design' in json.loads((root/'backends'/model['id']/'service.json').read_text()).get('modes',{})]
+
+
 def default_backend():
     value=json.loads((Path(__file__).resolve().parent/'service_defaults.json').read_text())['model']
     if value not in BACKENDS:raise ValueError(f'Unsupported default model {value!r}')

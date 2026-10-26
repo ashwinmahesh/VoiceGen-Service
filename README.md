@@ -10,6 +10,8 @@ The studio supports **seven speech models**, with **Higgs TTS 3 as the default**
 
 **Generate:** choose or design a voice, enter dialogue, direct the performance, and audition the results.
 
+**Design a voice** stays visible when the current model needs a recording, such as Higgs. The disabled tab explains which models can create a voice from a description: VoxCPM2, Qwen3-TTS, and MOSS VoiceGenerator.
+
 ![Full Generate page with voice controls and multiple listening options](docs/images/studio-page.jpg)
 
 **Collection:** browse previous takes or save and upload voices with names, descriptions, and searchable tags.

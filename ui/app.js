@@ -80,7 +80,7 @@ $('apply-expansion').onclick=()=>{
 $('prompt-expansion-enabled').onchange=()=>{expansionChoice=$('prompt-expansion-enabled').checked;if(!expansionChoice&&appliedExpansion){applyGuidanceValues(appliedExpansion.original);clearExpansion()}pendingKey=null;updatePromptExpansion();persist()};
 $('restore-guidance').onclick=()=>{if(appliedExpansion)applyGuidanceValues(appliedExpansion.original);clearExpansion();pendingKey=null;persist();};
 function setMode(next){if(caps){if(next==='design'&&caps.modes.design.available===false)next='upload';if((next==='saved'||next==='upload')&&caps.modes.reference.available===false)next='design'}pendingKey=null;clearExpansion();mode=next;for(const button of document.querySelectorAll('[data-mode]'))button.setAttribute('aria-selected',button.dataset.mode===mode);for(const name of ['design','saved','upload','preset'])$(name+'-panel').hidden=name!==mode;updateCapabilities();updatePromptExpansion();persist()}
-document.querySelectorAll('[data-mode]').forEach(button=>button.onclick=()=>setMode(button.dataset.mode));
+document.querySelectorAll('[data-mode]').forEach(button=>button.onclick=()=>{if(button.getAttribute('aria-disabled')==='true'){showControlHelp(button);return}setMode(button.dataset.mode)});
 $('emotion-preset').onchange=()=>{clearExpansion();$('emotion').value=presets[$('emotion-preset').value];persist()};$('emotion').oninput=()=>{$('emotion-preset').value='custom';persist()};
 function count(){$('count').textContent=`${$('text').value.length} / ${caps?.limits.text_characters||3000}`}count();
 function updateCandidateVariation(){
@@ -135,7 +135,9 @@ function updateCapabilities(){
  $('accent-hint').textContent=direction?'A prompt direction, not a trained accent pack. A recording with the desired accent is usually the stronger cue.':'The reference recording supplies the accent in this mode.';
  for(const key of ['steps','guidance','temperature'])$(key+'-field').hidden=!caps.controls[key];
  document.querySelector('[data-mode="preset"]').hidden=!caps.modes.preset?.available;
- document.querySelector('[data-mode="design"]').hidden=caps.modes.design.available===false;
+ const designTab=document.querySelector('[data-mode="design"]'),designDisabled=caps.modes.design.available===false;
+ designTab.hidden=false;designTab.setAttribute('aria-disabled',String(designDisabled));
+ designTab.dataset.helpFor='voice-design-tab';
  for(const name of ['saved','upload'])document.querySelector('[data-mode="'+name+'"]').hidden=caps.modes.reference.available===false;
  $('language-field').hidden=caps.languages.length<2;
  $('text').maxLength=caps.limits.text_characters;
@@ -878,3 +880,8 @@ document.addEventListener('keydown',event=>{if(event.key==='Escape'&&activeHelp)
 document.addEventListener('close',hideControlHelp,true);
 window.addEventListener('resize',hideControlHelp);document.addEventListener('scroll',hideControlHelp,true);
 installControlHelp();
+controlHelp['voice-design-tab']=()=>caps?.modes.design.unavailable_reason||'';
+const voiceDesignTab=document.querySelector('[data-mode="design"]');
+voiceDesignTab.addEventListener('pointerenter',()=>{if(voiceDesignTab.getAttribute('aria-disabled')==='true')showControlHelp(voiceDesignTab)});
+voiceDesignTab.addEventListener('focus',()=>{if(voiceDesignTab.getAttribute('aria-disabled')==='true')showControlHelp(voiceDesignTab)});
+voiceDesignTab.addEventListener('pointerleave',scheduleHelpHide);voiceDesignTab.addEventListener('blur',scheduleHelpHide);

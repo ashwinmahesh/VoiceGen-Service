@@ -12,11 +12,17 @@ def with_pause_editing(caps):
 
 def capabilities():
     caps=backend_capabilities()
+    from backend_selection import voice_design_models
+    design_models=voice_design_models()
+    caps.modes['design']['available']=caps.modes['design'].get('available',True)
+    caps.modes['design']['supported_models']=design_models
+    if not caps.modes['design']['available']:
+        caps.modes['design']['unavailable_reason']='Switch to a model which supports voice generation: '+', '.join(model['name'] for model in design_models)
     caps.limits['candidates']={'min':1,'max':5,'default':2,'sequential':True,
         'seed_strategy':'Base seed plus option index, wrapping at 2**32',
         'variation_default':'auto','variation_choices':['auto','distinct','seed_only'],
         'candidate_use_llm_default':True,
-        'distinct_design_backends':['voxcpm2','qwen3','moss'],
+        'distinct_design_backends':[model['id'] for model in design_models],
         'variation_note':'Auto contrasts voice descriptions in design mode; references/presets retain their selected identity. LLM when enabled, built-in directions otherwise.',
         'submit_url':'/api/candidates','status_url':'/api/candidates/{id}'}
     caps.limits.update({'queue':{'durable':True,'database':str(PROJECT_ROOT/'state/queue.sqlite3'),'api_generate_immediately_default':False,'ui_generate_immediately_default':True,
@@ -104,6 +110,8 @@ def _validate_controls(request):
     for name in extra:
         if getattr(request,name) is not None and name not in allowed:
             raise ValueError(f'{name} is unsupported by {PROFILE["name"]}')
+    if not caps.modes['design']['available'] and not (request.voice_id or request.reference_id or request.preset_voice):
+        raise ValueError(f'{caps.name} requires a saved voice or reference recording. '+caps.modes['design']['unavailable_reason'])
     if PROFILE['backend'] in ('moss','fish','higgs'):
         return validate_additional_controls(request,caps)
     if PROFILE['backend'] in ('chatterbox','indextts'):

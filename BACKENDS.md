@@ -1,5 +1,7 @@
 # Startup backends
 
+Description-based voice design is supported by VoxCPM2, Qwen3-TTS, and MOSS. The studio keeps its design tab visible but disabled for other backends, with a tooltip listing these alternatives. Generator admission rejects unsupported design requests with 422; standalone queue admission retains its deferred validation behavior. Supported-model hints come from the model registry and backend mode declarations.
+
 All backends share generator-owned [resource history](docs/observability.md). Process-tree sampling includes native speech and LLM children, so CPU/RSS are captured for Higgs and MOSS as well as in-process MLX/MPS models. Device-wide macOS GPU counters are labeled separately. Samples identify the speech backend, actual model/LLM phase, session, and job attempt. This needs no additional runtime package or model download.
 
 Local Voice Studio uses one UI, API 2.1 job protocol, storage/catalog implementation, and single reserved inference worker. Every backend defaults to `http://localhost:5743/`; `PORT=<number>` is an explicit override. Select one backend at process startup. Qwen uses this same checkout (`make start MODEL=qwen3`) and shared MLX environment, catalog and queue; no separate Qwen project is needed. Stop the active backend before switching; shared storage/queue ownership rejects a second simultaneous worker. Selection never loads every model. Read `/api/capabilities` before forming a request: unsupported fields are rejected, not silently discarded.

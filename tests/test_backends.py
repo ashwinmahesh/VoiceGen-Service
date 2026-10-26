@@ -15,6 +15,19 @@ from data_owner import own_data_directory
 
 
 class BackendTests(unittest.TestCase):
+    def test_voice_design_discovery_matches_actual_model_capabilities(self):
+        from backend_selection import voice_design_models
+        models=voice_design_models()
+        self.assertEqual([row['id'] for row in models],['voxcpm2','qwen3','moss'])
+        for backend in BACKENDS:
+            with self.subTest(backend=backend),patch('capabilities.PROFILE',self.profile(backend)):
+                design=capabilities.capabilities().modes['design']
+                self.assertEqual(design['supported_models'],models)
+                self.assertEqual(design['available'],backend in ('voxcpm2','qwen3','moss'))
+                if not design['available']:
+                    self.assertEqual(design['unavailable_reason'],
+                        'Switch to a model which supports voice generation: VoxCPM2, Qwen3-TTS, MOSS VoiceGenerator')
+
     def test_llm_startup_default_interactive_choice_and_explicit_opt_out(self):
         import io
         from startup_select import choose_llm

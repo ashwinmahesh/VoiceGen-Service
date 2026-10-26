@@ -52,6 +52,8 @@ See [resource history](docs/observability.md) for response fields, sampling inte
 
 These examples use the default **Higgs TTS 3** model. Start it with `make serve MODEL=higgs`. The generator always uses the model selected at startup; check `GET /api/capabilities` for its available features.
 
+**Designing a new voice:** use VoxCPM2, Qwen3-TTS, or MOSS. Higgs requires a saved voice or reference recording. A description-only request to the generator's `/api/generate`, its job/queue aliases, or `/api/candidates` returns **422** with an explanation and the supported-model names, before creating a job. Capabilities expose this list at `modes.design.supported_models`, plus `available` and an `unavailable_reason` when disabled. The independent queue API still accepts an unvalidated payload with 202; the matching generator validates it later and marks an unsupported request `error` with the same explanation, without running inference.
+
 ### 1. Upload a voice
 
 Higgs needs a recording and the exact words spoken in it. Replace the path and transcript below with your own:

@@ -338,6 +338,37 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/audio/cache/'+'a'*32).status_code,404)
 
 
+    def test_higgs_rejects_voice_design_before_admission_with_supported_model_names(self):
+        profile=json.loads((PROJECT_ROOT/'backends/higgs/service.json').read_text())
+        payload={'text':'Welcome home.','description':'A cultured baritone.'}
+        with patch('capabilities.PROFILE',profile),patch('server.PROFILE',profile):
+            for endpoint in ['/api/generate','/api/jobs','/api/queue','/api/candidates']:
+                response=self.client.post(endpoint,json=payload)
+                self.assertEqual(response.status_code,422,response.text)
+                self.assertIn('Higgs TTS 3 requires a saved voice or reference recording',response.json()['detail'])
+                self.assertIn('VoxCPM2, Qwen3-TTS, MOSS VoiceGenerator',response.json()['detail'])
+            with patch.object(server.app.state,'llm_enabled',True):
+                response=self.client.post('/api/prompts/expand',json={'generation':payload,'guidance':'Warm delivery.'})
+                self.assertEqual(response.status_code,422,response.text)
+                self.assertIn('Switch to a model',response.json()['detail'])
+            caps=self.client.get('/api/capabilities').json()
+            self.assertFalse(caps['modes']['design']['available'])
+            self.assertEqual(len(caps['modes']['design']['supported_models']),3)
+        self.assertEqual(self.manager.store.listing()['total'],0)
+        self.assertEqual(self.engine.calls,[])
+
+    def test_opaque_higgs_voice_design_fails_clearly_when_generator_validates_it(self):
+        profile=json.loads((PROJECT_ROOT/'backends/higgs/service.json').read_text())
+        with patch('capabilities.PROFILE',profile),patch('server.PROFILE',profile):
+            self.manager.profile=profile
+            row=self.manager.store.admit_opaque('higgs',{'text':'Welcome home.','description':'A cultured baritone.'})
+            self.manager._wake.set()
+            result=self.finish(row)
+            self.assertEqual(result['status'],'error')
+            self.assertIn('Switch to a model which supports voice generation',result['error'])
+            self.assertIn('VoxCPM2, Qwen3-TTS, MOSS VoiceGenerator',result['error'])
+        self.assertEqual(self.engine.calls,[])
+
     def test_resources_record_success_failure_and_retry_without_real_inference(self):
         self.engine.fail=True
         failed=self.finish(self.generate().json())

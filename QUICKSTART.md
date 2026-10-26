@@ -61,6 +61,8 @@ Other model IDs are `qwen3`, `chatterbox`, `indextts`, `moss`, and `fish`. Start
 
 ## 3. Generate your first dialogue in the UI
 
+To create a new voice from a description, start VoxCPM2, Qwen3-TTS, or MOSS and choose **Design a voice**. With Higgs or another model that requires a recording, the tab remains visible but disabled. Hover, focus it with the keyboard, or tap it to see which models support voice generation. [See the Higgs example](docs/images/voice-design-unavailable.jpg).
+
 1. **Choose a voice.** For Higgs, upload a reference recording or select a saved voice. Uploads must be 1–30 seconds and at most 25 MiB. A clear 5–15 second sample is a useful starting point.
 2. **Enter the exact reference transcript.** These are the words already spoken in the recording, separate from your new dialogue. Higgs and Fish require it.
 3. **Enter the new dialogue.** Start with a short passage so you can judge the voice, accent, and delivery.
