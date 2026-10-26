@@ -21,7 +21,7 @@ def show_unavailable(unavailable, stream=sys.stderr):
     print('Run the setup command for a model you want, then rerun make serve.\n',file=stream)
 
 
-def choose_model(default, explicit=None, interactive=False, input_fn=input, stream=sys.stderr, choices=None, serving=False, unavailable=None):
+def choose_model(default, explicit=None, interactive=False, input_fn=input, stream=sys.stderr, choices=None, serving=False, unavailable=None, setup_complete=()):
     if explicit:return explicit
     choices=tuple(BACKENDS if choices is None else choices)
     if not choices:raise ValueError('No set-up voice models are available. Run make setup first.')
@@ -29,7 +29,8 @@ def choose_model(default, explicit=None, interactive=False, input_fn=input, stre
     if not interactive:return default
     print('Choose a set-up voice model to serve:' if serving else 'Choose a voice model to set up:',file=stream)
     for number,backend in enumerate(choices,1):
-        print(f'  {number}. {model_name(backend)} [{backend}]'+(' (default)' if backend==default else ''),file=stream)
+        badge=' [SETUP COMPLETE]' if not serving and backend in setup_complete else ''
+        print(f'  {number}. {model_name(backend)} [{backend}]'+badge+(' (default)' if backend==default else ''),file=stream)
     if serving:show_unavailable(unavailable,stream)
     while True:
         print(f'Model number or ID [Enter = {model_name(default)}]: ',end='',file=stream,flush=True)
@@ -63,9 +64,14 @@ def setup_errors(root, backend, original_backend, venv_override=None):
     python=runtime_python(root,backend,original_backend,venv_override)
     if not python.is_file():return [f'Python environment missing: {python.parent.parent}']
     environment={**os.environ,'MODEL_BACKEND':backend}
-    probe='''import json
+    probe='''import json,platform,sys,sysconfig
 try:
-    from config import ROOT,MODEL_DIR,EXTENSION_DIR,validate_mount
+    from config import ROOT,MODEL_DIR,EXTENSION_DIR,PROFILE,validate_mount
+    from python_runtime import compatible,requirement,runtime_for
+    role=runtime_for(PROFILE['backend'])
+    if not compatible(role,dict(version=sys.version_info[:3],implementation=sys.implementation.name,
+            system=platform.system(),machine=platform.machine(),free_threaded=bool(sysconfig.get_config_var('Py_GIL_DISABLED')))):
+        raise RuntimeError(requirement(role))
     for path in (ROOT,MODEL_DIR,EXTENSION_DIR):validate_mount(path)
     from assets import all_errors
     from runtime_checks import runtime_errors
@@ -106,6 +112,9 @@ def main():
     override=os.environ.get('VENV') if args.keep_venv else None
     choices=None
     unavailable={}
+    setup_complete=[]
+    if args.action=='setup' and not args.model and interactive:
+        setup_complete,_=ready_models(root,original,override)
     if args.action=='serve' and not args.model and interactive:
         choices,unavailable=ready_models(root,original,override)
         if not choices:
@@ -114,7 +123,7 @@ def main():
             raise SystemExit('No set-up voice models are ready. '+detail+'\nRun make setup, or reconnect the configured model drive.')
         if default not in choices:
             print(f'{model_name(default)} is not ready; Enter will select {model_name(choices[0])}.',file=sys.stderr)
-    model=choose_model(default,args.model,interactive,choices=choices,serving=args.action=='serve',unavailable=unavailable)
+    model=choose_model(default,args.model,interactive,choices=choices,serving=args.action=='serve',unavailable=unavailable,setup_complete=setup_complete)
     if args.action=='serve' and not args.dry_run:
         errors=setup_errors(root,model,original,override)
         if errors:raise SystemExit(f'{model_name(model)} is not ready: {errors[0]}\nRun make setup MODEL={model}, or reconnect its configured model drive.')

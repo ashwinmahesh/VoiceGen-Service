@@ -20,7 +20,7 @@ make setup
 
 During setup:
 
-1. Choose a speech model from the numbered menu. **Enter selects Higgs.**
+1. Choose a speech model from the numbered menu. Models whose required files and environment are ready show **[SETUP COMPLETE]** beside their names. All models remain selectable, including ones you want to set up again. **Enter selects Higgs.**
 2. On first setup, choose the folder for model files and recordings. Enter uses the project folder. To keep large files off your Mac's internal drive, enter an absolute SSD path, such as `/Volumes/ASH-SSD/models/VoiceGen`. The choice is remembered.
 3. Wait for the environments and downloads to finish. Setup selects Python for each environment, installs the chosen speech model, queue dependencies, and **Qwen3.5-2B 4-bit**, the local LLM for prompt expansion. Existing compatible environments and verified model files are reused.
 

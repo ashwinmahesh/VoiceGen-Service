@@ -21,6 +21,8 @@ Keep private state, media, weights, environments, local settings and credentials
 
 ## Commands and checks
 
+Interactive setup lists every model and adds `[SETUP COMPLETE]` only when the model's current assets, volume and compatible runtime pass the existing serving readiness checks. Preserve all numbers, choices and the setup default; completed models can still be selected for a safe rerun. Do not load models, download assets or use a stale marker to build these labels. Explicit-model and noninteractive setup skip the menu and status scan.
+
 `bootstrap_python.sh` runs dependency-free setup/menu code with an available CPython 3.9+; run mode never downloads. `python_runtime.py` owns per-lock compatibility bounds and reuses compatible target environments before selecting installed bases or setup-only project-local downloads. `bootstrap_uv.sh` pins and verifies the official uv archive; `.python` and `.bootstrap` remain internal and ignored. Honor independent BOOTSTRAP_PYTHON, LLM_PYTHON and QUEUE_BOOTSTRAP_PYTHON overrides, reject incompatible explicit choices, and preserve incompatible/broken environments. Never substitute an interpreter during serving, overwrite a venv, or use the model SSD for interpreter/tool downloads. Validate new supported minors against all pinned dependencies before widening a bound; metadata/wheel resolution is not real inference validation.
 
 - `make queue`: foreground queue API alone; reuse a matching instance.

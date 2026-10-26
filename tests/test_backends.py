@@ -110,6 +110,46 @@ class BackendTests(unittest.TestCase):
                                       choices=['higgs'],serving=True),'higgs')
         with self.assertRaises(ValueError):choose_model('voxcpm2',choices=[])
 
+    def test_setup_menu_marks_currently_ready_models_and_keeps_every_choice(self):
+        import io
+        from startup_select import choose_model,model_name
+        for complete in [[],['voxcpm2','higgs'],list(BACKENDS)]:
+            output=io.StringIO()
+            self.assertEqual(choose_model('higgs',interactive=True,input_fn=lambda:'',stream=output,
+                                          setup_complete=complete),'higgs')
+            lines=output.getvalue().splitlines()
+            for number,backend in enumerate(BACKENDS,1):
+                line=next(line for line in lines if line.startswith(f'  {number}. '))
+                self.assertIn(model_name(backend)+' ['+backend+']',line)
+                self.assertEqual('[SETUP COMPLETE]' in line,backend in complete)
+                self.assertEqual('(default)' in line,backend=='higgs')
+        self.assertEqual(choose_model('higgs',interactive=True,input_fn=lambda:'3',stream=io.StringIO(),
+                                     setup_complete=['higgs']),'chatterbox')
+
+    def test_setup_status_scans_only_for_interactive_menu_and_respects_venv_override(self):
+        import io,json,sys,startup_select
+        from contextlib import redirect_stdout
+        for args,interactive,scans in [(['setup','--dry-run'],True,True),
+                                       (['setup','--model','higgs','--dry-run'],True,False),
+                                       (['setup','--non-interactive','--dry-run'],True,False),
+                                       (['setup','--dry-run'],False,False)]:
+            output=io.StringIO()
+            with self.subTest(args=args,interactive=interactive),patch.object(sys,'argv',['startup_select.py',*args]), \
+                 patch('startup_select.sys.stdin.isatty',return_value=interactive), \
+                 patch('startup_select.ready_models',return_value=(['higgs'],{'voxcpm2':['missing volume']})) as ready, \
+                 patch('startup_select.choose_model',return_value='higgs') as choose,redirect_stdout(output):
+                startup_select.main()
+                self.assertEqual(ready.called,scans)
+                self.assertEqual(choose.call_args.kwargs['setup_complete'],['higgs'] if scans else [])
+        with patch.object(sys,'argv',['startup_select.py','setup','--keep-venv','--dry-run']), \
+             patch('startup_select.sys.stdin.isatty',return_value=True), \
+             patch.dict(os.environ,{'VENV':'/chosen/environment'}), \
+             patch('startup_select.ready_models',return_value=([],{})) as ready, \
+             patch('startup_select.choose_model',return_value='higgs'),redirect_stdout(io.StringIO()):
+            startup_select.main()
+            original=json.loads((PROJECT_ROOT/'service.json').read_text())['backend']
+            ready.assert_called_once_with(PROJECT_ROOT,original,'/chosen/environment')
+
     def test_ready_discovery_respects_runtime_and_asset_failures_without_loading(self):
         import startup_select
         def errors(root,backend,original,override):
@@ -123,6 +163,23 @@ class BackendTests(unittest.TestCase):
         with patch('startup_select.subprocess.run') as run:
             self.assertTrue(startup_select.setup_errors(PROJECT_ROOT,'higgs','voxcpm2','/missing-voice-menu-fixture'))
             run.assert_not_called()
+
+    def test_readiness_rejects_unsupported_python_before_loading_assets_or_inference(self):
+        import shutil,sys,startup_select
+        parent=PROJECT_ROOT/'state/validation';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='setup-status-',dir=parent) as folder:
+            root=Path(folder)
+            backend='higgs' if sys.version_info.minor>=13 else 'voxcpm2' if sys.version_info.minor<=11 else 'indextts'
+            python=startup_select.runtime_python(root,backend,'voxcpm2')
+            python.parent.mkdir(parents=True);python.symlink_to(sys.executable)
+            shutil.copyfile(PROJECT_ROOT/'python_runtime.py',root/'python_runtime.py')
+            (root/'config.py').write_text('from pathlib import Path\nROOT=MODEL_DIR=EXTENSION_DIR=Path(__file__).parent\n'
+                +f'PROFILE={{"backend":{backend!r}}}\n'+'def validate_mount(path):return path\n')
+            for module in ['assets.py','runtime_checks.py']:
+                (root/module).write_text('raise AssertionError("Readiness should stop before asset/inference imports")\n')
+            errors=startup_select.setup_errors(root,backend,'voxcpm2')
+            self.assertEqual(len(errors),1)
+            self.assertIn('needs standard CPython',errors[0])
 
     def test_serve_selection_fails_cleanly_before_launch_when_setup_is_missing(self):
         import io,sys,startup_select
