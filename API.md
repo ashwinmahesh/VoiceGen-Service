@@ -1,334 +1,705 @@
-# Local Voice Studio API 2.1.0
+# VoiceGen API
 
-The startup-selected **generator** serves the studio UI and the generation API on `http://localhost:5743`, with OpenAPI at `GET /openapi.json` and interactive documentation at `/docs`. The independent **queue CRUD** service uses `http://localhost:55205` and has its own OpenAPI/docs. It serves no generation UI and imports no inference/runtime configuration or inference code; its model listing reads only static names/IDs. The generator reads the same project-local SQLite queue directly; stopping/restarting the queue HTTP service does not stop inference or recover active work. These are local job protocols, not OpenAI-compatible speech endpoints. Read the generator's `GET /api/capabilities` before building a voice request; unknown generation fields return 422.
+Use the API to generate dialogue, compare takes, save voices, and queue work for later. For installation and a first-use walkthrough, see [QUICKSTART.md](QUICKSTART.md).
 
-## Standalone queue CRUD API (port 55205)
+## Choose the right service
 
-Use this service to persist requests while the generator is off. It accepts opaque JSON payloads with an optional **`model`** string (default **`higgs`** from `service_defaults.json`), an optional `generate_immediately` boolean (default false), and optional `idempotency_key` (1–200 characters). Omitting `model` resolves to the project default independently of the running generator; responses always include the resolved model, and existing jobs retain their recorded choice. Explicit `null` is invalid. The queue validates only the envelope/JSON, not the model or speech settings. For this generator, set `model` to its startup backend ID: `voxcpm2`, `qwen3`, `chatterbox`, `indextts`, `moss`, `fish` or `higgs`. A request for another model stays queued until that model is selected at generator startup; no automatic model switching occurs.
+| Service | Default address | Use it for |
+| --- | --- | --- |
+| **Generator** | `http://localhost:5743` | Generate audio, expand prompts, manage voices, and use the studio. |
+| **Queue** | `http://localhost:55205` | Add and manage waiting jobs, even when the generator is off. |
+
+Both services use one SQLite database in the project: `state/queue.sqlite3`. The studio calls the generator's APIs, which access that database directly. A separate queue API outage does not stop the studio from generating.
+
+Each service has interactive documentation at **`/docs`** and its complete request/response schema at **`/openapi.json`**. The APIs accept local jobs and return WAV recordings.
+
+### In this guide
+
+- [Generate speech](#generate-speech)
+- [Generate multiple options](#generate-multiple-options)
+- [Generation fields](#generation-fields)
+- [Voices and reference recordings](#voices-and-reference-recordings)
+- [Manage jobs through the generator](#manage-jobs-through-the-generator)
+- [Use the standalone queue](#standalone-queue-api-port-55205)
+- [Model settings](#model-settings)
+- [Sentence and comma pauses](#sentence-and-comma-pauses)
+- [Expand voice and acting directions](#voice-guidance-preview-and-application)
+- [Edit pauses in finished audio](#edit-pauses-in-finished-audio)
+- [History and downloads](#history-and-downloads)
+- [Health and errors](#health-and-errors)
+
+Examples use `VOICE_ID_HERE`, `JOB_ID_HERE`, and similar placeholders. Replace them with IDs returned by the service. IDs are 32 lowercase hexadecimal characters; they are not file paths.
+
+## Generate speech
+
+These examples use the default **Higgs TTS 3** model. Start it with `make serve MODEL=higgs`. The generator always uses the model selected at startup; check `GET /api/capabilities` for its available features.
+
+### 1. Upload a voice
+
+Higgs needs a recording and the exact words spoken in it. Replace the path and transcript below with your own:
 
 ```sh
-curl http://localhost:55205/api/queue -H 'Content-Type: application/json' -d '{
-  "model": "voxcpm2",
-  "generate_immediately": false,
-  "idempotency_key": "scene-1-queued-take-1",
-  "payload": {
-    "text": "Welcome home.",
-    "description": "A warm, cultured baritone.",
-    "seed": 42
+curl --fail-with-body http://localhost:5743/api/voices/upload \
+  -F 'file=@/absolute/path/voice.wav' \
+  -F 'name=My character' \
+  -F 'transcript=Exact words spoken in this recording.'
+```
+
+**Returns:** HTTP **201** with a saved voice. Copy its `id` for the next request. The voice also appears in the studio's Collection.
+
+### 2. Submit the new dialogue
+
+**`POST /api/generate`**
+
+```sh
+curl --fail-with-body http://localhost:5743/api/generate \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "voice_id": "VOICE_ID_HERE",
+    "text": "Welcome home. Sit, please.",
+    "seed": 42,
+    "generate_immediately": true,
+    "idempotency_key": "scene-1-take-1"
+  }'
+```
+
+**Returns:** HTTP **202** with a job. This means the request was saved, not that audio is ready. Relevant response fields look like this:
+
+```json
+{
+  "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "queued",
+  "generate_immediately": true,
+  "result": null,
+  "error": null
+}
+```
+
+`generate_immediately: true` puts the job ahead of ordinary waiting work, after the current take finishes. It does not interrupt active work. API requests default to `false`; the UI defaults to `true`.
+
+### 3. Wait for the result
+
+**`GET /api/jobs/{id}`**
+
+```sh
+curl --fail-with-body http://localhost:5743/api/jobs/JOB_ID_HERE
+```
+
+| Job status | Meaning |
+| --- | --- |
+| `queued` | Waiting to run. `paused: true` can mean its model is not currently selected. |
+| `running` | In progress; `stage` describes the current step. |
+| `done` | Finished. Audio details are in `result`. |
+| `error` | Failed. Read `error` for the reason. |
+| `deleted` | Removed from the waiting queue. |
+
+A finished job includes `result.id`, `result.audio_url`, `result.duration`, and the actual settings used. See [results and downloads](#history-and-downloads).
+
+### 4. Download the audio
+
+Use the finished job's **`result.id`**, replacing `OUTPUT_ID_HERE`:
+
+```sh
+curl --fail-with-body \
+  'http://localhost:5743/api/audio/outputs/OUTPUT_ID_HERE?download=true' \
+  -o "$HOME/Downloads/voicegen-line.wav"
+```
+
+You can also play the relative `result.audio_url` by adding the generator's address in front of it.
+
+### Retry safely after a timeout
+
+Use the **same request and `idempotency_key`** to recover the original job after a network error or restart. A new key creates new work. Reusing a key with changed dialogue, settings, model, or priority returns **409**.
+
+A repeated submission does not restart a failed or deleted job. To rerun a failed job, use [the explicit retry endpoint](#manage-jobs-through-the-generator).
+
+## Generate multiple options
+
+**`POST /api/candidates`** accepts the same fields as `/api/generate`, plus:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `candidate_count` | `2` | Integer from 1–5. |
+| `candidate_variation` | `"auto"` | How options differ; see below. |
+| `candidate_use_llm` | `true` | Use the enabled local LLM to refine different voice designs. |
+
+```sh
+curl --fail-with-body http://localhost:5743/api/candidates \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "voice_id": "VOICE_ID_HERE",
+    "text": "Welcome home. Sit, please.",
+    "candidate_count": 2,
+    "generate_immediately": true,
+    "idempotency_key": "scene-1-options-1"
+  }'
+```
+
+**Returns:** HTTP **202** with a batch `id` and ordered `jobs`. Poll **`GET /api/candidates/{id}`**. Each job has its own audio result; takes run one at a time.
+
+| Variation | Behavior |
+| --- | --- |
+| `auto` | Contrasting descriptions for Vox/Qwen VoiceDesign/MOSS; alternative takes for recorded or preset voices. |
+| `distinct` | Require a supported voice-design mode. Other modes return 422. |
+| `seed_only` | Keep one description and vary the random seed. |
+
+For distinct designs, option 1 keeps the original description. Later options explore brighter, darker, focused, or open resonance while retaining the stated constraints. The enabled LLM can refine these directions; otherwise built-in directions are used. The actual description is visible in each job's `effective.description` and `candidate_variant`.
+
+Reference and preset batches, including Higgs, retain the selected speaker recording or preset. Neither repeated seeds nor different descriptions guarantee a particular audible identity.
+
+Batch status is `queued`, `running`, `done`, `partial`, `error`, or `deleted`. `done_count` counts successful takes. `partial` means some finished successfully and others did not. Remove or retry individual jobs using their IDs; successful takes remain available.
+
+Keep the same batch key after a timeout to recover its original jobs. Batch keys are separate from single-take keys. If an unplanned LLM batch waits after restarting with the LLM disabled, restart with it enabled to continue planning.
+
+## Generation fields
+
+Send JSON with `Content-Type: application/json`. Unknown fields and unsupported controls return **422**. Check **`GET /api/capabilities`** before using a different model.
+
+### Dialogue and voice source
+
+| Field | Meaning and limits |
+| --- | --- |
+| `text` | Required new dialogue. Nonblank, up to 3,000 characters; Chatterbox allows 1,000 and MOSS 500. |
+| `voice_id` | Saved voice from Collection. |
+| `reference_id` | Uploaded recording from `/api/references`. |
+| `preset_voice` | Qwen built-in speaker ID from capabilities. |
+| `description` | Voice-design description, up to 1,500 characters. Required for design without a recording or preset. |
+| `ref_text` | Exact reference transcript override, up to 3,000 characters. Supported by Higgs, Fish, Qwen reference cloning, and Vox auto/continuation/combined modes. |
+| `language` | Defaults to `"auto"`. IndexTTS and MOSS require an explicit supported language. |
+
+Choose at most one of `voice_id`, `reference_id`, or `preset_voice`. Available sources depend on the model. A catalog description does not replace the recording used for cloning.
+
+### Job and output settings
+
+| Field | Default | Meaning and limits |
+| --- | --- | --- |
+| `seed` | `42` | Integer from 0–4,294,967,295. Selects random variation. |
+| `max_tokens` | `1000` | Output limit, generally 50–2,000. Chatterbox is fixed at 1,000; IndexTTS is capped at 1,500. This is not a requested audio duration. |
+| `temperature` | Model-dependent | Sampling variation where supported. See [model settings](#model-settings). Vox does not accept it. |
+| `generate_immediately` | `false` | Run ahead of normal waiting work, without interrupting the current job. |
+| `idempotency_key` | Omitted | Retry key, 1–128 characters. Reuse only for an identical request. |
+| `output_dir` | Configured output folder | Optional absolute folder on the server's Mac. The drive must be mounted and writable. |
+| `prompt_expansion_id` | Omitted | ID of a reviewed [prompt expansion](#voice-guidance-preview-and-application) applied to this request. |
+
+### Acting and model-specific settings
+
+Some established controls are top-level fields: `emotion` (up to 1,000 characters), `accent` (up to 500), Vox's `clone_mode`/`steps`/`guidance`, and Qwen's `steering_emotion`/`steering_strength`.
+
+Other model-specific settings go under the **exact model ID**, for example:
+
+```json
+{
+  "text": "Welcome home.",
+  "voice_id": "VOICE_ID_HERE",
+  "higgs": {
+    "emotion": "amusement"
   }
-}'
+}
 ```
 
-For VoiceGen, `payload` is one ordinary Generation request (the fields documented below), without an inner `idempotency_key`. Use the envelope's priority/key. The generator validates the payload when claimed, resolves references and effective model defaults, and freezes the resulting model revision/settings/transcript/hash before speech. An invalid payload becomes an inspectable `error` and does not block following work. A queue 202 means persisted, not validated speech or finished audio. Model assets and the media SSD are not required for the queue API itself. Queue submissions are single takes; use the generator's `/api/candidates` for atomic 1–5-option batches and LLM diversity planning.
+Use only the running model's options. For example, Higgs uses `higgs.emotion`; the top-level prose `emotion` field is unsupported there. Deprecated flat Chatterbox/Index fields remain accepted, but cannot be mixed with their model object in one request.
 
-| Method / route | Queue-service behavior |
-| --- | --- |
-| `GET /api/models` | List all supported model IDs/names and the configured default from static metadata; no asset, installation or worker-readiness checks |
-| `POST /api/queue` | Persist `{model?,payload,generate_immediately?,idempotency_key?}`; HTTP 202 with a stable ID |
-| `GET /api/queue?status=pending&model=voxcpm2&limit=24&offset=0` | Paginated listing; optional model filter; statuses pending, all, queued, running, done, error, deleted; limit 1–100 |
-| `GET /api/queue/{id}` | Generic record with opaque original payload, model, status, stage, timestamps, attempts, result/error and `prepared` |
-| `PATCH /api/queue/{id}` | Update `payload` and/or `generate_immediately` while waiting. Payload changes require an unkeyed, consumer-unprepared entry; prepared payloads and keyed inputs are immutable. Empty/null updates return 422; nonwaiting updates return 409 |
-| `DELETE /api/queue/{id}` | Tombstone a waiting entry only; 409 for active/terminal work, 404 unknown |
-| `DELETE /api/queue?model=voxcpm2` | Clear waiting entries, optionally filtered; retain active work, history and media |
-| `GET /health` | Queue role/project/database/readiness and configured `default_model` only; no model readiness or worker registry |
+## Voices and reference recordings
 
-`GET http://localhost:55205/api/models` returns `{"default_model":"higgs","models":[{"id":"voxcpm2","name":"VoxCPM2","is_default":false},...]}` with all seven supported backends. Higgs has `is_default:true`. The IDs come from the same `model_registry.json` used by generator startup choices. This lists supported options rather than installed/ready models and works without the generator or model SSD. Use the generator's capabilities/health for readiness and controls. Listing models creates no jobs and does not change the default.
+### Upload directly to Collection
 
-Records expose `id`, `sequence`, `model`, `payload`, `generate_immediately`, `status`, `stage`, timestamps, `attempts`, `error`, `result`, and `prepared` (false until the generator freezes a raw payload). Lists add `total`, `counts`, `limit`, `offset`, `has_more` and `next_offset`. Same key/model/payload/priority recovers the original record, including tombstones; changed inputs return 409. Queue-service keys have a separate namespace from generator keys. Validation failures can be inspected here and retried with the generator's explicit retry endpoint, or submitted as corrected new requests. Only the generator updates execution state and performs crash recovery under its exclusive consumer lease. The queue API has its own distinct process lease and never claims or resets jobs.
+**`POST /api/voices/upload`** — multipart form; returns **201** with a saved voice.
 
-`make queue` starts this CRUD API alone. `make serve` reuses a matching queue API or starts it independently, then runs the generator/UI. Generator Ctrl-C finishes active work and leaves the queue API running; `make stop-queue` stops it explicitly. `QUEUE_PORT` overrides the saved queue port; `PORT` still controls the generator. `QUEUE_DB` may select an isolated database **inside project `state/`** for tests; both processes must use the same value. The default stays `state/queue.sqlite3`, preserving existing jobs/order/IDs without a new database migration. For pre-project legacy queues, generator startup migrates under both worker leases before starting CRUD; standalone queue startup refuses a conflicting legacy DB.
+| Form field | Required? | Meaning |
+| --- | --- | --- |
+| `file` | Yes | Audio recording. |
+| `name` | Yes | Voice name, 1–100 characters. |
+| `description` | No | Catalog notes, up to 2,000 characters. |
+| `transcript` | No | Exact words in this recording, up to 3,000 characters. Required when using Higgs or Fish. |
+| `tags` | No | Repeat the field for each tag; up to 20 tags, 1–40 characters each. |
 
-## Generation
+Add metadata to the [upload example](#1-upload-a-voice) with form fields such as `-F 'description=A cultured baritone.' -F 'tags=romanian' -F 'tags=aristocrat'`.
 
-### Multiple voice options
+Use the returned `id` as `voice_id`. Uploading saves a recording without generating or training a voice model. Original upload bytes are retained. Repeating an upload can create another library entry.
 
-`POST /api/candidates` accepts the generation fields below plus integer `candidate_count` **1–5**, default **2**, and common `candidate_variation: "auto" | "distinct" | "seed_only"` (default `auto`). It returns HTTP 202 `CandidateBatch`. `auto` plans contrasting descriptions for multi-option Vox/Qwen VoiceDesign/MOSS designs; saved/reference/preset voices, including Higgs, retain their speaker conditioning and use seed-only alternate takes. `distinct` explicitly requires a supported design mode (otherwise 422); `seed_only` retains the same description. Count 1 keeps the original. This does not select multiple models or guarantee perceptually distinct identities.
+### Upload a temporary reference
+
+**`POST /api/references`** takes multipart `file` and optional `transcript`, returning **201**. Use its `id` as `reference_id` without saving it to Collection first.
+
+Download the original with **`GET /api/references/{id}/original`**. For a voice imported directly into Collection, its `source_id` identifies that reference.
+
+### Save a generated take
+
+**`POST /api/voices`** — save an existing output or reference to Collection:
 
 ```json
-{"text":"Welcome home.","description":"A warm, cultured baritone.","candidate_count":2,"seed":42,"idempotency_key":"voice-options-1"}
+{
+  "name": "Romanian aristocrat",
+  "description": "Calm, cultured, quietly mocking.",
+  "tags": ["romanian", "aristocrat"],
+  "output_id": "OUTPUT_ID_HERE"
+}
 ```
 
-The response contains `id`, `created_at`, `backend`, `candidate_count`, resolved `candidate_variation` (`distinct` or `seed_only`), `done_count`, `status`, and ordered `jobs` (the normal Job schema). Poll **`GET /api/candidates/{id}`**. Every child has its own durable job ID, `candidate_batch_id`, 1-based `candidate_index`, `candidate_count`, frozen requested/effective settings and result. Seeds are `(base_seed + index - 1) % 2**32`. Distinct designs preserve the original description as option 1; options 2–5 append brighter, darker, focused and open-resonance directions within stated constraints. Dialogue, accent, emotion, conditioning and samplers remain the same. With startup LLM enabled and `candidate_use_llm:true` (default), a single planning child loads the LLM once and generates one focused refinement per extra option; a host-owned fixed contrast direction is appended after each refinement. With LLM disabled or `candidate_use_llm:false`, built-in directions are frozen at admission. The UI Prompt expansion switch controls this request field and preview availability, defaults on when the backend serves the LLM, and restores an applied preview when switched off. Single-take/reference prose still uses explicit preview/application.
+Supply exactly one `output_id` or `reference_id`. Optional `transcript` overrides the saved sample's transcript. Saved samples use up to the first 30 seconds; for longer takes, supply the exact words in that excerpt or leave its transcript empty.
 
-The original requested description remains in `requested.description`; the actual description lives in `effective.description` and `candidate_variant.description`. Distinct jobs/results expose `candidate_variant` with `index`, `label`, `base_description`, applied `addition`, raw `refinement`, `contrast_anchor`, `method` (`llm`/`built_in`), policy `version`, frozen `profile_spec`, and optional `llm` provenance. The first option has no addition. All descriptions freeze atomically before any speech. An unplanned LLM group pauses visibly after restart with `NO_LLM=1`; frozen groups/retries need no LLM. Invalid planning fails the group's queued children, without silent fallback or synthesis; retry children explicitly. Deleted children stay deleted. Private plans and their prompts stay in project-local SQLite. A too-long description returns 422 with shortening/seed-only guidance. Sampling defaults are unchanged.
+### Search and edit voices
 
-Artifacts retain group/index/count/variation provenance. Child `result.audio_url` and paths exist after successful completion. Play/download or save a particular child `result.id` through `POST /api/voices` with `output_id`. The UI shows each actual prompt; reusing a selected design switches to seed-only and clears its old shared preview receipt while retaining the final description.
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/voices?q=aristocrat&tag=romanian&sort=newest&limit=24&offset=0` | Search and filter the library. |
+| GET | `/api/voices/{id}` | Get voice details and its preview URL. |
+| PATCH | `/api/voices/{id}` | Edit `name`, `description`, `tags`, or `transcript`. |
+| GET | `/api/voice-tags` | List tags and their counts. |
 
-Group status is `queued`/`running` while any child is pending/active, `done` when all succeed, `partial` when terminal with some successes, `deleted` when all were removed, otherwise `error`. `done_count` counts successful options. The entire group and its jobs are admitted in one SQLite transaction before acknowledgment and run sequentially under the existing worker/GPU reservation. Immediate priority is per child; another already running job finishes first. Queue listing/deletion/clear/retry operate on individual jobs. A failed child never blocks later options; successful results remain available. Retrying a child updates that same group's status. There is no group-wide active cancellation.
+Search matches all query words across names, notes, original designs, and tags, ignoring case and accents. `tag` is an exact tag filter. Sort choices are `newest`, `updated`, and `name`. Lists include `data`, `total`, `limit`, `offset`, `has_more`, and `next_offset`.
 
-Candidate idempotency keys are scoped to `/api/candidates`. The same key and request recover the original group and original ordered child IDs, including across restart; changed count, variation, seed, text, controls or backend return 409. Default `auto` and `candidate_use_llm:true` preserve historical request fingerprints; replaying an older group does not add a new plan, and older groups report seed-only. Deleted children stay deleted on a submission retry. A new key intentionally creates another group. Invalid counts (including booleans, strings or fractions) return 422. A missing group returns 404. `/api/capabilities` advertises bounds/default/variation choices under `limits.candidates`. The UI defaults to two options and keeps its latest group ID for reload/reconnection.
+PATCH replaces the supplied fields. Use `"description": ""`, `"transcript": ""`, or `"tags": []` to clear them; `null` is rejected. Tags are normalized and duplicates removed. Editing catalog notes does not alter its audio.
 
-### Compatible single-take generation
+### Upload limits
 
-`POST /api/generate` returns 202 and a durable job. Minimal design request:
-
-```json
-{"text":"Welcome home.","description":"A warm, cultured baritone.","emotion":"Quietly amused.","seed":42,"max_tokens":500,"idempotency_key":"scene-1-take-1"}
-```
-
-`GET /api/jobs/{id}` retains the established job response and IDs. New jobs add stable `sequence`, `backend`, `model`, `mode`, `generate_immediately`, `attempts`, start/completion times, frozen requested/effective settings, and `paused`. Status is `queued`, `running`, `done`, `error`, or `deleted`. Stage messages describe actual work; no percentage or active cancellation is promised. A disconnected browser or HTTP timeout does not cancel work or release accelerator capacity.
-
-Submissions are transactionally admitted to SQLite under project-local ignored `state/queue.sqlite3` before a 202 response. On first startup, the stopped legacy SSD database is consistently backed up and migrated, retaining a recoverable `.migrated-backup` beside the original path. Conflicting source/destination databases fail startup for review. Queue journals and worker ownership locks stay beside the project database; audio, legacy JSON and weights remain in DATA_DIR. Health reports `queue_database`. A single worker starts after storage ownership/recovery, consumes startup backlog automatically, and runs only the startup backend. Other backends remain visibly paused; the server never loads a different backend to drain them. Within the applicable backend, immediate pending entries run FIFO ahead of ordinary FIFO entries. **Immediate means the next available slot after current inference, with no preemption.** A continuous stream of immediate work can delay ordinary entries. API submissions default `generate_immediately=false`; the webpage sends `true` by default and offers a checkbox to enqueue normally. Busy inference/accelerator contention queues requests rather than returning the former busy 409. Existing `/api/generate` clients still receive 202 Job and poll the same detail route; no synchronous speech route was changed.
-
-The worker holds the configured shared accelerator `GPU_LOCK_FILE` through completion (including after disconnect). It waits when another owner holds the lock. Point image/voice workers at the same lock to serialize accelerator use; an idle resident model still consumes memory. Run one server worker without reloaders. An exclusive database-adjacent consumer lease prevents duplicate recovery/workers. Native subprocesses and their time wrapper inherit the actual queue-owner, process data-owner and accelerator descriptors; if the Python server is killed, those reservations remain held until the native child exits. Unloading a running model returns 409; unloading while entries wait releases the model, which loads again for the next admitted take.
-
-### Queue operations
-
-`/api/jobs` and `/api/queue` are aliases for the new collection operations; existing `/api/jobs/{id}` remains valid.
-
-| Method / route | Behavior |
+| Limit | Value |
 | --- | --- |
-| `POST /api/queue` | Same typed Generation body and 202 Job as `/api/generate` (also `POST /api/jobs`) |
-| `GET /api/queue?status=pending&backend=voxcpm2&limit=24&offset=0` | List entries; backend optional; limit 1–100, offset >=0. Status: pending (queued+running), queued, running, done, error, deleted, all. Counts reflect all statuses for the backend filter; total reflects the status filter. Includes has_more/next_offset. Running entries precede immediate and normal pending FIFO entries |
-| `GET /api/queue/{id}` | Typed detail (alias of `/api/jobs/{id}`); other-backend pending entries have paused=true |
-| `DELETE /api/queue/{id}` | Remove only a waiting entry; 409 for running or completed/failed work, 404 unknown. Returns deleted count and active_job. Repeated delete of a tombstone returns zero |
-| `DELETE /api/queue?backend=voxcpm2` | Transactionally clear waiting entries, optionally for one backend. Active entries keep running; completed artifacts, History, references and original recordings are retained |
-| `POST /api/queue/{id}/retry` | Explicitly retry an error under its original ID/order, incrementing attempts when claimed; 409 unless failed and its backend is selected. Also available under `/api/jobs/{id}/retry` |
+| Audio file | At most 25 MiB; complete multipart request at most 26 MiB. |
+| Decoded recording | 1–30 seconds, 8–96 kHz, mono or stereo. |
+| Formats | WAV, FLAC, or MP3 supported by the installed audio reader. |
+| Working copy | Mono 16 kHz PCM16; original upload retained separately. |
 
-Delete/clear and worker claim are serialized in SQLite: an entry is either removed before claim or remains running. Removal retains a durable tombstone and retry-key mapping. Retrying an identical keyed submission returns its original job, including failed/deleted jobs, without silently regenerating. Changed settings (including priority) with the same key return 409. Use the explicit retry route for an intended failed-job retry. Unkeyed requests or new keys are new jobs. No automatic pruning is performed; queue/history retention are separate. Legacy JSON jobs and hashed key records remain readable. Legacy interrupted JSON entries cannot safely replay because they lack durable inputs and remain errors requiring History review.
+Unsupported or unreadable audio returns 422; oversized uploads return 413. Nothing is automatically pruned.
 
-### Restart and reference guarantees
+## Manage jobs through the generator
 
-Generator API admission freezes validated requested/effective controls, backend/model/mode, destination, reference path/identity/metadata, exact transcript and reference audio SHA256. Later catalog renames/transcript edits cannot change an admitted take. If reference bytes change or disappear, execution fails visibly; restore the admitted bytes before retrying. The same guard covers IndexTTS speaker and separate emotion recordings (including legacy flat aliases). No audio snapshots are duplicated or removed by queue clearing.
+These endpoints use **port 5743**. They manage the same saved jobs used by the UI.
 
-Interrupted SQLite running entries return to their original ordering on restart. Recovery first reconciles a matching complete WAV plus JSON sidecar and repairs the artifact index instead of synthesizing again. The same check runs before executing a queued entry. Invalid/mismatched completion markers fail for review. Backend model-mapping changes also fail before inference. Worker failures stay errors until explicit retry.
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/jobs` | List waiting and running jobs. |
+| GET | `/api/jobs/{id}` | Get status, settings, result, or error. |
+| DELETE | `/api/jobs/{id}` | Remove one waiting job. |
+| DELETE | `/api/jobs` | Clear waiting jobs. |
+| POST | `/api/jobs/{id}/retry` | Retry a failed job; returns 202. |
 
-This is durable admission and practical retry/restart recovery, **not exactly-once synthesis across arbitrary crashes**. A crash before a complete sidecar exists can repeat synthesis under the same job ID; a complete matching sidecar plus valid WAV prevents the normal bookkeeping-crash duplicate. Hardware/filesystem failures, external edits and loss of storage are outside that guarantee. SQLite uses rollback journaling and FULL synchronous writes; keep the database, journal and owner lock in the ignored project-local `state/` directory and back up jobs together with outputs/indexes. Do not run a second server or manually alter its queue while an owner is active.
-
-| Field | Shared validation / meaning |
-| --- | --- |
-| `text` | Required, nonblank, up to 3000 characters; no silent truncation |
-| `description` | Up to 1500 characters; required for design; reference identity comes from the recording |
-| `emotion` | Up to 1000 characters; design on both models, reference mode on VoxCPM2 only |
-| `voice_id`, `reference_id` | Optional UUID hex IDs; choose one reference source or preset_voice |
-| `preset_voice` | Qwen CustomVoice preset ID from capabilities; mutually exclusive with voice_id/reference_id; description is optional additional direction |
-| `accent` | Optional accent instruction, <=500 characters; design/preset/Vox standard reference mode only; this is prompt guidance |
-| `clone_mode` | `auto` default (combined for a transcribed Vox reference without new acting directions, otherwise reference); explicit `reference`, `continuation` and `combined` on VoxCPM2 references require an exact saved/override transcript |
-| `steering_emotion` | Optional installed experimental direction; Qwen CustomVoice presets only; see capabilities |
-| `steering_strength` | Optional 0–12, default 8 when a direction is selected; cannot be supplied without steering_emotion |
-| `ref_text` | Optional exact reference transcript, up to 3000 characters; Qwen reference mode or VoxCPM2 continuation/combined; overrides saved transcript |
-| `language` | `auto` default; Qwen also English, Chinese, Japanese, Korean, German, French, Russian, Portuguese, Spanish, Italian. VoxCPM2 auto-detects from text |
-| `seed` | Default 42, unsigned 32-bit integer; reproducibility input, not a voice identity guarantee |
-| `steps` | VoxCPM2 only, default 10, 1–30, maps to inference_timesteps |
-| `guidance` | VoxCPM2 only, default 2, 1–5, maps to cfg_value |
-| `temperature` | Qwen only, default 0.9, 0–2 |
-| `max_tokens` | Default 1000, 50–2000; output-token cap, not requested duration |
-| `output_dir` | Optional absolute directory on server's Mac; defaults to OUTPUT_DIR. Volume and writability checked before inference |
-| `generate_immediately` | Boolean, API default false; true joins priority FIFO for the next slot, never interrupts active inference |
-| `idempotency_key` | Optional 1–128 characters; stable for retries of the same request |
-
-Qwen VoiceDesign handles description+emotion. CustomVoice handles built-in preset speakers with emotion/style/accent instructions and the optional experimental steering pack. Base handles saved/uploaded references. Base accepts no direct emotion instruction: 422 if nonempty. An exact transcript enables in-context reference cloning; without a transcript it uses speaker embedding conditioning. Voice descriptions and accent/emotion are probabilistic; identity is approximate. There is no effective speed control, so the API rejects `speed`.
-
-Conservative combined tokenizer limits: VoxCPM2 4096, Qwen 2048 input tokens for text/instructions/reference transcript used by the adapter. Tokenizer limits are checked after local load, before synthesis. Outputs have a separate maximum of 2000 audio tokens and references are bounded to 30 seconds. Vox sends one complete text passage. Qwen Base disables upstream automatic segmentation; the optional punctuation pacing described below explicitly generates separate phrases with the same reference. Backend token limits may cut audio short; metadata records a warning based on Qwen output token count or VoxCPM2 duration heuristic, not proof that the final words were spoken. Start with short passages.
-
-Results include an absolute WAV `path` and `metadata_path`, local `audio_url`, actual sample rate/channels/format/duration, separate requested/effective settings, model revision, runtime and quantization, input token count, waveform peaks, cold-load time, synthesis/total time, peak MLX allocation, and `real_time_factor` (synthesis seconds / audio seconds). These paths are on the Mac, not a phone. Audio+sidecar use unique IDs and atomic file replacement; an ignored artifact index resolves custom destinations after restart. Metadata retains reference path/transcript and original/effective upload properties through reference/voice records. Transcripts and audio remain local unless explicitly exported.
-
-## Artifacts, references and voice catalog
-
-| Route | Behavior |
-| --- | --- |
-| `GET /health` | Service identity, project/data root, verified assets, loaded variant, real unloaded/loading/ready/generating/unloading/error state, busy/current job, last error |
-| `GET /api/capabilities` | Backend controls, models/revisions/files, modes, languages, limits and storage defaults |
-| `GET /api/history?q=&limit=24&offset=0` | Search transcript/description/emotion, newest first; matching total and navigation; limit 1–100 |
-| `GET /api/artifacts/{id}` | Result with verified current paths; missing media omitted from catalog |
-| `GET /api/metadata/{id}` | Download JSON generation sidecar |
-| `GET /api/audio/{outputs\|voices\|references}/{id}?download=true` | Scoped opaque-ID WAV playback/download; no arbitrary file access |
-| `POST /api/references` | Multipart `file`, optional `transcript`; preserves original plus normalized mono 16 kHz PCM16 working copy |
-| `GET /api/references/{id}/original` | Original upload bytes with original filename |
-| `POST /api/voices/upload` | Multipart `file` + required `name`, optional `description`, `transcript`, repeated `tags`; imports audio and immediately saves a searchable Collection voice, returning HTTP 201 Voice |
-| `POST /api/voices` | Save a sample using `name`, optional `description`, `tags`, `transcript`, and exactly one `output_id` or `reference_id` |
-| `GET /api/voices?q=&tag=&sort=newest&limit=24&offset=0` | All query words match across name, description, original design and tags; accent/case insensitive; exact tag filter; sort newest/updated/name |
-| `GET /api/voices/{id}` | Saved voice details and preview URL |
-| `PATCH /api/voices/{id}` | Change name/description/tags/transcript; audio and original design remain unchanged |
-| `GET /api/voice-tags` | Existing normalized tags/counts |
-| `POST /api/model/unload` | Release this server's model when idle |
-
-Upload limits: file <=25 MiB, complete multipart <=26 MiB, decoded 1–30 seconds, 8–96 kHz, mono/stereo, <=5.76M scalar samples. Headers are checked before decoding. WAV/FLAC/MP3 supported by installed libsndfile; unreadable formats return 422. JSON bodies <=128 KiB. Originals remain in `references/originals`; legacy references created before v2 have no preserved original. Nothing is pruned automatically.
-
-### One-step voice upload
-
-`POST /api/voices/upload` accepts multipart form data, validates metadata before creating stored audio, preserves original upload bytes, and creates a reusable voice in the shared Collection. No generation job is created and no model is loaded. It returns HTTP 201 with the same Voice schema as `POST /api/voices`: use its `id` as `voice_id`. The response includes `source_id` / `source_kind`; original bytes remain accessible through `/api/references/{source_id}/original`. Invalid metadata/audio returns 422, oversized uploads 413. If catalog saving fails, only that newly imported reference is rolled back; existing recordings are preserved. A retry is a new upload and may create another voice.
+Example listing:
 
 ```sh
-curl -s http://localhost:5743/api/voices/upload \
-  -F 'file=@/absolute/path/voice.mp3' \
-  -F 'name=Romanian aristocrat' \
-  -F 'description=A cultured, calm baritone.' \
-  -F 'transcript=Exact words spoken in this reference.' \
-  -F 'tags=romanian' -F 'tags=aristocrat'
+curl --fail-with-body \
+  'http://localhost:5743/api/jobs?status=pending&backend=higgs&limit=24&offset=0'
 ```
 
-Each `tags` form field is one tag; omit optional fields when unused. The upload uses the same file/decoded-audio limits above. Collection's Upload voice dialog and the studio's Saved voice upload action use this endpoint and refresh the catalog after success. The original two-step reference/save API remains supported.
+| Query field | Default | Options |
+| --- | --- | --- |
+| `status` | `pending` | `pending` means queued or running. Also accepts `all`, `queued`, `running`, `done`, `error`, or `deleted`. |
+| `backend` | All models | Optional model ID. Also supported when clearing waiting jobs. |
+| `limit` | `24` | 1–100. |
+| `offset` | `0` | Zero or greater. |
 
-Voice names: 1–100 trimmed characters. Catalog description: <=2000. Tags: <=20, each 1–40 characters, whitespace collapsed, lowercased and deduplicated. PATCH replaces supplied fields; empty description/tags/transcript clears them, null is rejected. Saved samples are mono, up to the first 30 seconds. A transcript is inherited only when the entire generated recording fits within 30 seconds. For longer takes supply the exact excerpt transcript or leave it empty. Catalog notes describe the character; editing them does not alter the recording that conditions reuse. Library has search, exact-tag filter, sort, pagination/page size and explicit reuse.
+List responses contain `data`, `total`, `counts`, `limit`, `offset`, `has_more`, and `next_offset`. Counts cover all statuses for the chosen model; `total` reflects the chosen status filter.
 
-## Errors and local access
+Deletion affects **waiting work only**. It does not cancel active generation or delete completed audio, History, or voices. Deleting an already deleted job reports zero removed. Retrying requires an `error` job whose model is currently selected; other states return 409.
 
-The generator's `GET /health` reports queue HTTP availability separately from model readiness: `queue_service` contains `status` (`ready`, `unavailable`, `mismatch`), `url` and an optional actionable `message`. The read-only identity probe has a 0.3-second network timeout; it never restarts a service or resets jobs. Queue HTTP failure does not cancel active synthesis or block studio submissions/CRUD: the generator uses the same local SQLite directly. Pending work continues, idempotency remains intact, and the studio/Queue modal show a notice. The next normal health refresh clears the notice when the matching API returns; a wrong project/database/role is reported as `mismatch`.
+On the generator, `/api/queue` is an alias for these `/api/jobs` routes, including retry. `POST /api/jobs` and `POST /api/queue` also accept the same request as `/api/generate`.
 
-`queue_storage` independently reports `status: "ready" | "unavailable"` and an optional message. Its health query uses a short 0.25-second lock wait and bypasses the dispatcher's guard, keeping diagnostics available during database contention. A SQLite request failure on either service returns HTTP503, `Retry-After: 2`, and `{"code":"queue_storage_unavailable","detail":"Queue storage is temporarily unavailable. ..."}` without exposing the raw database error. The UI disables generation while storage is unavailable, preserves monitoring/job IDs and displays the storage error rather than treating a failed queue refresh as an offline generator. Restore access/free space or release contention, then retry with the same idempotency key; do not blindly resubmit with a new key. No fallback database is created for an outage.
+## Standalone queue API (port 55205)
 
-422: validation/unsupported control/input/media-storage error; 409: conflicting idempotency key, unsupported active deletion/retry, or occupied unload slot; 413: body too large; 503: unavailable SQLite storage or incomplete assets (run `make download` for the latter); 404: unavailable ID/media. Worker failures appear in job status and health. Unload clears a previous inference error and allows another attempt. Status remains responsive because inference runs off the HTTP event loop.
+Use this API to add work while the generator is off. Start it with `make queue`; `make serve` also starts or reuses it. It can run without model files or the media SSD.
 
-Loopback only, local Host allowlist, same-origin writes, no permissive CORS, no remote URL fetching, no external UI resources. This API accepts trusted local output paths and is not authenticated for LAN/internet exposure. Use an explicitly designed authentication/access layer before changing that scope.
+**The request format differs from the generator's:** generation fields go inside `payload`.
 
-## Expressiveness additions in 2.1
+### List models
 
-Read [EXTENSIONS.md](EXTENSIONS.md) for provenance, compatibility and limitations. API/UI sources and OpenAPI remain identical across projects; capability metadata identifies which additions are installed. The Qwen capability response includes nine `presets` and an `extensions.emotion_steering` record (13 directions, strength bounds, source revision and experimental label). VoxCPM2 reports an empty extension pack/preset list and supports native reference continuation. Both accept a prompt-based accent direction where instructions work. No unsupported field is silently forwarded to Base.
+**`GET /api/models`** returns `default_model` and all supported `models`, each with `id`, `name`, and `is_default`. This lists supported models, not installation or readiness status.
+
+Supported IDs: `higgs`, `voxcpm2`, `qwen3`, `chatterbox`, `indextts`, `moss`, and `fish`. The project default is **`higgs`**.
+
+### Add a job
+
+**`POST /api/queue`**
+
+```sh
+curl --fail-with-body http://localhost:55205/api/queue \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "higgs",
+    "generate_immediately": false,
+    "idempotency_key": "scene-2-queued-1",
+    "payload": {
+      "voice_id": "VOICE_ID_HERE",
+      "text": "Welcome home."
+    }
+  }'
+```
+
+| Field | Required? | Meaning |
+| --- | --- | --- |
+| `payload` | Yes | One generation request. Keep the retry key and priority outside it. |
+| `model` | No | Defaults to Higgs, independently of the running generator. Explicit `null` is invalid. |
+| `generate_immediately` | No | Default `false`; `true` runs ahead of ordinary waiting jobs. |
+| `idempotency_key` | No | Retry key, 1–200 characters. |
+
+**Returns:** HTTP **202** with the saved entry and resolved `model`. The queue checks the request structure; the generator checks speech settings when it picks up the job. An invalid speech request becomes an `error` without blocking later jobs.
+
+Start `make serve MODEL=higgs` to process Higgs jobs. Other models' jobs keep waiting; the service does not switch models automatically. For 1–5-option batches or LLM design planning, use the generator's `/api/candidates` instead.
+
+### List, change, and remove entries
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/health` | Check the queue service and database. |
+| GET | `/api/queue` | List jobs. |
+| GET | `/api/queue/{id}` | Get an entry's payload, status, result, or error. |
+| PATCH | `/api/queue/{id}` | Change a waiting entry's `payload` and/or `generate_immediately`. |
+| DELETE | `/api/queue/{id}` | Remove a waiting entry. |
+| DELETE | `/api/queue` | Clear waiting entries. |
+
+Listing uses the same status/pagination fields as the generator, with **`model` instead of `backend`** for filtering. Clear can also use `?model=higgs`.
+
+Entries include `id`, `sequence`, `model`, `payload`, `generate_immediately`, `status`, `stage`, timestamps, `attempts`, `result`, `error`, and `prepared`. `prepared: true` means the generator has checked and saved the generation settings. Lists also include totals, counts, and pagination.
+
+PATCH restrictions:
+
+- The entry must still be waiting.
+- Its payload can change only before the generator prepares it and only if it has no retry key.
+- Priority cannot change on a keyed entry. For changed keyed work, remove it and submit a new request with a new key.
+- Send at least one field; empty or `null` updates return 422.
+
+The same key, model, payload, and priority recover the original entry, including a removed entry. Changed inputs return 409. Queue-service keys are separate from generator keys. Failed jobs are retried through the generator's retry endpoint.
+
+## Model settings
+
+Select the model when starting the generator, for example `make serve MODEL=fish`. Do not send a `model` field to `/api/generate`; that field belongs to the standalone queue request.
+
+Capabilities describe the active model's `modes`, `languages`, `controls`, and `limits`. New settings specific to a model use its named JSON object. [VOICE_QUALITY.md](VOICE_QUALITY.md) explains the recommended starting choices and their limitations.
+
+### Higgs TTS 3 — `higgs`
+
+Requires a reference voice and exact transcript. Start without acting tags for a baseline, then compare one change at a time.
+
+| Setting | Default | Accepted values |
+| --- | --- | --- |
+| `higgs.emotion` | None | Catalog values such as `amusement`, `anger`, or `contemplation`; full list in `controls.higgs`. |
+| `higgs.prosody` | None | `speed_very_slow`, `speed_slow`, `speed_fast`, `speed_very_fast`, `pitch_low`, `pitch_high`, `expressive_high`, `expressive_low`. |
+| `higgs.style` | None | `singing`, `shouting`, `whispering`. |
+| `higgs.top_p` | `0.8` | 0.1–1. |
+| `higgs.top_k` | `30` | Integer 1–100. |
+| `temperature` | `0.8` | 0.05–2. |
+
+The service renders these controls before the unchanged dialogue. Manual local tags such as `<|prosody:pause|>` and `<|prosody:long_pause|>` can remain in `text`; they do not promise exact timings. Do not combine a structured control with a manual leading directive of the same category.
+
+Top-level prose `emotion`/`accent` fields and description-based voice design are unsupported. Native generation loads and releases the model per job, so `model_loaded: false` while idle is expected.
+
+### VoxCPM2 — `voxcpm2`
+
+Supports voice design and recorded voices. Example for directing a reference voice:
 
 ```json
-{"text":"You came. Sit, please.","preset_voice":"ryan","language":"English","emotion":"","steering_emotion":"contempt","steering_strength":8,"temperature":1.1,"max_tokens":200}
+{
+  "text": "Welcome home. Sit, please.",
+  "voice_id": "VOICE_ID_HERE",
+  "clone_mode": "reference",
+  "emotion": "Quietly amused, with deliberate emphasis.",
+  "accent": "Romanian-accented English."
+}
 ```
 
-A preset requires no description. When temperature is omitted with steering, effective temperature is 1.1. Choose `clone_mode: "continuation"` plus a VoxCPM2 voice/reference ID and exact `ref_text` to continue the recorded performance; an empty override with no usable saved transcript returns 422 before inference. New metadata includes `applied_instructions`, extension revision/settings and requested/effective preset, accent and continuation controls. Old 2.0 records remain readable.
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `clone_mode` | `"auto"` | Chooses the mode below. |
+| `emotion`, `accent` | Empty | Written directions for design or standard reference mode. |
+| `steps` | `10` | Integer 1–30. |
+| `guidance` | `2` | 1–5. |
 
-VoxCPM2 continuation and combined cloning follow the recorded delivery and accept no new emotion/accent directions in this service. Use its standard reference mode to apply prompt directions.
-
-## Combined cloning and performance references
-
-VoxCPM2 accepts `clone_mode: "combined"` with a saved `voice_id` or uploaded `reference_id` and an exact saved/override `ref_text`. This sends the same recording as both `ref_audio` (identity) and `prompt_audio` plus `prompt_text` (recorded performance). Continuation and combined modes reject new emotion/accent directions. A reference description is catalog context, not an applied instruction. The default `clone_mode: "auto"` resolves to combined only for a Vox reference with an exact transcript and blank emotion/accent directions; otherwise it resolves to reference. Explicit modes retain their behavior; existing queued effective modes stay frozen. Check `modes.reference.clone_modes`; Qwen and other unsupported backends reject combined mode. The full text is synthesized in one call, and its transcript counts toward the input budget.
-
-For expressive variants, upload clean recordings of the **same desired speaker**, save each with a distinct performance name, mood tags and its exact spoken transcript, then select the variant for combined cloning. Preview the reference first: tags are organizational notes, not proof of accent quality. The selected recording supplies both identity and performance; a separate identity anchor is not exposed. Private recordings, transcripts and presets remain outside Git. Accent retention and delivery require listening; no accent guarantee is made.
-
-Longer sentence pauses are not automatically aligned or inferred. Preserve raw full-line takes; do not synthesize tiny sentence fragments or treat energy minima as verified sentence boundaries. Reviewed boundary edits can add silence to reach a desired total gap while preserving voiced samples and longer existing gaps. No speed, temperature or accent-strength control is added for VoxCPM2.
-
-## Reviewed longer-pause versions
-
-`POST /api/artifacts/{id}/pauses` creates a separate artifact from an existing local output. It performs CPU-only silence insertion; it does not run the speech model. The source WAV and all its original sample values/order are preserved. The same route works across backends for supported stored audio. No edits are automatic: listen and select **the entire quiet gap** between phrases yourself. Quietness validation does not identify sentence boundaries or prove a span has no quiet speech.
-
-```json
-{"reviewed":true,"spans":[{"start_seconds":1.20,"end_seconds":1.55}],"minimum_gap_ms":750,"idempotency_key":"reviewed-gap-take-1"}
-```
-
-The example offsets are illustrative; measure them in your recording. `reviewed: true` is required. Supply 1–30 finite, increasing, ordered, nonoverlapping spans strictly inside the source. Each selected span must be at least 20ms, and every PCM16 sample in it must have absolute value <=32 (about -60dBFS). This fixed conservative check rejects audible selections; no user-adjustable quietness bypass exists. Times round to the nearest source sample. The target is the **minimum total selected gap**, default 750ms, integer 100–5000ms. The editor inserts only the missing zero samples at the span midpoint; it preserves longer spans, including no-op copies. It never removes, fades, stretches, trims or resynthesizes original samples. There is no automatic sentence alignment, nor any guarantee about unselected sentence gaps.
-
-Inputs must be mono/stereo PCM16 WAV, 8–96kHz, <=600 seconds and <=128MiB. Outputs are <=900 seconds/128MiB; decoded audio is capped at 48 million scalar samples. Metadata is <=1MiB before editing; derivative chains are limited to 20 prior transformations. Optional `output_dir` follows generation's absolute local path/mount validation. The editor serializes its own operations (409 if occupied) independently of the GPU worker. Unique WAV/JSON/index writes use existing storage paths; status 201 returns an ordinary artifact accessible through History, playback and downloads. Missing source:404; invalid/nonquiet/out-of-bounds/unsupported/unmounted storage:422. Completed WAV+sidecar may remain discoverable if the final index/retry write fails; inspect History before resubmitting.
-
-Generation `requested`/`effective` settings remain unchanged. `transformation` separately records the reviewed request, source artifact ID/path/SHA256, original source lineage, source frames, exact start/end/insertion offsets, original and inserted gap samples, output frames and CPU processing time. Previous transformations remain in `transformation_history`. No models or GPU locks are used. Pause retry keys live in a separate namespace and do not change legacy generation fingerprints. Identical keyed retries return the existing derivative; changed request or source bytes with the same key returns409. Keep the same key after a client timeout; HTTP timeout does not prove the CPU edit stopped.
-
-In the webpage, open a completed/history take and choose **Adjust pauses**. Listen or seek, copy playback time into the start/end fields (or enter measured times), listen to the selection, and add/remove reviewed gaps. Set the desired total and confirm every selection was reviewed, then create a separate longer-pause version. Raw audio remains available in History. This workflow does not automatically enforce 750ms sentence pauses.
-## Additional startup backends
-
-See BACKENDS.md for exact capabilities, storage/locks, licenses and validation. All backends default to `http://localhost:5743/`. Start with `make serve MODEL=chatterbox|indextts|moss|fish|higgs`; an optional `PORT=<number>` overrides the port. Selection is not a per-generation request field. Existing Vox/Qwen profiles are also available. Health/capabilities identify the active backend. Unsupported controls fail with 422 before reserving the GPU.
-
-| Additional field | Accepted backend and behavior |
+| Clone mode | Behavior |
 | --- | --- |
-| chatterbox.exaggeration | Chatterbox Original only, 0–1, default .3 (provisional character default) |
-| chatterbox.cfg_weight | Chatterbox Original only, 0–1, default .5 |
-| indextts.emotion_reference_id | IndexTTS only: uploaded reference UUID for emotion; separate from speaker reference |
-| indextts.emotion_vector | IndexTTS only: 8 finite 0–1 numbers in happy/angry/sad/afraid/disgusted/melancholic/surprised/calm order, sum <=1; mutually exclusive with emotion_reference_id |
-| indextts.emotion_alpha | IndexTTS only, 0–1, default 1 when an emotion source is selected; requires a source |
-| indextts.duration_factor | IndexTTS only, .7–1.5, default 1; higher is slower |
-| indextts.interval_silence | IndexTTS only, 0–2000 ms, default 400; between upstream segments, without automatic sentence splitting |
+| `auto` | Uses combined mode for a transcribed recording with no new emotion/accent directions; otherwise standard reference mode. |
+| `reference` | Uses the recording for speaker identity, with optional new delivery directions. |
+| `combined` | Uses the recording for both identity and recorded performance. Requires its exact transcript. |
+| `continuation` | Continues the recorded performance. Requires its exact transcript. |
 
-Chatterbox/Index require a voice/reference; neither accepts prompt-based emotion/accent, presets, reference transcripts or Vox clone modes. Chatterbox fixes max_tokens at 1000 (other values rejected). Index max_tokens is 50–1500 per segment, and requires an explicit supported language. MOSS requires a description and English/Chinese language, supports voice directions as design instructions, rejects references, and limits text to 500 characters. MOSS max_tokens maps to audio frames, with upstream text-derived minimum behavior documented in capabilities.
+Combined and continuation modes reject new `emotion` or `accent` directions. Supply the transcript through the saved recording or `ref_text` in supported modes. Standard reference mode does not require a transcript. Vox accepts `language: "auto"`; it does not expose temperature or speed controls.
 
-Fish/Higgs require a reference plus exact saved/override transcript. Their emotion/prosody/pause controls are explicit inline text tags, not the shared emotion/accent fields. The UI shows the appropriate syntax; the service preserves submitted text. The wrapper exposes one reference and offline WAV jobs. Index phoneme annotations also remain explicit in text; optional normalization is disabled.
+For design, omit the recording ID and supply `description`, with optional `emotion` and `accent`.
 
-Native MOSS/Higgs processes release their models after every job, so model_loaded=false while idle is correct. Their load_seconds=null and generation_seconds include startup/load/synthesis; timing_scope explains this. peak_process_rss_gb measures native child peak RSS. Torch metadata distinguishes current MPS active/driver allocations from process-lifetime peak RSS; none is a claimed peak system-RAM measurement. Older validation records retain current_device_memory_gb, meaning end-of-job MPS driver allocation. Requested and effective settings remain distinct. Idempotency records include backend identity; a key from another backend returns 409 rather than replaying the wrong voice job.
+### Qwen3-TTS — `qwen3`
 
-A second process cannot own the same DATA_DIR: its lifetime lock fails before restart recovery. A port collision also fails before recovery. Keep old active installations and isolated validation jobs on distinct data roots. WEIGHTS_DIR can point at shared immutable model files without sharing JobManagers or copying weights.
+| Voice source | Behavior |
+| --- | --- |
+| `description` without a recording | VoiceDesign: creates a new voice using description, emotion, and accent directions. |
+| `preset_voice` | CustomVoice: directs a built-in speaker. IDs are listed in capabilities. |
+| `voice_id` or `reference_id` | Base: clones the recording. An exact transcript enables performance conditioning; without it, uses speaker-embedding conditioning. |
 
-### Model-scoped options and compatibility
+Base rejects new emotion/accent directions. VoiceDesign does not lock one identity across different lines.
 
-New backend-specific options use typed objects named by the exact API model ID: `"chatterbox":{"exaggeration":0.7,"cfg_weight":0.5}` or `"indextts":{"duration_factor":1.2,"interval_silence":750}`. Temperature, text, seed, token cap and published Vox/Qwen fields remain common. Capabilities list these settings under `controls.chatterbox` / `controls.indextts`. Unknown members and inactive-model objects return422. Deprecated flat aliases remain accepted for local pre-integration requests; supplying a namespace and any of its flat aliases together returns422. Use the same request form/key for retries. Prior published generation hashes remain recoverable. Newly written requested/effective metadata stores these options under the same model keys; legacy sidecars stay unchanged. Model-only telemetry (MPS allocation, native log path, watermark/normalization details) is similarly scoped under its model ID; ordinary output properties/timings remain common.
+`temperature` defaults to **0.9**, range 0–2. Languages: `auto`, English, Chinese, Japanese, Korean, German, French, Russian, Portuguese, Spanish, and Italian. No speed control is exposed.
 
-Restricted-model notices appear at every server startup, visibly in the webpage, and under `models.<model-id>` in capabilities, with authoritative license links and bundled source texts. They do not add an acknowledgment gate. Fish requires a separate license for commercial model use. Higgs includes a conditional grant for monetized creator content with prominent acknowledgment, while hosting/product integration and other uses outside that grant require a separate license. Index uses custom terms with a separate-license threshold for very large organizations, not a blanket noncommercial restriction. Read the full model-specific terms; reference uploads are not reclassified as generated outputs.
+Built-in speakers can also use the installed experimental emotion-steering pack: `steering_emotion` from capabilities and `steering_strength` from 0–12, default 8. With steering selected and temperature omitted, temperature defaults to 1.1. Steering does not apply to cloned recordings. See [EXTENSIONS.md](EXTENSIONS.md).
 
-`models.<model-id>.commercial_use_notice` is the concise, model-specific summary printed in the startup warning banner. `notice` retains the fuller summary, alongside `license`, `license_url` and `license_file`. Permissive models omit these warning fields. Managed `make start` prints the same banner to the launching terminal and the server log; repeated starts that reuse an existing server do not represent a new startup.
+### Chatterbox Original — `chatterbox`
 
-## Per-model performance controls
+Requires a recorded voice, with text up to 1,000 characters. Supports `language: "auto"` or `"English"`; prose emotion/accent and `ref_text` controls are unsupported.
 
-Sampling and expression defaults remain unchanged; the punctuation-pacing defaults below are enabled for new compatible requests. A more dramatic take can lose the recorded accent; compare raw whole-line takes and rate accent separately. Vox combined cloning retains recorded context without added instructions; the reviewed pause editor remains the way to enforce a reviewed minimum total gap.
+| Setting | Default | Range |
+| --- | --- | --- |
+| `chatterbox.exaggeration` | `0.3` | 0–1. |
+| `chatterbox.cfg_weight` | `0.5` | 0–1. |
+| `temperature` | `0.8` | 0.05–2. |
+| `max_tokens` | `1000` | Fixed; other values are rejected. |
 
-New typed options:
+Higher exaggeration is an experiment, not a guarantee of better acting or accent. Available punctuation controls are described [below](#sentence-and-comma-pauses).
+
+### IndexTTS 2.5 — `indextts`
+
+Requires a recorded speaker and an explicit `language`: **English, Chinese, Japanese, Spanish, or Arabic**. Optional emotion sources change delivery while retaining the speaker reference.
+
+| Setting | Default | Meaning and limits |
+| --- | --- | --- |
+| `indextts.emotion_reference_id` | None | A separately uploaded recording supplying emotion. |
+| `indextts.emotion_vector` | None | Eight values in happy, angry, sad, afraid, disgusted, melancholic, surprised, calm order. Each 0–1; sum at most 1. |
+| `indextts.emotion_alpha` | `1` with a source | Blend strength, 0–1; requires an emotion source. |
+| `indextts.duration_factor` | `1` | 0.7–1.5; higher is slower. |
+| `indextts.interval_silence` | `400` | 0–2,000 ms between runtime segments, not necessarily sentences. |
+| `temperature` | `0.8` | 0.05–2. |
+| `max_tokens` | `1000` | 50–1,500 per segment. |
+
+Choose an emotion recording or a vector, not both. Prose emotion/accent and `ref_text` controls are unsupported. Explicit pronunciation annotations in `text` pass through unchanged.
+
+### MOSS VoiceGenerator — `moss`
+
+Design-only: requires `description` and explicit `language: "English"` or `"Chinese"`. It accepts `emotion` and `accent` as design instructions, but no reference recordings.
 
 ```json
-{"text":"Welcome home.","reference_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ref_text":"Exact recorded words.","fish":{"delivery_tags":["low voice"],"top_p":0.7,"top_k":30}}
+{
+  "text": "Welcome home.",
+  "description": "A rich, smooth baritone with measured delivery.",
+  "emotion": "Quietly amused.",
+  "language": "English"
+}
 ```
 
-`fish.delivery_tags` accepts up to four unique tags, each 1–60 visible characters with no bracket/control delimiters. Tags render as explicit `[tag] ` prefixes; `requested.text` is preserved exactly. Manual local tags remain possible. Structured tags conflict with manual leading bracket tags or duplicate manual tags and return422. Fish's effective `top_p` defaults .7 and `top_k`30. The existing reference conversion to the model's44.1kHz and strict quantized loader remain in place. No repetition-penalty or speed control is offered because they do not provide the requested model behavior.
+Text is limited to **500 characters**. `temperature` defaults to **1.5**, range 0.05–2. `max_tokens` limits audio frames; the runtime can raise it to its text-derived minimum. A seed does not preserve one speaker across new lines. Save a result and clone it with a reference-capable model if needed.
 
-`higgs` accepts optional `emotion`, `prosody`, `style`, `top_p` and `top_k`. Exact enums are discoverable in `controls.higgs` and the pinned official PROMPTING catalog linked in capabilities:21 emotions, eight sentence-level prosodies and three styles. Example `{"higgs":{"emotion":"amusement"}}` renders `<|emotion:amusement|> ` before the unchanged text. Structured/manual leading directives of the same category conflict (even if identical); manual local controls remain possible. Pause/long-pause tokens remain manually positioned, with no exact-millisecond promise. The service never inserts SFX, onomatopoeia, accent tags or new spoken words. Incomplete native generation remains an error. Defaults are top_p .8/top_k30; repetition penalty is not exposed because the native implementation does not consume it.
+### Fish Audio S2 Pro — `fish`
 
-For both samplers, accepted top_p .1–1 and top_k1–100 are conservative application bounds, not universally optimal settings. Unknown/inactive namespaces, unknown members, nonfinite values and invalid tag combinations return422. The webpage previews the exact backend text and Reuse restores model-scoped options. Fish's token budget includes rendered controls and the reference transcript. Native Higgs tokenizes the rendered input internally; its CLI does not expose an input-token count, so metadata leaves that count unavailable rather than estimating it.
-
-Artifacts retain original `requested.text` and requested namespace settings. Actual rendered text/resolved controls and consumed samplers live under `effective.fish` / `effective.higgs` (also in model-scoped result metadata). New options participate in retry identity; changed tags with the same key conflict. Absent nullable namespaces retain prior retry fingerprints. Automatically saved generated-voice transcripts omit control tags; review the spoken words before using them for cloning. Reference transcripts never receive structured delivery prefixes.
-
-Chatterbox Original exposes candidate UI presets under its existing namespace: Recommended(.3 exaggeration/.5 CFG, provisional), Upstream neutral(.5/.5), More deliberate(.5/.3), More expressive—experimental(.7/.3), all at temperature .8. Only the conservative recommended setting is the new default; alternatives remain explicit experiments. Reference consumption is first6s for speech-token conditioning, first10s for decoder conditioning and the full waveform for voice embedding; this differs from Turbo and does not justify destructive cropping.
-
-Index keeps the speaker reference unchanged while selecting Follow recording(default), a separate emotion recording, or an eight-value named mixture. Audio and vector sources remain exclusive; alpha without a source is rejected. Blend .3–.5 is an experimental starting point after explicitly choosing a source. The optional1.1 duration candidate changes native decoder target length; segment silence remains a gap between runtime segments, not every sentence. No automatic pronunciation respelling is performed.
-
-Qwen Base uses an exact transcript for ICL and rejects new acting/accent instructions. VoiceDesign creates a new voice; CustomVoice directs its fixed speaker. Sampling provenance resolves the installed model config and records the effective ICL repetition-penalty floor1.5. MOSS remains design-only with audio-temperature baseline1.5; a seed is not a cross-line identity lock, and a saved output can instead be cloned by a reference-capable backend.
-
-
-### Recommended defaults and retry compatibility
-
-See [VOICE_QUALITY.md](VOICE_QUALITY.md) for sourced per-model defaults and limitations. `clone_mode` now defaults to `auto`; requested metadata retains auto while effective settings freeze a concrete mode before durable admission. New auto and explicit reference requests have distinct fingerprints. A versioned compatibility path lets omitted-mode retries recover pre-auto SQLite/legacy JSON jobs under their old reference-mode hashes, including absent nullable Fish/Higgs fields. Nonempty new namespaces and explicit combined are not mapped through that mode fallback. Existing pending payloads and their requested JSON stay unchanged. Explicit generation overrides remain effective; changed defaults do not modify admitted jobs. The webpage preserves existing saved forms until Apply recommended defaults is selected.
-
-## Punctuation pacing
-
-Fish, IndexTTS, Chatterbox and Qwen reference/fixed-speaker requests now default to longer punctuation pauses. Optional fields live under the active model ID (`fish`, `indextts`, `chatterbox`, `qwen3`, or `moss`), never as flat request fields:
+Requires a reference and exact transcript. Use supported delivery tags rather than top-level prose emotion/accent fields.
 
 ```json
-{"text":"My guests. You came. Sit, please.","voice_id":"YOUR_VOICE_ID","qwen3":{"punctuation_pauses":true,"sentence_pause_ms":500,"comma_pause_ms":200}}
+{
+  "text": "Welcome home.",
+  "voice_id": "VOICE_ID_HERE",
+  "fish": {
+    "delivery_tags": ["low voice", "quietly amused"]
+  }
+}
 ```
 
-`sentence_pause_ms` defaults to 500 (integer 0–3000); `comma_pause_ms` defaults to 200 (integer 0–1500). For the four reference-capable models these are **additional silent milliseconds** between separately generated phrases, on top of model-produced leading/trailing pauses, rather than guaranteed total gaps. Sentence boundaries include `.?!` and their CJK counterparts; commas include `,，、`. The planner conservatively protects common abbreviations, initials, decimals, numeric thousands separators, URLs, email addresses and explicit phoneme/tag annotations. Ambiguous punctuation may stay unsplit. Final punctuation adds no trailing pause. Zero skips that boundary class; `punctuation_pauses:false` restores whole-line generation.
+| Setting | Default | Range |
+| --- | --- | --- |
+| `fish.delivery_tags` | None | Up to four unique tags, each 1–60 visible characters, without brackets or control delimiters. |
+| `fish.top_p` | `0.7` | 0.1–1. |
+| `fish.top_k` | `30` | Integer 1–100. |
+| `temperature` | `0.7` | 0.05–2. |
 
-The same reference, exact transcript when supported, voice controls and RNG stream are reused throughout a take. Structured Fish delivery tags are applied to each phrase. Manual Fish tags default to whole-line generation so local directions are preserved; explicit pacing with manual tags is rejected. Qwen VoiceDesign defaults to whole-line generation because a seed does not preserve a designed identity between calls; save a voice and clone it to use phrase pacing. At most 32 phrases and 600 seconds of output are allowed. The full original text still undergoes the existing input budget checks; output token limits apply per synthesized phrase. More calls can take longer and change prosodic flow or voice consistency: audition the result and disable pacing when continuous delivery works better.
+Structured tags become `[tag]` prefixes; the original `text` is retained. Manual tags can also appear in `text`, but conflicting or duplicate manual/structured tags return 422. No repetition-penalty or speed control is exposed.
 
-MOSS accepts the same optional fields under `moss`, but uses them as **approximate total pause targets in a native description instruction**, retaining one complete generation pass to avoid designing a different speaker per phrase. It does not insert measured silence or guarantee exact timings. Set `moss.punctuation_pauses:false` to omit that guidance. Higgs and Vox are unchanged.
+## Sentence and comma pauses
 
-Controls are under **Advanced settings** in the UI, and defaults/limits appear under `controls.<model-id>`. Namespaces for inactive models, unknown fields and out-of-range values are rejected. Requested and effective values are frozen at queue admission. Existing queued takes do not gain pacing when their saved settings omitted it, and pre-pacing idempotency keys remain recoverable. `effective.<model-id>.pacing` records actual phrase input text, sample positions and inserted silence, or MOSS's explicitly approximate native guidance. No generated speech samples are trimmed or guessed audio boundaries edited. Existing recordings are never rewritten.
+Fish, IndexTTS, Chatterbox, and Qwen recorded/preset voices default to additional pauses at punctuation. Put controls under the running model's ID:
 
-The studio is at `/`; Collection has its own `/collection` page for History and Voice library. Collection actions open the selected voice/take/settings in the studio. The header's Queue button opens a modal on either page, preserving list/remove/clear/retry behavior and the durable API.
+```json
+{
+  "text": "My guests. You came. Sit, please.",
+  "voice_id": "VOICE_ID_HERE",
+  "qwen3": {
+    "punctuation_pauses": true,
+    "sentence_pause_ms": 500,
+    "comma_pause_ms": 200
+  }
+}
+```
 
+| Field | Default | Range |
+| --- | --- | --- |
+| `punctuation_pauses` | `true` in supported modes | Set `false` for whole-line generation. |
+| `sentence_pause_ms` | `500` | Integer 0–3,000. |
+| `comma_pause_ms` | `200` | Integer 0–1,500. |
+
+For these four models, values are **extra silence** between separately generated phrases, in addition to pauses already produced by the model. They are not exact total gap lengths. Zero disables that punctuation class. Final punctuation adds no trailing pause.
+
+The same speaker settings are used throughout. More phrase calls can take longer or change delivery, so compare against `punctuation_pauses: false`. Limits are 32 phrases and 600 seconds of output; output-token limits apply per phrase.
+
+Special cases:
+
+- **Qwen VoiceDesign:** whole-line generation; save and clone a voice to use phrase pacing.
+- **Fish manual tags:** whole-line by default; explicitly combining manual tags and phrase pacing is rejected. Structured `delivery_tags` work with phrase pacing.
+- **MOSS:** accepts the fields under `moss` as approximate total-pause instructions in one generation pass. It does not insert measured silence.
+- **Higgs and Vox:** these fields are unsupported. Use native Higgs pause tags or [edit a completed take](#edit-pauses-in-finished-audio).
 
 ## Voice guidance preview and application
 
-`GET /health` exposes `prompt_expansion.enabled`; `GET /api/capabilities` exposes the supported mode matrix and policy version under `limits.prompt_expansion`. `make serve` / `make start` enable the LLM by default. Terminal serving asks **Enable local prompt LLM? [Y/n]** (Enter/Y enables, N disables); noninteractive startup defaults on. `NO_LLM=1` explicitly disables it and skips the question. Direct Python CLIs accept `--no-llm`; the old WITH_LLM/--with-llm controls are retired. A health stage `expanding` reports `busy:true`. Requests remain local; startup prints the selected LLM mode. First `make setup` downloads verified missing assets, while repeated setup reuses the existing checkpoint. The UI retains the applied expanded guidance in the form and displays saved expansion provenance with each selected take, including reopened History entries.
+The optional local **Qwen3.5-2B 4-bit LLM** expands written voice and performance directions using model-specific rules. `make serve` enables it by default; `NO_LLM=1` disables it. Check `health.prompt_expansion.enabled` and `capabilities.limits.prompt_expansion` for availability.
 
-`POST /api/prompts/expand` accepts a strict object with `generation` (the existing Generation request) and optional `guidance` (up to1500 characters). Example for Vox design:
+It does not receive dialogue, exact reference transcripts, recordings, file paths, or voice IDs. Single-take requests are not expanded automatically.
+
+### Preview
+
+**`POST /api/prompts/expand`**
 
 ```json
-{"generation":{"text":"Welcome home. Sit, please.","description":"A warm, cultured baritone.","accent":"Romanian-accented English.","emotion":"Quietly amused."},"guidance":"Develop restrained phrase emphasis."}
+{
+  "generation": {
+    "voice_id": "VOICE_ID_HERE",
+    "text": "Welcome home. Sit, please."
+  },
+  "guidance": "Quietly amused, with restrained emphasis."
+}
 ```
 
-HTTP200 returns `{id,created_at,context,original,updates,request_guidance,llm}`. `id` is32 lowercase hexadecimal characters. `updates` contains only `description` for design, `emotion` for supported reference/preset delivery, `fish.delivery_tags` (maximum two suggested tags), or `higgs` with at most one non-null existing emotion/prosody/style enum. Empty addition/tags/null controls means no suggestion. Original prose is preserved verbatim and an addition is appended with a newline. Added prose is bounded to600 characters/60 whitespace-separated words; final description/emotion bounds remain1500/1000 characters. Full JSON parsing rejects unknown/duplicate output keys, markup, control characters, invalid types and catalog/category mismatches. No substring repair, silent truncation or automatic fallback is performed.
+`generation` is a normal request for the running model. Optional `guidance` adds up to 1,500 characters of written direction.
 
-The server resolves the original voice/mode/transcript before previewing. Spoken `text`, exact `ref_text`, audio, paths and voice/reference IDs are excluded from the LLM prompt. Only written guidance/accent/delivery context is included. The LLM cannot choose the backend, speaker, language, clone mode, sampler or pacing. Original words and transcripts are retained by application code. This structural boundary does not guarantee semantic fidelity in the suggested prose: inspect the preview.
+**Returns:** HTTP **200** with `id`, `original`, `updates`, `context`, `request_guidance`, and `llm`. This creates no speech job.
 
-A preview creates no speech job. Apply it by merging `updates` into the original generation request and setting common `prompt_expansion_id` to the returned `id`, then submit through `/api/generate`, `/api/queue` or `/api/candidates`. Keep other fields, including dialogue, unchanged. For example, if updates contains a description:
+| Model or mode | Possible suggestion |
+| --- | --- |
+| Vox design / flexible reference | Added description / acting direction. Auto combined mode is unsupported; choose `clone_mode: "reference"` for new directions. |
+| Qwen VoiceDesign / built-in speaker | Added description / acting direction. Base cloning is unsupported. |
+| MOSS | Added voice-design direction. |
+| Fish | Up to two short delivery tags. |
+| Higgs | At most one existing emotion, prosody, or style control. |
+| Chatterbox / IndexTTS | Prompt expansion is unsupported. Use their native controls. |
+
+A suggestion may be empty. Review it: a valid instruction can still sound wrong or weaken an accent.
+
+### Apply a reviewed suggestion
+
+Merge `updates` into the original generation request, add `prompt_expansion_id` from the preview, and submit to `/api/generate` or `/api/candidates`.
+
+Python example using the `requests` package, with Higgs running:
 
 ```python
 import requests
-base = "http://127.0.0.1:5743"
-generation = {"text": "Welcome home. Sit, please.", "description": "A warm, cultured baritone."}
-preview = requests.post(base + "/api/prompts/expand", json={"generation": generation})
-preview.raise_for_status()
-record = preview.json()  # Inspect record['updates'] before applying it.
-applied = {**generation, **record["updates"], "prompt_expansion_id": record["id"]}
-response = requests.post(base + "/api/candidates", json={**applied, "candidate_count": 2})
+
+base = "http://localhost:5743"
+generation = {
+    "voice_id": "VOICE_ID_HERE",
+    "text": "Welcome home. Sit, please.",
+}
+response = requests.post(base + "/api/prompts/expand", json={
+    "generation": generation,
+    "guidance": "Quietly amused, with restrained emphasis.",
+})
 response.raise_for_status()
-batch = response.json()  # HTTP202; poll GET /api/candidates/{batch['id']}.
+preview = response.json()
+print(preview["updates"])
+if input("Apply this guidance? [y/N] ").strip().lower() != "y":
+    raise SystemExit("Original guidance kept; no speech submitted.")
+
+applied = {
+    **generation,
+    **preview["updates"],
+    "prompt_expansion_id": preview["id"],
+    "idempotency_key": "expanded-line-1",
+}
+response = requests.post(base + "/api/generate", json=applied)
+response.raise_for_status()
+print(response.json())  # Poll /api/jobs/{id} for its result.
 ```
 
-The receipt binds backend, concrete clone mode, voice/reference/preset, accent, language and unexpanded delivery context. Applied fields must match its saved updates. Changed context/guidance returns422; remove the ID or preview again. It can be reused for another line with the same voice/guidance. New previews reject an existing expansion ID to prevent repeated expansion. To restore, use the receipt's `original` fields and omit `prompt_expansion_id`. Omitted/null IDs retain old job/candidate idempotency fingerprints.
+Keep the same voice and guidance context when applying the preview. Changing them returns 422; preview again for a different direction. The preview can be reused for another line with the same voice and guidance. To restore the original, use `original` fields and omit `prompt_expansion_id`.
 
-Private receipts live in `DATA_DIR/prompt-expansions/<id>.json`. Queue admission freezes the receipt in each job payload; jobs/results expose `prompt_expansion`, including original/updates, backend/mode context, model/revision, policy version/profile/source, runtime, time, temperature, thinking flag and overlapping MLX/process memory counters. Candidates share this manually applied preview. Distinct design batches additionally plan per-option descriptions as documented above; use `candidate_variation:"seed_only"` to keep one shared description. Already frozen previews and variant plans are reused on restart/retry without the LLM. The preview records are retained, not pruned by queue clearing.
+Distinct voice-design batches can separately use automatic per-option planning through `candidate_use_llm`. Already saved expansions/plans are retained across restarts. See [prompt expansion details](docs/voice-prompt-expansion.md) for profile rules and evaluation.
 
-HTTP409 means the local operation/shared accelerator is busy; no preview was queued. HTTP422 covers disabled startup mode, unsupported mode, missing guidance, existing/manual tag conflicts, mismatched receipt, invalid output, unavailable runtime/assets or the180-second limit. The preview's bounded native child inherits queue/data/GPU leases; disconnects retain ownership until it exits. A malformed/failed preview leaves original fields unchanged and creates no speech job.
+## Edit pauses in finished audio
 
-Vox auto is resolved before expansion: auto + transcribed recording + no directions follows combined recorded performance and is ineligible. Choose explicit flexible reference to direct delivery. Qwen Base, Chatterbox Original and current Index prose expansion are ineligible. Fish/Higgs suggestions never rewrite dialogue or exact reference transcripts; the ordinary renderer constructs supported prefixes. See [research and evaluation limits](docs/voice-prompt-expansion.md).
+**`POST /api/artifacts/{id}/pauses`** creates a separate recording by extending quiet gaps you have listened to and selected. It does not regenerate speech or change the original.
 
+```json
+{
+  "reviewed": true,
+  "spans": [
+    {"start_seconds": 1.20, "end_seconds": 1.55}
+  ],
+  "minimum_gap_ms": 750,
+  "idempotency_key": "reviewed-gap-take-1"
+}
+```
 
-### Per-model expansion specifications
+Offsets above are examples: measure them in your own recording. Select the **entire quiet gap**, not a guessed sentence boundary.
 
-The active backend publishes its versioned profile under **`GET /api/capabilities` → `models.<model-id>.prompt_expansion`**, using the exact model ID (`voxcpm2`, `qwen3`, `moss`, `fish`, `higgs`, `chatterbox`, `indextts`). This object includes `id`, `backend`, integer `version`, `name`, `summary`, authoritative `sources`, relative `source`, `sha256` and a `modes` dictionary. Mode keys are `design`, `reference` or `preset`. Available modes expose `label`, trusted `instructions`, `kind`, native `target`, bounded `limits`, and optional `clone_modes`. Unavailable modes expose `available:false` and an actionable `reason`.
+| Field | Meaning |
+| --- | --- |
+| `reviewed` | Must be `true`: you have listened to each selection. |
+| `spans` | 1–30 ordered, nonoverlapping gaps strictly inside the source. Each must be at least 20 ms and pass the quietness check. |
+| `minimum_gap_ms` | Desired minimum total selected gap, default 750; integer 100–5,000. Longer gaps stay longer. |
+| `output_dir` | Optional absolute output folder on the Mac. |
+| `idempotency_key` | Optional 1–128 character retry key. |
 
-Specifications are source configuration in `backends/<model-id>/prompt_expansion.json`; they are selected by the server from the active backend and resolved original request. There is no new client field for arbitrary system prompts or backend selection. The UI's **Model-specific expansion rules** disclosure uses this same data, including unsupported-mode reasons. Native request namespaces and sampler defaults are unchanged.
+**Returns:** HTTP **201** with the new output. It appears in History and uses the normal audio/metadata endpoints. The original samples remain in their original order; only missing silence is inserted. This does not automatically find sentences or alter unselected pauses.
 
-New preview receipts preserve the exact selected specification under **`llm.<model-id>`**: profile identity/version, mode/label, instructions, output kind/target/limits, source and checksum. The common policy is `voice-guidance-5`. Existing `llm.profile`, `llm.policy_version` and `llm.policy_source` remain for compatibility. Jobs, candidates and artifacts freeze this model-scoped profile with the receipt; retries and already-applied older receipts do not adopt newer rules or invoke the LLM again. Older receipts without a model-scoped profile remain usable.
+The source must be PCM16 WAV, mono/stereo, 8–96 kHz, at most 600 seconds and 128 MiB. Quiet selections must have every sample within ±32. See [detailed limits and recovery](docs/api-behavior.md#pause-editing) for additional constraints. Identical keyed retries recover the edit; changed input or source bytes with the same key return 409.
 
-Changing a specification cannot enable an unsupported native instruction path, edit spoken words/transcripts, change the native output field, add arbitrary settings or raise the shared hard limits (600 added characters/60 whitespace-separated words, two Fish cues, one Higgs control). Invalid specifications fail startup before queue recovery. Conservative application limits are not claims of an optimal prompt length.
+## History and downloads
+
+An **output** (also called an artifact in endpoint names) is a generated or edited recording. Its ID is available as `job.result.id`.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/history?q=&limit=24&offset=0` | Search generated text, voice descriptions, and acting directions; newest first. |
+| GET | `/api/artifacts/{id}` | Get a recording's details. |
+| GET | `/api/metadata/{id}` | Download its generation settings as JSON. |
+| GET | `/api/audio/outputs/{id}` | Play a generated or edited WAV. |
+| GET | `/api/audio/voices/{id}` | Play a saved voice. |
+| GET | `/api/audio/references/{id}` | Play a reference's working copy. |
+
+Add `?download=true` to an audio URL to download it. Absolute `path` and `metadata_path` values refer to files on the Mac; use audio URLs from a client on another device.
+
+Results include duration, sample rate, channels/format where available, waveform preview, and:
+
+- **`requested`:** the original settings you sent.
+- **`effective`:** resolved settings actually used, including model-specific controls and pacing.
+- **Timings and model details:** model revision, runtime, generation time, and available memory measurements.
+- **Warnings:** possible output truncation or other reported limits. A warning is not a word-accuracy check; listen to the take.
+
+History uses `limit` 1–100 (default 24) and nonnegative `offset`, with totals and pagination. For less common metadata fields and their limits, see [response metadata](docs/api-behavior.md#response-metadata).
+
+## Health and errors
+
+### Health and available controls
+
+| Method | Endpoint | Service | Purpose |
+| --- | --- | --- | --- |
+| GET | `/health` | Both | Check service/database status. Generator health also reports model readiness, current work, and errors. |
+| GET | `/api/capabilities` | Generator | Discover the selected model, sources, languages, controls, limits, and license notices. |
+| POST | `/api/model/unload` | Generator | Release a loaded model's memory when no generation is active. |
+
+Unloading during generation returns 409. Pending work remains queued and can load the model again. Native Higgs/MOSS models already exit after each job.
+
+Generator health reports two separate queue checks:
+
+| Field | Values | What to do if unavailable |
+| --- | --- | --- |
+| `queue_service.status` | `ready`, `unavailable`, `mismatch` | Check the separate queue API. The studio can continue using SQLite directly. |
+| `queue_storage.status` | `ready`, `unavailable` | Restore access or free space in project `state/`; new queue operations need the database. |
+
+A `mismatch` means the queue API belongs to another project/database or has the wrong role. Its message explains the issue. These checks do not restart services or cancel work.
+
+### HTTP status codes
+
+| Status | Meaning | Next step |
+| --- | --- | --- |
+| **200** | Read, preview, or update succeeded. | Read the response. |
+| **201** | Voice, reference, or edited recording created. | Save its ID. |
+| **202** | Generation accepted. | Poll the job or batch ID. |
+| **404** | ID or media unavailable. | Check the ID and storage. |
+| **409** | Conflicting retry key, invalid job state, or a busy preview/edit/unload operation. | Read the error; keep the original key for unchanged submission retries. |
+| **413** | Request too large. | Reduce the upload/body size. JSON requests are limited to 128 KiB. |
+| **422** | Invalid or unsupported input/control, missing required transcript, unavailable expansion, or media/storage validation error. | Correct the request using capabilities and the error message. |
+| **503** | SQLite unavailable or required model assets incomplete. | Restore storage or finish setup/download; retry unchanged work with its original key. |
+
+SQLite failures include `Retry-After: 2` and an error body like:
+
+```json
+{
+  "code": "queue_storage_unavailable",
+  "detail": "Queue storage is temporarily unavailable. ..."
+}
+```
+
+A job that fails after acceptance reports `status: "error"` through its job endpoint. A client timeout or disconnect does not cancel accepted work. Check its existing ID before submitting another take.
+
+### Local access
+
+The services listen on localhost and are intended for trusted local clients. Browser writes must be same-origin; cross-origin browser access is not enabled. These APIs have no LAN/internet authentication layer. See [BACKENDS.md](BACKENDS.md) for operation and [API behavior notes](docs/api-behavior.md) for restart guarantees, limits, and compatibility.

@@ -97,7 +97,7 @@ On the generator, `/api/queue` is an alias for the `/api/jobs` routes above. `PO
 
 ### Queue service — localhost:55205
 
-This service can accept jobs while the generator is off. Its queue endpoints use a different request format from the generator; see the [queue API guide](API.md#standalone-queue-crud-api-port-55205).
+This service can accept jobs while the generator is off. Its queue endpoints use a different request format from the generator; see the [queue API guide](API.md#standalone-queue-api-port-55205).
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
