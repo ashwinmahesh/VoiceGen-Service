@@ -144,3 +144,21 @@ class ExpansionTests(unittest.TestCase):
             self.assertEqual(assets.check_assets(),folder)
             (folder/'model.safetensors').write_bytes(b'x')
             with self.assertRaisesRegex(RuntimeError,'weight size'):assets.check_assets()
+    def test_first_download_then_repeated_setup_reuses_verified_llm(self):
+        import prompt_assets as assets
+        from unittest.mock import Mock
+        folder=self.f.root/'new-llm';weight_bytes=b'fixture weights'
+        def snapshot(**kwargs):
+            self.assertEqual(kwargs['repo_id'],assets.REPOSITORY)
+            self.assertEqual(kwargs['revision'],assets.REVISION)
+            for name in kwargs['allow_patterns']:(folder/name).write_bytes(weight_bytes if name=='model.safetensors' else b'{}')
+        download=Mock(side_effect=snapshot)
+        with patch.object(assets,'weights_directory',return_value=folder),patch.object(assets,'WEIGHTS_BYTES',len(weight_bytes)),\
+             patch.object(assets,'WEIGHTS_SHA256',hashlib.sha256(weight_bytes).hexdigest()),\
+             patch.dict('sys.modules',{'huggingface_hub':SimpleNamespace(snapshot_download=download)}),patch.dict(os.environ):
+            assets.download()
+            timestamp=(folder/'model.safetensors').stat().st_mtime_ns
+            assets.download()
+            self.assertEqual(download.call_count,1)
+            self.assertEqual((folder/'model.safetensors').stat().st_mtime_ns,timestamp)
+            self.assertEqual(assets.check_assets(full=True),folder)

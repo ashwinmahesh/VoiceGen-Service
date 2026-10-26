@@ -243,7 +243,7 @@ The studio is at `/`; Collection has its own `/collection` page for History and 
 
 ## Voice guidance preview and application
 
-`GET /health` exposes `prompt_expansion.enabled`; `GET /api/capabilities` exposes the supported mode matrix and policy version under `limits.prompt_expansion`. Enable previews at startup with `make serve WITH_LLM=1`; plain serving disables new previews. A new health stage `expanding` reports `busy:true`. Requests remain local.
+`GET /health` exposes `prompt_expansion.enabled`; `GET /api/capabilities` exposes the supported mode matrix and policy version under `limits.prompt_expansion`. Enable previews at startup with `make serve WITH_LLM=1`; plain serving disables new previews. A new health stage `expanding` reports `busy:true`. Requests remain local. `WITH_LLM=0` (the default) disables new previews; startup prints the selected LLM mode. First `make setup` downloads verified missing assets, while repeated setup reuses the existing checkpoint. The UI retains the applied expanded guidance in the form and displays saved expansion provenance with each selected take, including reopened History entries.
 
 `POST /api/prompts/expand` accepts a strict object with `generation` (the existing Generation request) and optional `guidance` (up to1500 characters). Example for Vox design:
 

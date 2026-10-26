@@ -35,6 +35,7 @@ async def lifespan(app):
         check_assets();check_runtime()
     from license_notices import warn_at_startup
     warn_at_startup(PROFILE['backend'])
+    print('Local voice prompt expansion: '+('enabled · Qwen3.5-2B 4-bit' if app.state.llm_enabled else 'disabled · use make serve WITH_LLM=1 to enable'),flush=True)
     from data_owner import own_data_directory
     with own_data_directory(ROOT) as owner:
         manager.data_owner = owner

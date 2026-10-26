@@ -36,7 +36,8 @@ export PORT
 help:
 	@echo 'make setup | download | verify | serve | start | stop | status | health | test | smoke | open'
 	@echo 'Overrides: MODEL=voxcpm2|qwen3|chatterbox|indextts|moss|fish|higgs, PORT, VENV, BOOTSTRAP_PYTHON, DATA_DIR, WEIGHTS_DIR, OUTPUT_DIR'
-	@echo 'make serve WITH_LLM=1 enables optional voice guidance previews; make setup-llm installs/reuses the shared text LLM'
+	@echo 'make setup installs/reuses the shared prompt LLM; make setup-llm adds it to an existing installation'
+	@echo 'make serve WITH_LLM=1 enables local prompt expansion; WITH_LLM=0 disables it (default)'
 setup:
 	@"$(BOOTSTRAP_PYTHON)" startup_select.py setup $(if $(MODEL),--model "$(MODEL)",) $(if $(filter 1,$(NONINTERACTIVE)),--non-interactive,) $(if $(filter 1,$(VENV_EXPLICIT)),--keep-venv,) $(if $(filter 1,$(PORT_EXPLICIT)),--keep-port,)
 setup-selected: configure-storage

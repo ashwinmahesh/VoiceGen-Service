@@ -14,7 +14,7 @@ Full-page screenshots of the separate Generate and Collection pages, plus the pa
 
 Choose or upload a saved voice, enter the line, and choose **1–5 options** (default **2**). Each option has its own player, download and **Save voice** action. Designed voices explore different seeds; saved/reference voices produce alternative takes of the selected voice.
 
-![Full Generate page with two illustrative voice options, independent playback and saving, and the 1–5 option selector](docs/images/studio-page.jpg)
+![Full Generate page with two illustrative voice options, visible expanded guidance for the form and selected take, and the 1–5 option selector](docs/images/studio-page.jpg)
 
 ### Collection
 
@@ -85,7 +85,13 @@ make start MODEL=voxcpm2
 
 Start with `make serve WITH_LLM=1` (or `make start WITH_LLM=1`) to enable **Preview expanded guidance**. Plain serving keeps it disabled. First setup installs the isolated `.venv-enhancer` and pinned shared Qwen3.5-2B 4-bit assets; existing installations can run `make setup-llm`. This runtime requires Python 3.14 independently of the selected speech backend (`LLM_PYTHON=/path/to/python3.14`). Speech environments are not upgraded by this setup.
 
-Write a description/delivery direction, preview the suggestion, then choose **Apply guidance** or **Keep original**. **Restore original guidance** undoes an applied suggestion. Spoken dialogue and reference transcripts stay verbatim and are excluded from the LLM input. It receives written guidance only and does not listen to recordings. Review suggestions for unwanted nuances, repetition, accent and identity changes; expansion is experimental and does not guarantee better audio.
+```sh
+make setup                 # Downloads the LLM only when its verified assets are missing
+make serve WITH_LLM=1       # Enable local voice prompt expansion
+make serve WITH_LLM=0       # Disable it (also the default for plain make serve)
+```
+
+Write a description/delivery direction, preview the suggestion, then choose **Apply guidance** or **Keep original**. The applied **Expanded prompt** stays visible in the form, with the original available underneath. Each generated or reopened take shows its own **Expanded prompt for this take**, so the saved instructions remain inspectable after a reload or when browsing History. **Restore original guidance** undoes an applied suggestion. Spoken dialogue and reference transcripts stay verbatim and are excluded from the LLM input. It receives written guidance only and does not listen to recordings. Review suggestions for unwanted nuances, repetition, accent and identity changes; expansion is experimental and does not guarantee better audio.
 
 Supported paths are Vox design or explicitly flexible reference delivery, Qwen VoiceDesign/CustomVoice, MOSS design, Fish short delivery tags and Higgs one existing catalog control. Vox recorded-performance cloning, Qwen Base reference, Chatterbox Original and the installed Index adapter have no compatible prose path and reject previews before loading the LLM. Fish/Higgs require a written direction and empty existing delivery controls. Their native rendered text remains inspectable under Advanced settings. Existing sampler, voice, accent and pause controls remain authoritative.
 
