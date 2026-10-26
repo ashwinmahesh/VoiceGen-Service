@@ -1,6 +1,39 @@
 # Local Voice Studio API 2.1.0
 
-The startup-selected studio implements one OpenAPI schema at `GET /openapi.json` and interactive documentation at `/docs`. The API is a local job protocol, not an OpenAI-compatible speech endpoint. Read `GET /api/capabilities` before building a request; backend-specific controls are optional in the common schema but rejected when unsupported. Unknown request fields return 422.
+The startup-selected **generator** serves the studio UI and the generation API on `http://localhost:5743`, with OpenAPI at `GET /openapi.json` and interactive documentation at `/docs`. The independent **queue CRUD** service uses `http://localhost:55205` and has its own OpenAPI/docs. It serves no generation UI and imports no model configuration or inference code. The generator reads the same project-local SQLite queue directly; stopping/restarting the queue HTTP service does not stop inference or recover active work. These are local job protocols, not OpenAI-compatible speech endpoints. Read the generator's `GET /api/capabilities` before building a voice request; unknown generation fields return 422.
+
+## Standalone queue CRUD API (port 55205)
+
+Use this service to persist requests while the generator is off. It accepts opaque JSON payloads with an optional **`model`** string (default **`higgs`** from `service_defaults.json`), an optional `generate_immediately` boolean (default false), and optional `idempotency_key` (1–200 characters). Omitting `model` resolves to the project default independently of the running generator; responses always include the resolved model, and existing jobs retain their recorded choice. Explicit `null` is invalid. The queue validates only the envelope/JSON, not the model or speech settings. For this generator, set `model` to its startup backend ID: `voxcpm2`, `qwen3`, `chatterbox`, `indextts`, `moss`, `fish` or `higgs`. A request for another model stays queued until that model is selected at generator startup; no automatic model switching occurs.
+
+```sh
+curl http://localhost:55205/api/queue -H 'Content-Type: application/json' -d '{
+  "model": "voxcpm2",
+  "generate_immediately": false,
+  "idempotency_key": "scene-1-queued-take-1",
+  "payload": {
+    "text": "Welcome home.",
+    "description": "A warm, cultured baritone.",
+    "seed": 42
+  }
+}'
+```
+
+For VoiceGen, `payload` is one ordinary Generation request (the fields documented below), without an inner `idempotency_key`. Use the envelope's priority/key. The generator validates the payload when claimed, resolves references and effective model defaults, and freezes the resulting model revision/settings/transcript/hash before speech. An invalid payload becomes an inspectable `error` and does not block following work. A queue 202 means persisted, not validated speech or finished audio. Model assets and the media SSD are not required for the queue API itself. Queue submissions are single takes; use the generator's `/api/candidates` for atomic 1–5-option batches and LLM diversity planning.
+
+| Method / route | Queue-service behavior |
+| --- | --- |
+| `POST /api/queue` | Persist `{model?,payload,generate_immediately?,idempotency_key?}`; HTTP 202 with a stable ID |
+| `GET /api/queue?status=pending&model=voxcpm2&limit=24&offset=0` | Paginated listing; optional model filter; statuses pending, all, queued, running, done, error, deleted; limit 1–100 |
+| `GET /api/queue/{id}` | Generic record with opaque original payload, model, status, stage, timestamps, attempts, result/error and `prepared` |
+| `PATCH /api/queue/{id}` | Update `payload` and/or `generate_immediately` while waiting. Payload changes require an unkeyed, consumer-unprepared entry; prepared payloads and keyed inputs are immutable. Empty/null updates return 422; nonwaiting updates return 409 |
+| `DELETE /api/queue/{id}` | Tombstone a waiting entry only; 409 for active/terminal work, 404 unknown |
+| `DELETE /api/queue?model=voxcpm2` | Clear waiting entries, optionally filtered; retain active work, history and media |
+| `GET /health` | Queue role/project/database/readiness and configured `default_model` only; no model readiness or worker registry |
+
+Records expose `id`, `sequence`, `model`, `payload`, `generate_immediately`, `status`, `stage`, timestamps, `attempts`, `error`, `result`, and `prepared` (false until the generator freezes a raw payload). Lists add `total`, `counts`, `limit`, `offset`, `has_more` and `next_offset`. Same key/model/payload/priority recovers the original record, including tombstones; changed inputs return 409. Queue-service keys have a separate namespace from generator keys. Validation failures can be inspected here and retried with the generator's explicit retry endpoint, or submitted as corrected new requests. Only the generator updates execution state and performs crash recovery under its exclusive consumer lease. The queue API has its own distinct process lease and never claims or resets jobs.
+
+`make queue` starts this CRUD API alone. `make serve` reuses a matching queue API or starts it independently, then runs the generator/UI. Generator Ctrl-C finishes active work and leaves the queue API running; `make stop-queue` stops it explicitly. `QUEUE_PORT` overrides the saved queue port; `PORT` still controls the generator. `QUEUE_DB` may select an isolated database **inside project `state/`** for tests; both processes must use the same value. The default stays `state/queue.sqlite3`, preserving existing jobs/order/IDs without a new database migration. For pre-project legacy queues, generator startup migrates under both worker leases before starting CRUD; standalone queue startup refuses a conflicting legacy DB.
 
 ## Generation
 
@@ -34,7 +67,7 @@ Candidate idempotency keys are scoped to `/api/candidates`. The same key and req
 
 Submissions are transactionally admitted to SQLite under project-local ignored `state/queue.sqlite3` before a 202 response. On first startup, the stopped legacy SSD database is consistently backed up and migrated, retaining a recoverable `.migrated-backup` beside the original path. Conflicting source/destination databases fail startup for review. Queue journals and worker ownership locks stay beside the project database; audio, legacy JSON and weights remain in DATA_DIR. Health reports `queue_database`. A single worker starts after storage ownership/recovery, consumes startup backlog automatically, and runs only the startup backend. Other backends remain visibly paused; the server never loads a different backend to drain them. Within the applicable backend, immediate pending entries run FIFO ahead of ordinary FIFO entries. **Immediate means the next available slot after current inference, with no preemption.** A continuous stream of immediate work can delay ordinary entries. API submissions default `generate_immediately=false`; the webpage sends `true` by default and offers a checkbox to enqueue normally. Busy inference/accelerator contention queues requests rather than returning the former busy 409. Existing `/api/generate` clients still receive 202 Job and poll the same detail route; no synchronous speech route was changed.
 
-The worker holds the configured shared accelerator `GPU_LOCK_FILE` through completion (including after disconnect). It waits when another owner holds the lock. Point image/voice workers at the same lock to serialize accelerator use; an idle resident model still consumes memory. Run one server worker without reloaders. An additional per-data-directory queue owner lock prevents duplicate recovery/workers. Native subprocesses and their time wrapper inherit the actual queue-owner, process data-owner and accelerator descriptors; if the Python server is killed, those reservations remain held until the native child exits. Unloading a running model returns 409; unloading while entries wait releases the model, which loads again for the next admitted take.
+The worker holds the configured shared accelerator `GPU_LOCK_FILE` through completion (including after disconnect). It waits when another owner holds the lock. Point image/voice workers at the same lock to serialize accelerator use; an idle resident model still consumes memory. Run one server worker without reloaders. An exclusive database-adjacent consumer lease prevents duplicate recovery/workers. Native subprocesses and their time wrapper inherit the actual queue-owner, process data-owner and accelerator descriptors; if the Python server is killed, those reservations remain held until the native child exits. Unloading a running model returns 409; unloading while entries wait releases the model, which loads again for the next admitted take.
 
 ### Queue operations
 
@@ -53,7 +86,7 @@ Delete/clear and worker claim are serialized in SQLite: an entry is either remov
 
 ### Restart and reference guarantees
 
-Admission freezes validated requested/effective controls, backend/model/mode, destination, reference path/identity/metadata, exact transcript and reference audio SHA256. Later catalog renames/transcript edits cannot change an admitted take. If reference bytes change or disappear, execution fails visibly; restore the admitted bytes before retrying. The same guard covers IndexTTS speaker and separate emotion recordings (including legacy flat aliases). No audio snapshots are duplicated or removed by queue clearing.
+Generator API admission freezes validated requested/effective controls, backend/model/mode, destination, reference path/identity/metadata, exact transcript and reference audio SHA256. Later catalog renames/transcript edits cannot change an admitted take. If reference bytes change or disappear, execution fails visibly; restore the admitted bytes before retrying. The same guard covers IndexTTS speaker and separate emotion recordings (including legacy flat aliases). No audio snapshots are duplicated or removed by queue clearing.
 
 Interrupted SQLite running entries return to their original ordering on restart. Recovery first reconciles a matching complete WAV plus JSON sidecar and repairs the artifact index instead of synthesizing again. The same check runs before executing a queued entry. Invalid/mismatched completion markers fail for review. Backend model-mapping changes also fail before inference. Worker failures stay errors until explicit retry.
 

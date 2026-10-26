@@ -37,6 +37,7 @@ class JobManager:
         self._thread = None
         self._stop = threading.Event()
         self._wake = threading.Event()
+        self.prepare_opaque = None  # Installed by the generator; never by the CRUD service.
 
     def _ready(self):
         with self.guard:
@@ -44,11 +45,25 @@ class JobManager:
                 self.store.initialize()
                 self._initialized = True
 
+    def migrate_legacy(self):
+        """Before starting CRUD, migrate only when a legacy queue actually exists."""
+        if not self.store.legacy_path.exists() or self.store.legacy_path == self.store.path:
+            return
+        from data_owner import own_data_directory
+        self.store.path.parent.mkdir(parents=True,exist_ok=True)
+        with own_data_directory(self.root), self.store.legacy_path.with_suffix('.worker.lock').open('a+') as old_owner, self.store.path.with_suffix('.worker.lock').open('a+') as new_owner:
+            try:
+                for handle in (old_owner,new_owner):fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise BusyError('A generator still owns the queue; wait before migrating') from None
+            self.store.migrate()
+
     def recover(self):
         """Call once after storage/data ownership validation, before serving."""
         with self.guard:
             if self._owner:
                 return
+            self.migrate_legacy()
             validate_mount(self.root/'jobs')
             (self.root/'jobs').mkdir(parents=True,exist_ok=True)
             validate_mount(self.store.path)
@@ -66,7 +81,7 @@ class JobManager:
                 for row in self.store.interrupted():
                     # The owner lock proves no live worker still owns these records.
                     try:
-                        if not self._reconcile(row):
+                        if row['payload'].get('queue_format') == 'opaque-v1' or not self._reconcile(row):
                             self.store.change(row['id'],status='queued',stage='Recovered after restart',error=None)
                     except Exception as exc:
                         self.store.change(row['id'],status='error',stage='Recovery needs review',error=str(exc))
@@ -106,8 +121,8 @@ class JobManager:
         plan=row['payload'].get('candidate_plan',{})
         if row['status']=='queued' and plan.get('method')=='llm' and not plan.get('ready') and not self.llm_enabled:
             result['paused']=True;result['stage']='Paused: start without NO_LLM=1 to plan distinct voices'
-        result['requested'] = {k:v for k,v in row['payload']['requested'].items() if k!='idempotency_key'}
-        result['effective'] = {k:v for k,v in row['payload']['effective'].items() if k!='idempotency_key'}
+        result['requested'] = {k:v for k,v in row['payload'].get('requested',row['payload'].get('queue_request',{})).items() if k!='idempotency_key'}
+        result['effective'] = {k:v for k,v in row['payload'].get('effective',{}).items() if k!='idempotency_key'}
         result.update({key:row['payload'][key] for key in ('candidate_batch_id','candidate_index','candidate_count','candidate_variation')
                        if key in row['payload']})
         if row['payload'].get('prompt_expansion'):result['prompt_expansion']=row['payload']['prompt_expansion']
@@ -366,8 +381,19 @@ class JobManager:
     def run(self, queued, handle):
         identity = queued['id']
         payload = queued['payload']
-        destination = Path(payload['destination'])
+        destination = None
         try:
+            if payload.get('queue_format') == 'opaque-v1':
+                if self.prepare_opaque is None:
+                    raise ValueError('This generator has no request validator for opaque queue payloads')
+                request,effective,reference,transcript,folder,info = self.prepare_opaque(payload['queue_request'])
+                request = request.model_copy(update={'generate_immediately':queued['generate_immediately']})
+                effective = effective.model_copy(update={'generate_immediately':queued['generate_immediately']})
+                payload,mode,model = self._payload(request,effective,reference,transcript,folder,info)
+                payload['destination'] = str(Path(folder)/f'{identity}.wav')
+                queued = self.store.prepare_opaque(identity,payload,model,mode)
+                payload = queued['payload']
+            destination = Path(payload['destination'])
             if self._reconcile(queued):
                 self.stage = 'ready'
                 return
@@ -445,7 +471,7 @@ class JobManager:
         except Exception as exc:
             logging.exception('Generation failed')
             self.last_error, self.stage = str(exc),'error'
-            if not destination.with_suffix('.json').is_file():
+            if destination is not None and not destination.with_suffix('.json').is_file():
                 destination.unlink(missing_ok=True)
             self.update(identity,status='error',stage='Generation failed',error=str(exc),completed_at=now())
         finally:

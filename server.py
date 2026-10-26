@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage
+from queue_config import QUEUE_DB, DEFAULT_QUEUE_PORT
 from engine import create_engine
 from assets import all_errors
 from runtime_checks import runtime_errors
@@ -24,13 +25,14 @@ import voice_catalog
 from voice_catalog import SaveVoice, VoiceUpdate, Voice, VoicePage
 
 engine = create_engine()
-manager = JobManager(engine, db_path=PROJECT_ROOT/'state/queue.sqlite3')
+manager = JobManager(engine, db_path=QUEUE_DB)
 
 
 @asynccontextmanager
 async def lifespan(app):
     prepare_storage()
     manager.llm_enabled=app.state.llm_enabled
+    manager.prepare_opaque=prepare_queued_request
     from prompt_expansion import capability
     capability(app.state.llm_enabled)  # Validate all published profile specifications before queue recovery.
     if app.state.llm_enabled:
@@ -40,7 +42,7 @@ async def lifespan(app):
     warn_at_startup(PROFILE['backend'])
     print('Local voice prompt expansion: '+('enabled · Qwen3.5-2B 4-bit' if app.state.llm_enabled else 'disabled · restart without NO_LLM=1 to enable'),flush=True)
     from data_owner import own_data_directory
-    with own_data_directory(ROOT) as owner:
+    with own_data_directory(ROOT,manager.store.path.with_suffix('.data.lock')) as owner:
         manager.data_owner = owner
         manager.recover()
         try:
@@ -169,6 +171,18 @@ def prepare_generation(request):
     if effective.emotion_reference_id:
         asset_path('references',effective.emotion_reference_id)
     return effective,reference,transcript,reference_info
+
+
+def prepare_queued_request(payload):
+    """Only the generator understands the opaque CRUD service's payloads."""
+    request = Generation.model_validate(payload)
+    if request.idempotency_key:
+        raise ValueError('Use the queue envelope idempotency_key, not a key inside its payload')
+    effective,reference,transcript,info = prepare_generation(request)
+    errors = all_errors()+runtime_errors()
+    if errors:
+        raise ValueError('Incomplete generator setup: '+'; '.join(errors))
+    return request,effective,reference,transcript,storage.output_folder(request.output_dir),info
 
 
 def admit_generation(request, candidates=False):
@@ -405,14 +419,9 @@ def save_voice(request: SaveVoice):
 
 
 
-if __name__ == '__main__':
+def run_server(port=DEFAULT_PORT, queue_port=DEFAULT_QUEUE_PORT):
+    """Run the generator UI/API; only the CRUD child is detached."""
     import uvicorn
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--port',type=int,default=DEFAULT_PORT)
-    parser.add_argument('--no-llm',action='store_true',help='Disable the local prompt LLM (enabled by default)')
-    parser.add_argument('--backend',choices=__import__('backend_selection').BACKENDS)
-    args = parser.parse_args()
-    app.state.llm_enabled=not args.no_llm
     if app.state.llm_enabled:
         from prompt_assets import check_assets,check_runtime
         check_assets();check_runtime()
@@ -420,6 +429,21 @@ if __name__ == '__main__':
     import socket
     with socket.socket() as probe:
         probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-        try:probe.bind(('127.0.0.1',args.port))
-        except OSError:raise SystemExit(f'Port {args.port} is occupied; select another port or inspect the existing service.') from None
-    uvicorn.run(app,host='127.0.0.1',port=args.port,workers=1)
+        try:probe.bind(('127.0.0.1',port))
+        except OSError:raise SystemExit(f'Port {port} is occupied; select another port or inspect the existing service.') from None
+    # Queue process has its own session and survives this generator's Ctrl-C.
+    from queue_manage import ensure_queue
+    manager.migrate_legacy()
+    ensure_queue(queue_port)
+    uvicorn.run(app,host='127.0.0.1',port=port,workers=1)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--port',type=int,default=DEFAULT_PORT)
+    parser.add_argument('--no-llm',action='store_true',help='Disable the local prompt LLM (enabled by default)')
+    parser.add_argument('--backend',choices=__import__('backend_selection').BACKENDS)
+    parser.add_argument('--queue-port',type=int,default=DEFAULT_QUEUE_PORT,help='Independent SQLite CRUD API port')
+    args = parser.parse_args()
+    app.state.llm_enabled=not args.no_llm
+    run_server(args.port,args.queue_port)

@@ -1,10 +1,17 @@
 """Resolve startup selection before importing any model runtime."""
 import argparse
+import json
 import os
 from pathlib import Path
 
 BACKENDS = ('voxcpm2', 'qwen3', 'chatterbox', 'indextts', 'moss', 'fish', 'higgs')
 AUDIOCPP_REVISION = '082177ecac45f1965929ded33cd81a85c13542f1'
+
+
+def default_backend():
+    value=json.loads((Path(__file__).resolve().parent/'service_defaults.json').read_text())['model']
+    if value not in BACKENDS:raise ValueError(f'Unsupported default model {value!r}')
+    return value
 
 
 def weights_directory(root, backend, original_backend, override=None):
@@ -20,7 +27,7 @@ def selected_backend(argv=None):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument('--backend', choices=BACKENDS)
     args, _ = parser.parse_known_args(argv)
-    value = args.backend or os.environ.get('MODEL_BACKEND')
+    value = args.backend or os.environ.get('MODEL_BACKEND') or default_backend()
     if value is not None and value not in BACKENDS:
         raise ValueError(f'Unknown MODEL_BACKEND {value!r}; choose {", ".join(BACKENDS)}')
     return value

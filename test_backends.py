@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 import os
 
-from backend_selection import selected_backend, weights_directory, BACKENDS
+from backend_selection import selected_backend, weights_directory, BACKENDS, default_backend
 import capabilities
 from schemas import Generation
 from config import PROJECT_ROOT, ROOT
@@ -56,7 +56,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(choose_model('voxcpm2',interactive=True,input_fn=lambda:next(answers),stream=io.StringIO()),'chatterbox')
         import config
         from startup_select import model_name
-        for action,answer,expected in [('setup','',config.ORIGINAL_PROFILE['backend']),('setup','7','higgs')]:
+        for action,answer,expected in [('setup','',default_backend()),('setup','7','higgs')]:
             with self.subTest(action=action,answer=answer):
                 master,slave=pty.openpty()
                 try:
@@ -67,7 +67,7 @@ class BackendTests(unittest.TestCase):
                     self.assertEqual(process.returncode,0);picked=json.loads(out)
                     self.assertEqual(picked['model'],expected)
                     self.assertEqual(picked['command'],['make',action+'-selected','MODEL='+expected])
-                    self.assertIn('Enter = '+model_name(config.ORIGINAL_PROFILE['backend']),err)
+                    self.assertIn('Enter = '+model_name(default_backend()),err)
                     for backend in BACKENDS:self.assertIn(model_name(backend)+' ['+backend+']',err)
                 finally:
                     os.close(master)
@@ -160,7 +160,7 @@ class BackendTests(unittest.TestCase):
             for _ in range(2):
                 async with server.lifespan(server.app):pass
         for backend in BACKENDS:
-            with self.subTest(backend=backend),patch('server.PROFILE',self.profile(backend)),patch('server.prepare_storage'),patch('server.manager',Mock()) as manager,patch('data_owner.own_data_directory',side_effect=lambda root:nullcontext(object())):
+            with self.subTest(backend=backend),patch('server.PROFILE',self.profile(backend)),patch('server.prepare_storage'),patch('server.manager',Mock()) as manager,patch('data_owner.own_data_directory',side_effect=lambda *args:nullcontext(object())):
                 notice=notice_for(backend)
                 if notice:
                     with self.assertLogs(level=logging.WARNING) as output:asyncio.run(start_twice())
@@ -181,14 +181,17 @@ class BackendTests(unittest.TestCase):
             root=Path(folder);(root/'logs').mkdir()
             state={'service':'fish','project':str(PROJECT_ROOT),'storage':str(root)}
             process=Mock(pid=12345);process.poll.return_value=None
-            with patch.object(sys,'argv',['manage.py','start','--port','8113']),patch('manage.PROFILE',self.profile('fish')),patch('manage.ROOT',root),patch('manage.prepare_storage'),patch('prompt_assets.check_assets'),patch('prompt_assets.check_runtime'),patch('manage.health',side_effect=[None,state]),patch('manage.socket.socket'),patch('manage.subprocess.Popen',return_value=process) as launch,redirect_stdout(io.StringIO()):
+            with patch.object(sys,'argv',['manage.py','start','--port','8113']),patch('manage.PROFILE',self.profile('fish')),patch('manage.ROOT',root),patch('manage.QUEUE_DB',root/'state/queue.sqlite3'),patch('manage.prepare_storage'),patch('prompt_assets.check_assets'),patch('prompt_assets.check_runtime'),patch('manage.health',side_effect=[None,state]),patch('manage.socket.socket'),patch('manage.subprocess.Popen',return_value=process) as launch,redirect_stdout(io.StringIO()):
                 with self.assertLogs(level='WARNING') as output:manage.main()
                 self.assertIn('MODEL LICENSE WARNING',output.output[0])
                 self.assertIn('Fish S2 Pro',output.output[0])
-                self.assertEqual((root/'logs/server-8113.pid').read_text(),'12345')
+                self.assertEqual((root/'state/server-8113.pid').read_text(),'12345')
                 launch.assert_called_once()
 
     def test_selection_precedence_and_unknown(self):
+        with patch.dict(os.environ):
+            os.environ.pop('MODEL_BACKEND',None)
+            self.assertEqual(selected_backend([]),'higgs')
         with patch.dict(os.environ,{'MODEL_BACKEND':'fish'}):
             self.assertEqual(selected_backend([]),'fish')
             self.assertEqual(selected_backend(['--backend','higgs']),'higgs')

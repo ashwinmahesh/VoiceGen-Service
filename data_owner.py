@@ -4,8 +4,10 @@ import fcntl
 
 
 @contextmanager
-def own_data_directory(root):
-    with (root/'jobs/.server.lock').open('a+') as handle:
+def own_data_directory(root, lock_path=None):
+    path = lock_path or root/'jobs/.server.lock'
+    path.parent.mkdir(parents=True,exist_ok=True)
+    with path.open('a+') as handle:
         try:
             fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:

@@ -5,12 +5,23 @@ Production databases live in the serving project; injectable paths isolate tests
 SQLite uses rollback-journal/FULL mode.
 """
 from contextlib import contextmanager, closing
+from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
 from uuid import uuid4
-from config import validate_mount
-from voice_catalog import now
+
+def now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def validate_mount(path):
+    # Keep queue storage independent of model configuration and inference imports.
+    path = Path(path).expanduser().resolve()
+    if len(path.parts) >= 3 and path.parts[1] == 'Volumes' and not Path('/Volumes', path.parts[2]).is_mount():
+        raise RuntimeError(f'Storage volume is not mounted: /Volumes/{path.parts[2]}')
+    return path
 
 
 class QueueConflict(ValueError):
@@ -130,6 +141,56 @@ class QueueStore:
 
     def read(self, identity):
         with self.transaction() as db:
+            return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+
+    def admit_opaque(self, routing_key, payload, immediate=False, idempotency_key=None):
+        """Store caller JSON without interpreting its modality or validating a model."""
+        wrapped = {'queue_format':'opaque-v1', 'queue_request':payload}
+        fingerprint = hashlib.sha256(json.dumps([routing_key, payload, immediate],sort_keys=True,
+                                               allow_nan=False).encode()).hexdigest()
+        key = hashlib.sha256(('queue:'+idempotency_key).encode()).hexdigest() if idempotency_key else None
+        timestamp = now()
+        with self.transaction() as db:
+            if key:
+                row = db.execute('SELECT * FROM entries WHERE key_hash=?',(key,)).fetchone()
+                if row:
+                    if row['fingerprint'] != fingerprint:
+                        raise QueueConflict('This idempotency key was used with different settings')
+                    return self.decode(row)
+            identity = uuid4().hex
+            db.execute('''INSERT INTO entries
+                (id,backend,model,mode,status,generate_immediately,created_at,updated_at,
+                 payload,key_hash,fingerprint,stage) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (identity,routing_key,'','opaque','queued',int(immediate),timestamp,timestamp,
+                 json.dumps(wrapped,allow_nan=False),key,fingerprint,'Waiting for consumer validation'))
+            return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+
+    def edit_pending(self, identity, payload=None, immediate=None):
+        with self.transaction() as db:
+            row = self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+            if row['status'] != 'queued':
+                raise QueueConflict('Only waiting entries can be updated')
+            if payload is not None:
+                if row['payload'].get('queue_format') != 'opaque-v1':
+                    raise QueueConflict('Consumer-prepared payloads are frozen; remove and submit a new request')
+                if row['key_hash']:
+                    raise QueueConflict('Keyed payloads are immutable; remove and submit with a new key')
+                row['payload']['queue_request'] = payload
+            if immediate is not None and bool(immediate) != row['generate_immediately'] and row['key_hash']:
+                raise QueueConflict('Keyed priority is immutable; remove and submit with a new key')
+            db.execute('UPDATE entries SET payload=?,generate_immediately=?,updated_at=? WHERE id=?',
+                       (json.dumps(row['payload'],allow_nan=False),int(immediate if immediate is not None else row['generate_immediately']),now(),identity))
+            return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+
+    def prepare_opaque(self, identity, payload, model, mode):
+        """The owning consumer freezes validated defaults before any inference."""
+        with self.transaction() as db:
+            row = self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+            if row['status'] != 'running' or row['payload'].get('queue_format') != 'opaque-v1':
+                raise QueueConflict('Entry is not awaiting consumer validation')
+            payload['queue_submission'] = row['payload']['queue_request']
+            db.execute('UPDATE entries SET payload=?,model=?,mode=?,updated_at=? WHERE id=?',
+                       (json.dumps(payload,allow_nan=False),model,mode,now(),identity))
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
 
     def _candidate_batch(self, db, row):

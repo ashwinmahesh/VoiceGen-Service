@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from backend_selection import BACKENDS
+from backend_selection import BACKENDS, default_backend
 
 
 def model_name(backend):
@@ -99,13 +99,14 @@ def main():
     parser.add_argument('--no-llm',action='store_true')
     args=parser.parse_args()
     root=Path(__file__).resolve().parent
-    default=json.loads((root/'service.json').read_text())['backend']
+    original=json.loads((root/'service.json').read_text())['backend']
+    default=default_backend()
     interactive=sys.stdin.isatty() and not args.non_interactive
     override=os.environ.get('VENV') if args.keep_venv else None
     choices=None
     unavailable={}
     if args.action=='serve' and not args.model and interactive:
-        choices,unavailable=ready_models(root,default,override)
+        choices,unavailable=ready_models(root,original,override)
         if not choices:
             show_unavailable(unavailable)
             detail=next(iter(unavailable.values()),['No installed assets'])[0]
@@ -114,7 +115,7 @@ def main():
             print(f'{model_name(default)} is not ready; Enter will select {model_name(choices[0])}.',file=sys.stderr)
     model=choose_model(default,args.model,interactive,choices=choices,serving=args.action=='serve',unavailable=unavailable)
     if args.action=='serve' and not args.dry_run:
-        errors=setup_errors(root,model,default,override)
+        errors=setup_errors(root,model,original,override)
         if errors:raise SystemExit(f'{model_name(model)} is not ready: {errors[0]}\nRun make setup MODEL={model}, or reconnect its configured model drive.')
     command=['make',args.action+'-selected','MODEL='+model]
     if args.action=='serve' and not choose_llm(args.no_llm,interactive):command.append('NO_LLM=1')

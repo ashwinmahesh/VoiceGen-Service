@@ -10,6 +10,7 @@ import sys
 import time
 import urllib.request
 from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, BACKEND, prepare_storage
+from queue_config import QUEUE_DB, DEFAULT_QUEUE_PORT
 
 
 def health(port):
@@ -45,9 +46,11 @@ def main():
     parser.add_argument('--port',type=int,default=DEFAULT_PORT)
     parser.add_argument('--no-llm',action='store_true')
     parser.add_argument('--backend',choices=__import__('backend_selection').BACKENDS)
+    parser.add_argument('--queue-port',type=int,default=DEFAULT_QUEUE_PORT)
     args=parser.parse_args()
     prepare_storage()
-    pidfile=ROOT/'logs'/f'server-{args.port}.pid'
+    QUEUE_DB.parent.mkdir(parents=True,exist_ok=True)
+    pidfile=QUEUE_DB.parent/f'server-{args.port}.pid'
     state=health(args.port)
     if args.action in ['status','health']:
         print(json.dumps(state or {'status':'offline'},indent=2))
@@ -78,11 +81,11 @@ def main():
         probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
         try: probe.bind(('127.0.0.1',args.port))
         except OSError: raise SystemExit(f'Port {args.port} is occupied; select another PORT.')
-    log=ROOT/'logs/server.log'
+    log=QUEUE_DB.parent/'server.log'
     from license_notices import warn_at_startup
     warn_at_startup(PROFILE['backend'])
     with log.open('a') as stream:
-        process=subprocess.Popen([sys.executable,'-u',str(PROJECT_ROOT/'server.py'),'--port',str(args.port)] +
+        process=subprocess.Popen([sys.executable,'-u',str(PROJECT_ROOT/'server.py'),'--port',str(args.port),'--queue-port',str(args.queue_port)] +
                                  (['--no-llm'] if args.no_llm else [])+
                                  (['--backend',BACKEND] if BACKEND else []),
             cwd=PROJECT_ROOT,stdin=subprocess.DEVNULL,stdout=stream,stderr=stream,start_new_session=True)

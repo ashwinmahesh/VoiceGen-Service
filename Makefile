@@ -1,18 +1,18 @@
 .DEFAULT_GOAL := help
 MODEL ?=
 ORIGINAL_MODEL := $(shell /usr/bin/plutil -extract backend raw -o - service.json)
-ifneq ($(strip $(MODEL)),)
-export MODEL_BACKEND := $(MODEL)
-endif
+DEFAULT_MODEL := $(shell /usr/bin/plutil -extract model raw -o - service_defaults.json)
+ACTIVE_MODEL := $(or $(strip $(MODEL)),$(DEFAULT_MODEL))
+export MODEL_BACKEND := $(ACTIVE_MODEL)
 MLX_MODELS := voxcpm2 qwen3 fish
 NATIVE_MODELS := moss higgs
 VENV_EXPLICIT := $(if $(filter undefined,$(origin VENV)),0,1)
-VENV ?= $(CURDIR)/$(if $(filter $(MODEL),$(ORIGINAL_MODEL)),.venv,$(if $(MODEL),$(if $(filter $(MODEL),$(MLX_MODELS)),.venv-mlx,$(if $(filter $(MODEL),$(NATIVE_MODELS)),.venv-native,.venv-$(MODEL))),.venv))
+VENV ?= $(CURDIR)/$(if $(filter $(ACTIVE_MODEL),$(ORIGINAL_MODEL)),.venv,$(if $(filter $(ACTIVE_MODEL),$(MLX_MODELS)),.venv-mlx,$(if $(filter $(ACTIVE_MODEL),$(NATIVE_MODELS)),.venv-native,.venv-$(ACTIVE_MODEL))))
 export VENV
 PYTHON := $(VENV)/bin/python
-BOOTSTRAP_PYTHON ?= $(if $(MODEL),$(if $(filter $(MODEL),$(MLX_MODELS)),python3.14,$(or $(firstword $(wildcard $(CURDIR)/.python/*/bin/python3.11)),python3.11)),python3.14)
+BOOTSTRAP_PYTHON ?= $(if $(filter $(ACTIVE_MODEL),$(MLX_MODELS)),python3.14,$(or $(firstword $(wildcard $(CURDIR)/.python/*/bin/python3.11)),python3.11))
 PORT_EXPLICIT := $(if $(filter undefined,$(origin PORT)),0,1)
-PORT ?= $(shell /usr/bin/plutil -extract port raw -o - $(if $(MODEL),backends/$(MODEL)/service.json,service.json))
+PORT ?= $(shell /usr/bin/plutil -extract port raw -o - backends/$(ACTIVE_MODEL)/service.json)
 DATA_DIR_EXPLICIT := $(if $(filter undefined,$(origin DATA_DIR)),0,1)
 OUTPUT_DIR_EXPLICIT := $(if $(filter undefined,$(origin OUTPUT_DIR)),0,1)
 NONINTERACTIVE ?= 0
@@ -31,19 +31,30 @@ ifeq ($(OUTPUT_DIR_EXPLICIT),1)
 export OUTPUT_DIR
 endif
 export PORT
+QUEUE_PORT ?= $(shell /usr/bin/plutil -extract port raw -o - queue_service.json)
+QUEUE_BOOTSTRAP_PYTHON ?= $(BOOTSTRAP_PYTHON)
+TEST_PYTHON ?= $(if $(wildcard $(CURDIR)/.venv/bin/python),$(CURDIR)/.venv/bin/python,$(PYTHON))
+QUEUE_PYTHON ?= $(if $(wildcard $(CURDIR)/.venv-queue/bin/python),$(CURDIR)/.venv-queue/bin/python,$(PYTHON))
+export QUEUE_PORT QUEUE_PYTHON
 
-.PHONY: help setup-selected serve-selected setup setup-env setup-llm download-llm configure-storage download download-extensions verify serve start stop status health test smoke open sync-check
+.PHONY: help setup-selected serve-selected setup setup-env setup-queue setup-llm download-llm configure-storage download download-extensions verify serve queue stop-queue queue-status start stop status health test smoke open sync-check
 help:
-	@echo 'make setup | download | verify | serve | start | stop | status | health | test | smoke | open'
+	@echo 'make setup | download | verify | serve | queue | stop-queue | queue-status | start | stop | status | health | test | smoke | open'
 	@echo 'Overrides: MODEL=voxcpm2|qwen3|chatterbox|indextts|moss|fish|higgs, PORT, VENV, BOOTSTRAP_PYTHON, DATA_DIR, WEIGHTS_DIR, OUTPUT_DIR'
 	@echo 'make setup installs/reuses the shared prompt LLM; make setup-llm adds it to an existing installation'
 	@echo 'make serve enables the prompt LLM by default; NO_LLM=1 disables it and skips the LLM question'
+	@echo 'Generator UI/API: localhost:$(PORT); independent queue CRUD: localhost:$(QUEUE_PORT)'
+	@echo 'Default model: $(DEFAULT_MODEL); queue submissions may omit model to use this default'
 setup:
 	@"$(BOOTSTRAP_PYTHON)" startup_select.py setup $(if $(MODEL),--model "$(MODEL)",) $(if $(filter 1,$(NONINTERACTIVE)),--non-interactive,) $(if $(filter 1,$(VENV_EXPLICIT)),--keep-venv,) $(if $(filter 1,$(PORT_EXPLICIT)),--keep-port,)
 setup-selected: configure-storage
 	$(MAKE) setup-env
+	$(MAKE) setup-queue
 	$(MAKE) download
 	$(MAKE) setup-llm
+setup-queue:
+	"$(QUEUE_BOOTSTRAP_PYTHON)" -m venv .venv-queue
+	"$(CURDIR)/.venv-queue/bin/python" -m pip install -r requirements-queue.lock.txt
 setup-llm:
 	"$(LLM_PYTHON)" setup_prompt_llm.py
 download-llm:
@@ -63,9 +74,15 @@ verify:
 serve:
 	@"$(BOOTSTRAP_PYTHON)" startup_select.py serve $(if $(MODEL),--model "$(MODEL)",) $(if $(filter 1,$(NONINTERACTIVE)),--non-interactive,) $(if $(filter 1,$(VENV_EXPLICIT)),--keep-venv,) $(if $(filter 1,$(PORT_EXPLICIT)),--keep-port,) $(LLM_FLAG)
 serve-selected:
-	"$(PYTHON)" server.py --port $(PORT) $(LLM_FLAG)
+	"$(PYTHON)" server.py --port $(PORT) --queue-port $(QUEUE_PORT) $(LLM_FLAG)
+queue:
+	"$(QUEUE_PYTHON)" queue_manage.py serve --port $(QUEUE_PORT)
+stop-queue:
+	"$(QUEUE_PYTHON)" queue_manage.py stop --port $(QUEUE_PORT)
+queue-status:
+	"$(QUEUE_PYTHON)" queue_manage.py status --port $(QUEUE_PORT)
 start:
-	"$(PYTHON)" manage.py start --port $(PORT) $(LLM_FLAG)
+	"$(PYTHON)" manage.py start --port $(PORT) --queue-port $(QUEUE_PORT) $(LLM_FLAG)
 stop:
 	"$(PYTHON)" manage.py stop --port $(PORT)
 status:
@@ -75,8 +92,8 @@ health:
 open:
 	open http://127.0.0.1:$(PORT)/
 test:
-	"$(PYTHON)" -c 'from config import prepare_storage; prepare_storage()'
-	"$(PYTHON)" -m unittest -v test_contract test_extensions test_storage_configuration test_backends test_pause_edits test_queue test_inference_locks test_performance_controls test_punctuation_pacing test_prompt_expansion test_candidate_diversity
+	MODEL_BACKEND=voxcpm2 "$(TEST_PYTHON)" -c 'from config import prepare_storage; prepare_storage()'
+	MODEL_BACKEND=voxcpm2 "$(TEST_PYTHON)" -m unittest -v test_contract test_extensions test_storage_configuration test_backends test_pause_edits test_queue test_inference_locks test_performance_controls test_punctuation_pacing test_prompt_expansion test_candidate_diversity test_queue_service
 smoke:
 	"$(PYTHON)" smoke_test.py --port $(PORT)
 sync-check:
