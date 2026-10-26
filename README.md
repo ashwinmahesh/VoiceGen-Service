@@ -2,6 +2,8 @@
 
 Serving project: **VoiceGen-Service**. Source: [ashwinmahesh/VoiceGen-Service](https://github.com/ashwinmahesh/VoiceGen-Service). The product UI and model IDs retain their existing names.
 
+Agent instructions: [AGENTS.md](AGENTS.md) covers project maintenance; [the service skill](skill/local-voice-studio/SKILL.md) covers operating the running service.
+
 One local speech studio with a shared UI, voice library, durable job API and startup-selected model. Existing VoxCPM2/Qwen behavior is retained. Chatterbox, IndexTTS 2.5, MOSS VoiceGenerator, Fish S2 Pro and Higgs TTS 3 use adapters inside the same project.
 
 Read [BACKENDS.md](BACKENDS.md) for the backend matrix, Python environments, controls, exact licenses, model/codec storage, real-smoke interpretation and integration instructions. `make setup MODEL=...` installs one selected runtime and pinned assets; `make serve MODEL=... PORT=8017` starts it on an unused port. `server.py --backend ...` also selects at startup. Omitting MODEL selects **Higgs TTS 3**, the shared default recorded in `service_defaults.json`. Explicit model choices retain their existing environments and SSD asset paths. Some examples below explicitly use Vox/MLX controls. Read [API.md](API.md) and live `/api/capabilities` for the common protocol and model-specific validation.
