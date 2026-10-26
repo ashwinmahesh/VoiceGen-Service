@@ -338,6 +338,29 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/audio/cache/'+'a'*32).status_code,404)
 
 
+    def test_resources_record_success_failure_and_retry_without_real_inference(self):
+        self.engine.fail=True
+        failed=self.finish(self.generate().json())
+        self.assertEqual(failed['status'],'error')
+        # End-of-attempt monitoring completes immediately after the queue transition.
+        for _ in range(100):
+            first=self.client.get('/api/observability/jobs/'+failed['id']).json()
+            if first.get('selected_run',{}).get('status')=='error':break
+            time.sleep(.01)
+        self.assertEqual(first['selected_run']['status'],'error')
+        self.assertGreater(first['summary']['samples'],0)
+        self.engine.fail=False
+        retry=self.client.post('/api/jobs/'+failed['id']+'/retry').json()
+        self.assertEqual(self.finish(retry)['status'],'done')
+        for _ in range(100):
+            history=self.client.get('/api/observability/jobs/'+failed['id']).json()
+            if history.get('selected_run',{}).get('status')=='done':break
+            time.sleep(.01)
+        self.assertEqual(history['selected_run']['attempt'],2)
+        self.assertEqual(len(history['runs']),2)
+        self.assertTrue(all(row['job_id']==failed['id'] for row in history['runs']))
+
+
 class AdapterTests(unittest.TestCase):
     def request(self,**kw):return Generation(text='Hello.',description='A rich baritone.',emotion='Calm.',**kw)
     def test_backend_mapping_vox(self):

@@ -28,8 +28,25 @@ Each service has interactive documentation at **`/docs`** and its complete reque
 - [Edit pauses in finished audio](#edit-pauses-in-finished-audio)
 - [History and downloads](#history-and-downloads)
 - [Health and errors](#health-and-errors)
+- [Resource history and job charts](#resource-history-and-job-charts)
 
 Examples use `VOICE_ID_HERE`, `JOB_ID_HERE`, and similar placeholders. Replace them with IDs returned by the service. IDs are 32 lowercase hexadecimal characters; they are not file paths.
+
+## Resource history and job charts
+
+The generator records memory, CPU, GPU, model, and job-attempt history while running. Read it through these endpoints, or open **Observability** in the UI. Recording keeps seven days in the same project SQLite database as the queue.
+
+```sh
+curl --fail-with-body 'http://localhost:5743/api/observability?window=30m&model=higgs'
+curl --fail-with-body 'http://localhost:5743/api/observability/jobs?limit=25&offset=0'
+curl --fail-with-body 'http://localhost:5743/api/observability/jobs/JOB_ID_HERE'
+```
+
+`window` accepts `5m` (default), `30m`, `1h`, `6h`, `24h`, `3d`, and `7d`. The optional `model` filters by speech backend ID; omit it to include all recorded models. Job listings contain separate attempts and peaks. A job detail request selects its latest attempt; add `?run_id=RUN_ID_HERE` to choose another recorded attempt. No retained recording returns 404.
+
+Timeline/detail responses include `points`, a `summary` of original sample counts and peaks, timestamps in Unix seconds, and metric scopes. Values include `cpu_percent`, `rss_bytes`, `gpu_percent`, `gpu_allocated_bytes`, and `gpu_in_use_bytes`; each bucket also has `peak_*` values. CPU at 100% means one core, and memory values are bytes. CPU/RSS cover VoiceGen's process tree. **GPU counters cover the entire Mac**, including other apps; they are not exclusive per-job consumption. Missing readings are null. Longer windows aggregate samples, preserving their peaks. Collector status reports recording errors and dropped samples.
+
+See [resource history](docs/observability.md) for response fields, sampling intervals, retention, model/phase labels, and measurement limits. These endpoints live on the generator, not the standalone queue API.
 
 ## Generate speech
 

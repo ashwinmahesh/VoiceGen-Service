@@ -440,6 +440,7 @@ async function refreshQueue(){
   const actions=el('div',null,'card-actions queue-actions');
   if(row.candidate_batch_id){const options=el('button','View all options','secondary');options.type='button';options.onclick=()=>{$('queue-dialog').close();watchCandidates(row.candidate_batch_id)};actions.append(options);}
   const inspect=el('button',row.status==='done'?'Open take':'Monitor','secondary queue-monitor');inspect.type='button';inspect.onclick=()=>{$('queue-dialog').close();row.result?showResult(row.result):watch(row.id)};actions.append(inspect);
+  if(row.status!=='queued'){const resourceLink=el('a','Resources','secondary');resourceLink.href='/observability?job='+encodeURIComponent(row.id);actions.append(resourceLink)}
   if(row.status==='queued'){
    const run=el('button','Run Now','secondary queue-run-now');run.type='button';run.disabled=!!row.paused;
    run.title=row.paused?row.stage:'Run next, ahead of other waiting jobs. The current take finishes first.';

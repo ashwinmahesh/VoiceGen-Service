@@ -10,6 +10,7 @@ from uuid import uuid4
 from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage
 from queue_config import QUEUE_DB, DEFAULT_QUEUE_PORT
 from queue_schemas import QueueMove
+from resource_schemas import ResourceOverview, ResourceJobPage, ResourceJobHistory
 from queue_status import api_status, storage_error_response, STORAGE_ERROR
 from engine import create_engine
 from assets import all_errors
@@ -47,6 +48,8 @@ async def lifespan(app):
     from data_owner import own_data_directory
     with own_data_directory(ROOT,manager.store.path.with_suffix('.data.lock')) as owner:
         manager.data_owner = owner
+        from observability import ResourceMonitor
+        manager.resources=ResourceMonitor(manager.store.path,PROFILE['backend'],PROFILE['id'],lambda:manager.stage)
         manager.recover()
         try:
             yield
@@ -98,6 +101,55 @@ def index(): return FileResponse(PROJECT_ROOT/'ui/index.html')
 
 @app.get('/assets/app.js',include_in_schema=False)
 def app_script(): return FileResponse(PROJECT_ROOT/'ui/app.js',media_type='text/javascript')
+
+
+@app.get('/observability',include_in_schema=False)
+@app.get('/observability/',include_in_schema=False)
+def observability_page(): return FileResponse(PROJECT_ROOT/'ui/observability.html')
+
+
+@app.get('/assets/observability.js',include_in_schema=False)
+def observability_script(): return FileResponse(PROJECT_ROOT/'ui/observability.js',media_type='text/javascript')
+
+
+@app.get('/assets/observability.css',include_in_schema=False)
+def observability_styles(): return FileResponse(PROJECT_ROOT/'ui/observability.css',media_type='text/css')
+
+
+def resource_monitor():
+    if manager.resources is None:raise HTTPException(503,'Resource monitoring has not started yet')
+    return manager.resources
+
+
+@app.get('/api/observability',response_model=ResourceOverview,tags=['Observability'],summary='Resource history for a time window')
+def resource_history(window: Literal['5m','30m','1h','6h','24h','3d','7d']='5m', model: str | None=Query(None,max_length=80)):
+    from observability import WINDOWS, SCOPES, RETENTION_SECONDS
+    import time,os
+    from queue_config import MODELS
+    monitor=resource_monitor();end=time.time()
+    return {**monitor.store.series(end-WINDOWS[window],end,model),'window':window,'scopes':SCOPES,
+            'retention_seconds':RETENTION_SECONDS,'collector':monitor.status(),'available_models':MODELS,'cpu_cores':os.cpu_count()}
+
+
+@app.get('/api/observability/jobs',response_model=ResourceJobPage,tags=['Observability'],summary='Recorded job attempts and resource peaks')
+def resource_jobs(model: str | None=Query(None,max_length=80), limit: int=Query(25,ge=1,le=100), offset: int=Query(0,ge=0)):
+    return resource_monitor().store.jobs(model,limit,offset)
+
+
+@app.get('/api/observability/jobs/{identity}',response_model=ResourceJobHistory,tags=['Observability'],summary='Resource charts for one job or selected attempt')
+def resource_job(identity: str, run_id: str | None=Query(None,pattern='^[a-f0-9]{32}$')):
+    from observability import SCOPES, RETENTION_SECONDS
+    from time import time
+    if not voice_catalog.IDENTITY.fullmatch(identity):raise HTTPException(404,'Job resource history not found')
+    monitor=resource_monitor()
+    runs=monitor.store.jobs(job_id=identity,limit=100)['data']
+    if not runs:raise HTTPException(404,'No retained resource samples for this job. Recording starts after observability is installed.')
+    selected=next((row for row in runs if row['id']==run_id),None) if run_id else runs[0]
+    if selected is None:raise HTTPException(404,'Recorded attempt not found for this job')
+    start=max(selected['started_at'],time()-RETENTION_SECONDS)
+    end=selected['ended_at'] or time()
+    return {**monitor.store.series(start,end,job_id=identity,run_id=selected['id']),'job_id':identity,'runs':runs,'selected_run':selected,
+            'scopes':SCOPES,'collector':monitor.status()}
 
 
 @app.get('/api/capabilities',response_model=Capabilities)

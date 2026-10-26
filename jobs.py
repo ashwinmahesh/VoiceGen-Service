@@ -38,6 +38,7 @@ class JobManager:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self.prepare_opaque = None  # Installed by the generator; never by the CRUD service.
+        self.resources = None  # Generator-only optional resource monitoring; never blocks admission.
 
     def _ready(self):
         with self.guard:
@@ -97,6 +98,7 @@ class JobManager:
                             atomic_json(path,row)
                     except (OSError,ValueError,KeyError):
                         logging.exception('Cannot recover legacy job %s',path)
+                self.observe('start')
                 self._thread = threading.Thread(target=self._dispatch,name='voice-queue',daemon=True)
                 self._thread.start()
             except BaseException:
@@ -109,8 +111,14 @@ class JobManager:
         if self._thread:
             self._thread.join()
         self.executor.shutdown(wait=True)
+        self.observe('close')
         if self._owner:
             self._owner.close(); self._owner = None
+
+    def observe(self, method, *args):
+        if self.resources is not None:
+            try:getattr(self.resources,method)(*args)
+            except Exception:logging.warning('Resource monitoring failed; generation continues',exc_info=True)
 
     def public(self, row):
         result = {k:row[k] for k in ['id','status','stage','created_at','updated_at','error','result',
@@ -382,7 +390,9 @@ class JobManager:
         identity = queued['id']
         payload = queued['payload']
         destination = None
+        resource_status='error'
         try:
+            self.observe('job_started',queued)
             if payload.get('queue_format') == 'opaque-v1':
                 if self.prepare_opaque is None:
                     raise ValueError('This generator has no request validator for opaque queue payloads')
@@ -396,6 +406,7 @@ class JobManager:
             destination = Path(payload['destination'])
             if self._reconcile(queued):
                 self.stage = 'ready'
+                resource_status='done'
                 return
             # Revalidate persisted structure, but never recompute backend defaults.
             request = Generation.model_validate(payload['requested'])
@@ -468,6 +479,7 @@ class JobManager:
             atomic_json(self.root/'artifact-index'/f'{identity}.json',{'path':str(destination)})
             self.update(identity,status='done',stage='Finished',result=result,completed_at=now())
             self.stage = 'ready'
+            resource_status='done'
         except Exception as exc:
             logging.exception('Generation failed')
             self.last_error, self.stage = str(exc),'error'
@@ -475,6 +487,7 @@ class JobManager:
                 destination.unlink(missing_ok=True)
             self.update(identity,status='error',stage='Generation failed',error=str(exc),completed_at=now())
         finally:
+            self.observe('job_finished',resource_status)
             with self.guard:
                 self.active = None
                 handle.close()

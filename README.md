@@ -20,6 +20,10 @@ The studio supports **seven speech models**, with **Higgs TTS 3 as the default**
 
 ![Full page with the Queue modal open](docs/images/queue-modal.jpg)
 
+**Observability:** chart CPU, memory, and GPU usage over time, filter by model, or inspect a job's resource use. Choose windows from five minutes to seven days. History is saved automatically while the generator runs; GPU figures cover the whole Mac.
+
+![Full Observability page with demonstration resource history](docs/images/observability-page.jpg)
+
 Screenshots use demo data. Model files and recordings can live on an external SSD. Source code, Python environments, and one shared SQLite queue stay together in the project folder on your Mac. See [storage setup](QUICKSTART.md#1-install-and-set-up).
 
 Setup automatically reuses a compatible installed Python, or downloads one into the project when needed. You do not need to install Python 3.11 and 3.14 yourself. Starting the studio uses the environments already set up and does not download anything.
@@ -73,6 +77,9 @@ Here are the available endpoints. See [API.md](API.md) for request formats, exam
 | --- | --- | --- |
 | GET | `/health` | Check the generator and queue status. |
 | GET | `/api/capabilities` | See the selected model's features and controls. |
+| GET | `/api/observability` | Chart resource history by time window and model. |
+| GET | `/api/observability/jobs` | List recorded job attempts and their resource peaks. |
+| GET | `/api/observability/jobs/{id}` | Inspect resource charts for one job or attempt. |
 | POST | `/api/generate` | Generate one take. |
 | POST | `/api/candidates` | Generate 1–5 voice options. |
 | GET | `/api/candidates/{id}` | Check a batch and its results. |
@@ -127,5 +134,6 @@ This service can accept jobs while the generator is off. Its queue endpoints use
 - [Model details](BACKENDS.md): requirements, downloads, features, and licenses.
 - [Voice quality tips](VOICE_QUALITY.md): references, accents, expression, and pacing.
 - [Prompt expansion details](docs/voice-prompt-expansion.md): model-specific rules and evaluation.
+- [Resource history](docs/observability.md): charts, measured values, job attempts, and seven-day retention.
 
 For development and automated operation, see [AGENTS.md](AGENTS.md) and the [service skill](skill/local-voice-studio/SKILL.md).

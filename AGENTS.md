@@ -15,6 +15,8 @@ Scheduling uses immutable admission `sequence` plus mutable `queue_order`. Share
 
 ## Storage and privacy
 
+`observability.py` owns generator-only resource sampling and `resource_*` tables in the existing queue database; `resource_probe.py` uses bounded, unprivileged ps/ioreg reads with no inference imports. Start sampling only after generator ownership/recovery, before dispatch. Close it after active jobs finish. Preserve queue semantics: telemetry outages drop/report samples and retry, never fail/replay a job. Keep model/session/phase and per-attempt IDs, separate retries, record unavailable counters as null, retain seven days, aggregate long windows with peaks and bounded responses, and avoid joining across session gaps. CPU/RSS cover the generator process tree; GPU counters are device-wide shared-memory figures, never exclusive job use or discrete VRAM. Keep this scope explicit in API/UI/docs. No telemetry collection/UI belongs in the standalone queue process, and no prompts/audio/command lines belong in metric storage. Test with isolated databases and benign fixture charts.
+
 Keep source, environments, SQLite/journals, process leases and service logs/PIDs inside the serving project. `QUEUE_DB` isolation overrides must stay under project `state/`. Keep model weights, caches, references, saved voices and generated audio on their configured data storage; preserve existing SSD paths and catalogs. Fail clearly on missing model/media volumes rather than creating fallback downloads. The queue API itself must work without the model SSD.
 
 Keep private state, media, weights, environments, local settings and credentials out of Git. Inspect staged files before committing. Do not overwrite or relocate existing data as part of setup or maintenance.

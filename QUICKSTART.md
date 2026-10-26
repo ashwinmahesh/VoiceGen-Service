@@ -75,6 +75,10 @@ Open **Collection** for generated History and the saved voice library. Name, des
 
 Open **Queue** in the header to monitor progress. Drag a left-side handle to reorder waiting jobs, or focus it and use the up/down arrow keys. **Run Now** moves a waiting job first, ahead of other immediate jobs; the current generation finishes before it starts. **Generate immediately**, checked by default in the UI, runs your request next after the active take, ahead of ordinary waiting jobs. It does not interrupt work already running. Pending jobs survive restarts and wait until their chosen model is running.
 
+### Check resource use
+
+To check resource use, open **Observability** in the header. **Over time** charts VoiceGen's memory and CPU alongside the Mac's GPU utilization and memory, with windows of **5m, 30m, 1h, 6h, 24h, 3 days, and 7 days**. Filter by model, or choose **By job → View charts** for a shorter view of a take. Retries have separate attempts. Recording is automatic while the generator runs and keeps seven days in the existing project SQLite database; no setup change is needed. GPU values include other apps. See [what the measurements mean](docs/observability.md).
+
 ## 4. Generate through the API
 
 Keep Higgs running and use another terminal. Check the service and available controls:
