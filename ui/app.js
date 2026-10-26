@@ -1,6 +1,7 @@
 
 const $=id=>document.getElementById(id);let mode='design',collection='history',reference=null,latest=null,voiceRows=[],historyRows=[],busy=false,online=false,uploading=false,watching=null,submitting=false,queueWritable=true;
 const collectionPage=location.pathname.startsWith('/collection');
+document.title=(collectionPage?'Collection':'Studio')+' · Voice Studios';
 if(collectionPage){$('page-title').textContent='Your collection';$('page-description').textContent='Find saved voices, listen to takes, and reuse a performance in the studio.';}
 $(collectionPage?'catalog-link':'studio-link').setAttribute('aria-current','page');
 let availableModels=[],modelChoiceReady=false,changingModel=false,queuePaused=false,awaitingSourceModel=false,lastModelList=null,pendingModelRestore=null;
@@ -650,8 +651,8 @@ function renderModelChoices(){
  modelChoiceReady=rows.some(row=>row.id===selected);
  if(modelChoiceReady)$('voice-model').value=selected;
  else{$('voice-model').prepend(new Option(mode==='design'?'Choose a voice-design model…':'Choose a capable model…',''));$('voice-model').value=''}
- if(collectionPage){$('brand-name').textContent='Voice Studio';document.title='Collection · Voice Studio';$('model-badge').textContent='All voice models';$('license-notice').hidden=true;}
- else if(caps){$('brand-name').textContent=awaitingSourceModel?'Voice Studio':caps.name;$('model-footer').textContent=awaitingSourceModel?'Choose a voice model · On your Mac':`${caps.name} · ${caps.quantization} · ${caps.limits.runtime||'MLX'} on Apple Silicon`;document.title=awaitingSourceModel?'Choose a model · Voice Studio':caps.name+' Voice Studio';if(!awaitingSourceModel){$('model-badge').textContent=`${caps.sample_rate/1000} kHz · ${caps.quantization} · On your Mac`;$('license-notice').hidden=!caps.models[caps.backend]?.notice;}}
+ if(collectionPage){$('model-badge').textContent='All voice models';$('license-notice').hidden=true;}
+ else if(caps){$('model-footer').textContent=awaitingSourceModel?'Choose a voice model · On your Mac':`${caps.name} · ${caps.quantization} · ${caps.limits.runtime||'MLX'} on Apple Silicon`;if(!awaitingSourceModel){$('model-badge').textContent=`${caps.sample_rate/1000} kHz · ${caps.quantization} · On your Mac`;$('license-notice').hidden=!caps.models[caps.backend]?.notice;}}
  $('voice-model-hint').textContent=(awaitingSourceModel?'Choose a model for this voice source. ':'')+'One shared queue · Default: '+lastModelList.default_model+(lastModelList.active_model?' · Active: '+lastModelList.active_model:'');
 }
 async function loadModelChoices(){
@@ -667,7 +668,7 @@ async function selectVoiceModel(backend){
   caps=await api('/api/capabilities?'+new URLSearchParams({model:backend}));
   awaitingSourceModel=false;modelChoiceReady=true;
   $('prompt-expansion-enabled').checked=!!caps.limits.prompt_expansion?.enabled;
-  storageKey=caps.service;document.title=caps.name+' Voice Studio';$('brand-name').textContent=caps.name;
+  storageKey=caps.service;
   $('model-badge').textContent=`${caps.sample_rate/1000} kHz · ${caps.quantization} · On your Mac`;
   $('model-footer').textContent=`${caps.name} · ${caps.quantization} · ${caps.limits.runtime||'MLX'} on Apple Silicon`;
   $('storage-footer').textContent=caps.storage;$('output-dir').placeholder=caps.output_dir;

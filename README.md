@@ -2,7 +2,7 @@
 
 VoiceGen is a local voice studio for creating character voices and spoken dialogue on an Apple Silicon Mac. Describe a new voice or start with a recording, direct its performance, and compare takes before choosing one for your game or other project.
 
-The studio supports **seven speech models**, with **Higgs TTS 3 as the default**. It includes a searchable voice Collection, audio downloads, and a saved queue so unfinished work can continue after a restart. You can use everything through the browser or an API.
+The studio supports **seven speech models**, with **Higgs TTS 3 as the default**. It includes a searchable voice Collection, audio downloads, and a saved queue so unfinished work can continue after a restart. You can use everything through the **Voice Studios** browser app or an API.
 
 **[Follow the quick start](QUICKSTART.md)** for installation, your first recording, API examples, and settings. If you have already set up the project, run `make serve` and open **[localhost:5743](http://localhost:5743/)**.
 

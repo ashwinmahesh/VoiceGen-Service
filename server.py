@@ -115,6 +115,18 @@ def index(): return FileResponse(PROJECT_ROOT/'ui/index.html')
 def app_script(): return FileResponse(PROJECT_ROOT/'ui/app.js',media_type='text/javascript')
 
 
+@app.get('/assets/icon.svg',include_in_schema=False)
+def app_icon(): return FileResponse(PROJECT_ROOT/'ui/icon.svg',media_type='image/svg+xml')
+
+
+@app.get('/apple-touch-icon.png',include_in_schema=False)
+def touch_icon(): return FileResponse(PROJECT_ROOT/'ui/apple-touch-icon.png',media_type='image/png')
+
+
+@app.get('/favicon.ico',include_in_schema=False)
+def favicon(): return FileResponse(PROJECT_ROOT/'ui/favicon.ico',media_type='image/vnd.microsoft.icon')
+
+
 @app.get('/observability',include_in_schema=False)
 @app.get('/observability/',include_in_schema=False)
 def observability_page(): return FileResponse(PROJECT_ROOT/'ui/observability.html')

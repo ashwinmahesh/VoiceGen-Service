@@ -17,6 +17,7 @@ SHARED += ['bootstrap_uv.sh','bootstrap_python.sh','python_runtime.py','tests/te
 SHARED += ['setup_lifecycle.py','tests/test_setup_lifecycle.py','tests/test_startup_gate.py']
 SHARED += ['backend_protocol.py','backend_worker.py','runtime_engine.py','model_readiness.py','tests/test_runtime_models.py']
 SHARED += ['resource_probe.py','resource_schemas.py','observability.py','tests/test_observability.py','ui/observability.html','ui/observability.css','ui/observability.js','docs/observability.md']
+SHARED += ['ui/icon.svg','ui/apple-touch-icon.png','ui/favicon.ico']
 SHARED += [str(path.relative_to(PROJECT_ROOT)) for folder in ('backends','third_party')
            for path in sorted((PROJECT_ROOT/folder).rglob('*')) if path.is_file()]
 
