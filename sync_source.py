@@ -14,6 +14,7 @@ SHARED += ['candidate_diversity.py','candidate_policy.py','tests/test_candidate_
 SHARED += ['queue_config.py','queue_server.py','queue_manage.py','queue_service.json','service_defaults.json','model_registry.json','requirements-queue.lock.txt','tests/test_queue_service.py']
 SHARED += ['queue_status.py','queue_schemas.py','docs/api-behavior.md','tests/__init__.py','tests/test_api.py','tests/test_queue_order.py']
 SHARED += ['bootstrap_uv.sh','bootstrap_python.sh','python_runtime.py','tests/test_python_runtime.py']
+SHARED += ['setup_lifecycle.py','tests/test_setup_lifecycle.py']
 SHARED += [str(path.relative_to(PROJECT_ROOT)) for folder in ('backends','third_party')
            for path in sorted((PROJECT_ROOT/folder).rglob('*')) if path.is_file()]
 

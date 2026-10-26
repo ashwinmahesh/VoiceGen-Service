@@ -6,15 +6,16 @@ from assets import verify_assets
 
 def download_models(downloader=None):
     prepare_storage()
-    if downloader is None:
-        os.environ['HF_HUB_OFFLINE'] = '0'
-        os.environ['TRANSFORMERS_OFFLINE'] = '0'
-        from huggingface_hub import snapshot_download
-        downloader = snapshot_download
     for key, spec in MODEL_SPECS.items():
         folder = MODEL_DIR/spec['subdir']
         folder.mkdir(parents=True, exist_ok=True)
-        if verify_assets(key):
+        reused=not verify_assets(key)
+        if not reused:
+            if downloader is None:
+                os.environ['HF_HUB_OFFLINE'] = '0'
+                os.environ['TRANSFORMERS_OFFLINE'] = '0'
+                from huggingface_hub import snapshot_download
+                downloader = snapshot_download
             downloader(repo_id=spec['repo'], revision=spec['revision'], local_dir=str(folder),
                        allow_patterns=[item['path'] for item in spec['files']], max_workers=2)
         from clean_env import clean_appledouble
@@ -26,6 +27,7 @@ def download_models(downloader=None):
                 if any(error.startswith(f'{key}/{item["path"]}:') for error in errors):
                     (folder/item['path']).unlink(missing_ok=True)
             raise RuntimeError('\n'.join(errors)+'\nRun make download to resume/repair.')
+        if reused:print(f'{key}: already downloaded and verified; reusing in place (no-op download).',flush=True)
         print(f'Verified {key}: {spec["repo"]}@{spec["revision"]}', flush=True)
 
 

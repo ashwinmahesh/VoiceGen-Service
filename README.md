@@ -24,6 +24,8 @@ Screenshots use demo data. Model files and recordings can live on an external SS
 
 Setup automatically reuses a compatible installed Python, or downloads one into the project when needed. You do not need to install Python 3.11 and 3.14 yourself. Starting the studio uses the environments already set up and does not download anything.
 
+You can safely rerun `make setup`: verified model downloads are reused, while dependencies and support files are checked and updated in place as needed. Choose **q** in the model menu or press **Ctrl+C** during setup to cancel; existing downloads, voices, recordings, and queued jobs are kept.
+
 ## Getting better voices and performances
 
 VoiceGen brings several techniques into one place:

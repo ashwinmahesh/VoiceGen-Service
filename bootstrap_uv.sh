@@ -16,7 +16,9 @@ if [ ! -x "$uv_binary" ]; then
     fi
     mkdir -p "$project_root/.bootstrap"
     scratch=$(mktemp -d "$project_root/.bootstrap/uv-download.XXXXXX")
-    trap 'rm -rf "$scratch"' EXIT HUP INT TERM
+    trap 'rm -rf "$scratch"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' HUP TERM
     echo "Downloading uv $uv_version into the project to manage Python." >&2
     curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 \
         "https://github.com/astral-sh/uv/releases/download/$uv_version/uv-aarch64-apple-darwin.tar.gz" \

@@ -37,6 +37,8 @@ Prerequisites: Apple Silicon macOS and Git/Make; Higgs and MOSS also need Xcode 
 
 ### Python selection
 
+Setup announces safe reruns before the model menu: verified model files are reused without downloading them again, while dependencies and support files may be checked or updated in place. The download step reports each reused model. Pinned revisions remain pinned; rerunning setup does not select newer model weights. Choose **q** in the setup menu or press **Ctrl+C** at any setup stage to cancel. The setup supervisor stops only its own installer/build process group, preserves existing downloads and saved data, and lets a later setup resume or repair incomplete downloads. Genuine installation failures still report failure.
+
 Setup first reuses the target environment when compatible, then checks installed interpreters, including Homebrew, framework installations, and project-local Python bases. Only when none matches does it download a base into `<project>/.python`, using a pinned, checksum-verified official [uv](https://docs.astral.sh/uv/guides/install-python/) binary under `.bootstrap`. Downloads and tool caches stay inside the serving project; no global packages, shell-profile edits, or system Python changes are needed. An entirely Python-free machine can bootstrap setup this way too. Serving only uses installed interpreters and environments and never downloads.
 
 | Environment | Compatible standard CPython on Apple Silicon | Download fallback |
