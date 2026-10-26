@@ -21,6 +21,8 @@ Keep private state, media, weights, environments, local settings and credentials
 
 ## Commands and checks
 
+`bootstrap_python.sh` runs dependency-free setup/menu code with an available CPython 3.9+; run mode never downloads. `python_runtime.py` owns per-lock compatibility bounds and reuses compatible target environments before selecting installed bases or setup-only project-local downloads. `bootstrap_uv.sh` pins and verifies the official uv archive; `.python` and `.bootstrap` remain internal and ignored. Honor independent BOOTSTRAP_PYTHON, LLM_PYTHON and QUEUE_BOOTSTRAP_PYTHON overrides, reject incompatible explicit choices, and preserve incompatible/broken environments. Never substitute an interpreter during serving, overwrite a venv, or use the model SSD for interpreter/tool downloads. Validate new supported minors against all pinned dependencies before widening a bound; metadata/wheel resolution is not real inference validation.
+
 - `make queue`: foreground queue API alone; reuse a matching instance.
 - `make serve`: select a ready backend, ensure/reuse the independent queue API, then run the generator in the foreground. LLM is enabled by default; `NO_LLM=1` disables it.
 - Generator Ctrl-C finishes active work and leaves pending jobs and the queue API intact. `make stop` stops only a verified idle managed generator; `make stop-queue` separately stops the verified queue API.

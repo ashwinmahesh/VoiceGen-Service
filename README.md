@@ -22,6 +22,8 @@ The studio supports **seven speech models**, with **Higgs TTS 3 as the default**
 
 Screenshots use demo data. Model files and recordings can live on an external SSD. Source code, Python environments, and one shared SQLite queue stay together in the project folder on your Mac. See [storage setup](QUICKSTART.md#1-install-and-set-up).
 
+Setup automatically reuses a compatible installed Python, or downloads one into the project when needed. You do not need to install Python 3.11 and 3.14 yourself. Starting the studio uses the environments already set up and does not download anything.
+
 ## Getting better voices and performances
 
 VoiceGen brings several techniques into one place:

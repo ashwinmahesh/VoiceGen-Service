@@ -10,19 +10,23 @@ VENV_EXPLICIT := $(if $(filter undefined,$(origin VENV)),0,1)
 VENV ?= $(CURDIR)/$(if $(filter $(ACTIVE_MODEL),$(ORIGINAL_MODEL)),.venv,$(if $(filter $(ACTIVE_MODEL),$(MLX_MODELS)),.venv-mlx,$(if $(filter $(ACTIVE_MODEL),$(NATIVE_MODELS)),.venv-native,.venv-$(ACTIVE_MODEL))))
 export VENV
 PYTHON := $(VENV)/bin/python
-BOOTSTRAP_PYTHON ?= $(if $(filter $(ACTIVE_MODEL),$(MLX_MODELS)),python3.14,$(or $(firstword $(wildcard $(CURDIR)/.python/*/bin/python3.11)),python3.11))
+BOOTSTRAP_PYTHON ?=
+BOOTSTRAP := sh ./bootstrap_python.sh
 PORT_EXPLICIT := $(if $(filter undefined,$(origin PORT)),0,1)
 PORT ?= $(shell /usr/bin/plutil -extract port raw -o - backends/$(ACTIVE_MODEL)/service.json)
 DATA_DIR_EXPLICIT := $(if $(filter undefined,$(origin DATA_DIR)),0,1)
 OUTPUT_DIR_EXPLICIT := $(if $(filter undefined,$(origin OUTPUT_DIR)),0,1)
 NONINTERACTIVE ?= 0
 NO_LLM ?= 0
-LLM_PYTHON ?= python3.14
+LLM_PYTHON ?=
+QUEUE_BOOTSTRAP_PYTHON ?=
+export BOOTSTRAP_PYTHON LLM_PYTHON QUEUE_BOOTSTRAP_PYTHON
 LLM_FLAG := $(if $(filter 1,$(NO_LLM)),--no-llm,)
 ifneq ($(origin PROMPT_LLM_DIR),undefined)
 export PROMPT_LLM_DIR
 endif
-DATA_DIR ?= $(shell "$(BOOTSTRAP_PYTHON)" -c 'import json; from pathlib import Path; p=Path("storage.json"); print(json.loads(p.read_text())["data_dir"] if p.is_file() else Path.cwd())')
+# Python configuration reads saved storage.json; Make only exports explicit paths.
+DATA_DIR ?= $(CURDIR)
 OUTPUT_DIR ?= $(DATA_DIR)/outputs
 ifeq ($(DATA_DIR_EXPLICIT),1)
 export DATA_DIR
@@ -32,7 +36,6 @@ export OUTPUT_DIR
 endif
 export PORT
 QUEUE_PORT ?= $(shell /usr/bin/plutil -extract port raw -o - queue_service.json)
-QUEUE_BOOTSTRAP_PYTHON ?= $(BOOTSTRAP_PYTHON)
 TEST_PYTHON ?= $(if $(wildcard $(CURDIR)/.venv/bin/python),$(CURDIR)/.venv/bin/python,$(PYTHON))
 QUEUE_PYTHON ?= $(if $(wildcard $(CURDIR)/.venv-queue/bin/python),$(CURDIR)/.venv-queue/bin/python,$(PYTHON))
 export QUEUE_PORT QUEUE_PYTHON
@@ -45,24 +48,24 @@ help:
 	@echo 'make serve enables the prompt LLM by default; NO_LLM=1 disables it and skips the LLM question'
 	@echo 'Generator UI/API: localhost:$(PORT); independent queue CRUD: localhost:$(QUEUE_PORT)'
 	@echo 'Default model: $(DEFAULT_MODEL); queue submissions may omit model to use this default'
+	@echo 'Setup reuses compatible installed Python or installs it project-locally; serving stays offline'
 setup:
-	@"$(BOOTSTRAP_PYTHON)" startup_select.py setup $(if $(MODEL),--model "$(MODEL)",) $(if $(filter 1,$(NONINTERACTIVE)),--non-interactive,) $(if $(filter 1,$(VENV_EXPLICIT)),--keep-venv,) $(if $(filter 1,$(PORT_EXPLICIT)),--keep-port,)
+	@$(BOOTSTRAP) setup startup_select.py setup $(if $(MODEL),--model "$(MODEL)",) $(if $(filter 1,$(NONINTERACTIVE)),--non-interactive,) $(if $(filter 1,$(VENV_EXPLICIT)),--keep-venv,) $(if $(filter 1,$(PORT_EXPLICIT)),--keep-port,)
 setup-selected: configure-storage
 	$(MAKE) setup-env
 	$(MAKE) setup-queue
 	$(MAKE) download
 	$(MAKE) setup-llm
 setup-queue:
-	"$(QUEUE_BOOTSTRAP_PYTHON)" -m venv .venv-queue
-	"$(CURDIR)/.venv-queue/bin/python" -m pip install -r requirements-queue.lock.txt
+	$(BOOTSTRAP) setup python_runtime.py setup-queue
 setup-llm:
-	"$(LLM_PYTHON)" setup_prompt_llm.py
+	$(BOOTSTRAP) setup setup_prompt_llm.py
 download-llm:
 	"$(CURDIR)/.venv-enhancer/bin/python" prompt_assets.py
 configure-storage:
-	"$(BOOTSTRAP_PYTHON)" configure_storage.py $(if $(filter 1,$(DATA_DIR_EXPLICIT)),--data-dir "$(DATA_DIR)",) $(if $(filter 1,$(NONINTERACTIVE)),--non-interactive,)
+	$(BOOTSTRAP) setup configure_storage.py $(if $(filter 1,$(DATA_DIR_EXPLICIT)),--data-dir "$(DATA_DIR)",) $(if $(filter 1,$(NONINTERACTIVE)),--non-interactive,)
 setup-env:
-	"$(BOOTSTRAP_PYTHON)" runtime_setup.py
+	$(BOOTSTRAP) setup runtime_setup.py
 	"$(PYTHON)" preflight.py --runtime
 
 download:
@@ -72,7 +75,7 @@ download-extensions:
 verify:
 	"$(PYTHON)" -c "from assets import all_errors; errors=all_errors(full=True); print(errors or 'All model and extension checksums verified'); raise SystemExit(bool(errors))"
 serve:
-	@"$(BOOTSTRAP_PYTHON)" startup_select.py serve $(if $(MODEL),--model "$(MODEL)",) $(if $(filter 1,$(NONINTERACTIVE)),--non-interactive,) $(if $(filter 1,$(VENV_EXPLICIT)),--keep-venv,) $(if $(filter 1,$(PORT_EXPLICIT)),--keep-port,) $(LLM_FLAG)
+	@$(BOOTSTRAP) run startup_select.py serve $(if $(MODEL),--model "$(MODEL)",) $(if $(filter 1,$(NONINTERACTIVE)),--non-interactive,) $(if $(filter 1,$(VENV_EXPLICIT)),--keep-venv,) $(if $(filter 1,$(PORT_EXPLICIT)),--keep-port,) $(LLM_FLAG)
 serve-selected:
 	"$(PYTHON)" server.py --port $(PORT) --queue-port $(QUEUE_PORT) $(LLM_FLAG)
 queue:

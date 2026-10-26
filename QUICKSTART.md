@@ -4,11 +4,7 @@ Create a voice, record dialogue, and save the takes you like. This guide starts 
 
 ## 1. Install and set up
 
-You need an Apple Silicon Mac, Git, Make, and Python. Higgs, MOSS, Chatterbox, and IndexTTS use Python 3.11; VoxCPM2, Qwen, Fish, and the prompt-expansion LLM use Python 3.14. With Homebrew:
-
-```sh
-brew install python@3.11 python@3.14
-```
+You need an Apple Silicon Mac, Git, and Make. You do not need to install specific Python versions first: setup reuses a compatible installed Python, or downloads one into the project's ignored `.python` folder when needed. It keeps separate environments for model dependencies and leaves your system Python and shell settings alone. An internet connection is needed for first-time downloads.
 
 Higgs and MOSS also need Xcode command-line tools. If missing, run `xcode-select --install` and complete the installation before continuing.
 
@@ -26,9 +22,11 @@ During setup:
 
 1. Choose a speech model from the numbered menu. **Enter selects Higgs.**
 2. On first setup, choose the folder for model files and recordings. Enter uses the project folder. To keep large files off your Mac's internal drive, enter an absolute SSD path, such as `/Volumes/ASH-SSD/models/VoiceGen`. The choice is remembered.
-3. Wait for the environments and downloads to finish. Setup installs the chosen speech model, queue dependencies, and **Qwen3.5-2B 4-bit**, the local LLM for prompt expansion. Existing verified model files are reused.
+3. Wait for the environments and downloads to finish. Setup selects Python for each environment, installs the chosen speech model, queue dependencies, and **Qwen3.5-2B 4-bit**, the local LLM for prompt expansion. Existing compatible environments and verified model files are reused.
 
 Keep the project and its Python environments on the internal drive. With external storage selected, model weights, large caches, reference recordings, and generated audio use that drive. All seven speech models share one SQLite database inside the project: `state/queue.sqlite3`.
+
+If you want to choose Python yourself, use `BOOTSTRAP_PYTHON=/absolute/path/to/python3` for speech, `LLM_PYTHON=/absolute/path/to/python3` for prompt expansion, or `QUEUE_BOOTSTRAP_PYTHON=/absolute/path/to/python3` for the queue. Incompatible choices produce an explanation instead of silently selecting another interpreter. See [Python compatibility](BACKENDS.md#python-selection) for the supported versions. Setup preserves an incompatible existing environment; choose a different `VENV` for speech, or move the affected environment aside before rebuilding it.
 
 On the existing installation on this Mac, the shared SSD folder is `/Volumes/ASH-SSD/models/VoxCPM2`. Keep that saved choice; there is no need to rename or move it. Changing `DATA_DIR` chooses storage and does not migrate existing files.
 
@@ -57,7 +55,7 @@ make setup MODEL=voxcpm2
 make serve MODEL=voxcpm2
 ```
 
-Other model IDs are `qwen3`, `chatterbox`, `indextts`, `moss`, and `fish`. Startup uses files already installed; it does not download missing models. Each model has its own license, summarized at startup and in [the model guide](BACKENDS.md#provenance-and-licenses).
+Other model IDs are `qwen3`, `chatterbox`, `indextts`, `moss`, and `fish`. Startup uses existing environments and files; it does not download Python, packages, or models. Each model has its own license, summarized at startup and in [the model guide](BACKENDS.md#provenance-and-licenses).
 
 ## 3. Generate your first dialogue in the UI
 

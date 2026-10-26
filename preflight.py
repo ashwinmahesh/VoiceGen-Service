@@ -2,15 +2,18 @@
 import platform
 import sys
 from config import prepare_storage, ROOT, PROFILE
+from python_runtime import compatible, requirement, runtime_for
 
 
 def main():
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
         raise SystemExit('This lockfile targets Apple Silicon macOS; select a supported runtime for other hardware.')
     mlx=PROFILE['backend'] in ('voxcpm2','qwen3','fish')
-    expected=(3,14) if mlx else (3,11)
-    if sys.version_info[:2] != expected:
-        raise SystemExit(f'This backend lock targets Python {expected[0]}.{expected[1]}; set BOOTSTRAP_PYTHON.')
+    import sysconfig
+    if not compatible(runtime_for(PROFILE['backend']),dict(version=sys.version_info[:3],
+            implementation=sys.implementation.name,system=platform.system(),machine=platform.machine(),
+            free_threaded=bool(sysconfig.get_config_var('Py_GIL_DISABLED')))):
+        raise SystemExit(requirement(runtime_for(PROFILE['backend']))+' Run make setup-env.')
     prepare_storage()
     if '--runtime' in sys.argv and mlx:
         import mlx.core as mx

@@ -13,13 +13,13 @@ Omitting MODEL selects **Higgs TTS 3** from `service_defaults.json`; it uses `.v
 
 | MODEL | Environment / bootstrap Python | Implemented voice modes and controls |
 | --- | --- | --- |
-| voxcpm2 | .venv when original, otherwise .venv-mlx / 3.14 | Existing MLX BF16 design/reference/continuation/combined, steps, CFG, supported prompt directions |
-| qwen3 | .venv when original, otherwise .venv-mlx / 3.14 | Existing MLX 8-bit VoiceDesign/Base/CustomVoice; preset directions/optional steering; Base reference transcript |
-| chatterbox | .venv-chatterbox / 3.11 | Original English 500M reference cloning, exaggeration 0–1 (default .3, provisional character setting), cfg_weight 0–1 (default .5), temperature .05–2 (default .8) |
+| voxcpm2 | .venv when original, otherwise .venv-mlx / 3.12–3.14 | Existing MLX BF16 design/reference/continuation/combined, steps, CFG, supported prompt directions |
+| qwen3 | .venv when original, otherwise .venv-mlx / 3.12–3.14 | Existing MLX 8-bit VoiceDesign/Base/CustomVoice; preset directions/optional steering; Base reference transcript |
+| chatterbox | .venv-chatterbox / 3.11–3.12 | Original English 500M reference cloning, exaggeration 0–1 (default .3, provisional character setting), cfg_weight 0–1 (default .5), temperature .05–2 (default .8) |
 | indextts | .venv-indextts / 3.11 | IndexTTS 2.5 reference cloning, separate emotion recording or eight-value vector, duration_factor .7–1.5, segment interval 0–2000 ms, temperature |
-| moss | .venv-native / 3.11 | MOSS VoiceGenerator description-based design only, English/Chinese, temperature, seed, audio-frame cap |
-| fish | .venv-mlx / 3.14 | Fish S2 Pro 8-bit reference cloning with exact transcript, inline `[free-form delivery tags]`, temperature, audio-token cap |
-| higgs | .venv-native / 3.11 | Higgs TTS 3 Q8_0 reference cloning with exact transcript, inline control tokens, temperature, audio-token cap |
+| moss | .venv-native / 3.11–3.12 | MOSS VoiceGenerator description-based design only, English/Chinese, temperature, seed, audio-frame cap |
+| fish | .venv-mlx / 3.12–3.14 | Fish S2 Pro 8-bit reference cloning with exact transcript, inline `[free-form delivery tags]`, temperature, audio-token cap |
+| higgs | .venv-native / 3.11–3.12 | Higgs TTS 3 Q8_0 reference cloning with exact transcript, inline control tokens, temperature, audio-token cap |
 
 Chatterbox Original is intentionally selected over Turbo: Turbo's vocal-event tags and control surface differ. Original does not accept emotion/accent instructions or reference transcripts. Its upstream public `generate()` fixes the output ceiling at 1000 tokens; this API rejects other max_tokens values and hides the ineffective selector. It conditions the speaker from up to the first six seconds and decoder from ten seconds; uploads retain the full original. No exact accent/emotion guarantee follows from exaggeration.
 
@@ -33,7 +33,23 @@ Fish and Higgs do not expose natural-language description design through this wr
 
 ## Installation and storage
 
-Prerequisites: Apple Silicon macOS; Git/Make; Python 3.14 for MLX or Python 3.11 for Torch/native; Xcode command-line tools for the native C++ build. Pass an interpreter with `BOOTSTRAP_PYTHON=/absolute/python`. Use `VENV` for another internal environment location. Setup installs a complete pinned runtime lock with `--no-deps`, then checks dependencies; this prevents an upstream unpinned Git dependency from overriding the explicit Perth pin. The locks target macOS arm64 and are not CUDA/Linux recipes.
+Prerequisites: Apple Silicon macOS and Git/Make; Higgs and MOSS also need Xcode command-line tools for the native C++ build. Setup chooses Python automatically. Use `VENV` for another internal speech environment location. Setup installs a complete pinned runtime lock with `--no-deps`, then checks dependencies; this prevents an upstream unpinned Git dependency from overriding the explicit Perth pin. The locks target macOS arm64 and are not CUDA/Linux recipes.
+
+### Python selection
+
+Setup first reuses the target environment when compatible, then checks installed interpreters, including Homebrew, framework installations, and project-local Python bases. Only when none matches does it download a base into `<project>/.python`, using a pinned, checksum-verified official [uv](https://docs.astral.sh/uv/guides/install-python/) binary under `.bootstrap`. Downloads and tool caches stay inside the serving project; no global packages, shell-profile edits, or system Python changes are needed. An entirely Python-free machine can bootstrap setup this way too. Serving only uses installed interpreters and environments and never downloads.
+
+| Environment | Compatible standard CPython on Apple Silicon | Download fallback |
+| --- | --- | --- |
+| VoxCPM2, Qwen, Fish | 3.12–3.14 | 3.14 |
+| Prompt-expansion LLM | 3.12–3.14 | 3.14 |
+| Higgs, MOSS, Chatterbox | 3.11–3.12 | 3.11 |
+| IndexTTS | 3.11 | 3.11 |
+| Independent queue | 3.11–3.14 | 3.11 |
+
+These bounds follow the pinned dependencies: MLX environments include NumPy/SciPy requiring 3.12+, the native lock includes NumPy 1.26 wheels through 3.12 and SciPy requiring 3.11+, and IndexTTS requires Python below 3.12. PyPy, Intel/Rosetta interpreters, free-threaded Python, and newer unvalidated Python minors are not selected. Existing 3.11/native and 3.14/MLX environments remain the inference-tested defaults; accepting another compatible minor does not establish identical speech or performance.
+
+Optional interpreter paths: `BOOTSTRAP_PYTHON` for speech, `LLM_PYTHON` for the enhancer, and `QUEUE_BOOTSTRAP_PYTHON` for the queue. An explicit incompatible path fails without falling back. An incompatible or broken existing environment is preserved, including one whose Python base was removed. Select a new speech `VENV`, or move the affected environment aside and rerun setup. Setup never replaces it automatically. The small terminal chooser can run with any available CPython 3.9+; actual speech/LLM/queue environments must meet the table above.
 
 The first terminal `make setup MODEL=...` asks for a data folder. Enter means this project; an absolute alternative creates model/data links and persists ignored storage.json. Retries reuse it. `DATA_DIR=...` or `NONINTERACTIVE=1` skips the prompt. Missing external volumes/dangling links fail before downloads. Source, environment and native build stay internal; weights/codecs, model caches, uploads, catalogs, jobs, logs and outputs belong in the configured data root. Build-only temporary scratch uses a bounded `/private/tmp/voice-build-*` directory and is removed on completion. Runtime caches/temp stay in DATA_DIR.
 
@@ -85,7 +101,7 @@ Merge source changes before deployment; preserve the originating Vox combined/pe
 
 Weights are already on SSD: reuse the exact validation `weights/{chatterbox,indextts,moss,fish,higgs}` directories through WEIGHTS_DIR, or persist ignored storage.json backend_weights/backend_extensions mappings. Do not create symlinks on filesystems such as exFAT that do not support them; existing project-to-SSD links originate on internal APFS. Keep validation runs and logs in their original directories. Do not point a new JobManager at their data roots while a validation server is running.
 
-Virtual environments are not relocatable: pyvenv.cfg and executable shebangs reference their internal Python base. The validation Python 3.11 base is under worktree/.python, uv bootstrap under .bootstrap, and native checkout/build under .runtime-source/audio.cpp. For a deployment independent of that worktree, install/relocate an appropriate internal base interpreter under the authoritative project (or use a permanent installed Python), then run make setup-env for each runtime there. This rebuilds environments without downloading/copying model weights. Reuse/copy the pinned native source if useful, then rebuild at its final path; deployment mode embeds specs, but rebuilding avoids stale source/build paths. Revalidate health and one small smoke before retiring the isolated worktree. Integration, service replacement, merge/push and cleanup of model data belong to the owning task.
+Virtual environments are not relocatable: pyvenv.cfg and executable shebangs reference their Python base and project paths. Keep the project in its final location before setup. Downloaded Python bases live in project/.python, the uv tool/cache in .bootstrap, and native source/build in .runtime-source/audio.cpp. If a project must move, preserve its data and rebuild environments and native binaries at the final path with make setup-env. Existing weights can be reused without downloading or copying them. Verify readiness and a small inference before removing the old installation.
 
 
 Health includes runtime_errors separately from asset_errors/downloaded: missing or mismatched pinned runtime packages, or a missing/wrong native Metal binary, cannot advertise readiness even when model files are complete. These checks do not load model weights. Validation errors are JSON-safe, including NaN/Infinity inputs.

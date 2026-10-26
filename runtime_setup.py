@@ -2,28 +2,21 @@
 import os
 from pathlib import Path
 import subprocess
-import sys
 
 from config import BACKEND, PROFILE, ORIGINAL_PROFILE, PROJECT_ROOT, ROOT, prepare_storage
+from python_runtime import ensure_environment, runtime_for
 
 
 def main():
     prepare_storage()
     backend=PROFILE['backend']
     mlx=backend in ('voxcpm2','qwen3','fish')
-    expected=(3,14) if mlx else (3,11)
-    if sys.version_info[:2]!=expected:
-        raise SystemExit(f'{backend} requires Python {expected[0]}.{expected[1]} for its pinned lock. Set BOOTSTRAP_PYTHON.')
     import platform
     if platform.system()!='Darwin' or platform.machine()!='arm64':
         raise SystemExit('These runtime locks target Apple Silicon macOS.')
     target=Path(os.environ.get('VENV',str(PROJECT_ROOT/('.venv' if not BACKEND or BACKEND==ORIGINAL_PROFILE['backend'] else '.venv-mlx' if mlx else '.venv-native' if backend in ('moss','higgs') else '.venv-'+backend))))
     if not target.is_absolute():target=PROJECT_ROOT/target
-    python=target/'bin/python'
-    if not python.is_file():subprocess.run([sys.executable,'-m','venv','--copies',str(target)],check=True)
-    actual=subprocess.check_output([str(python),'-c','import sys; print("%d.%d" % sys.version_info[:2])'],text=True).strip()
-    if actual!=f'{expected[0]}.{expected[1]}':
-        raise SystemExit(f'{target} uses Python {actual}; choose a separate VENV with Python {expected[0]}.{expected[1]}')
+    python=ensure_environment(PROJECT_ROOT,runtime_for(backend),target,os.environ.get('BOOTSTRAP_PYTHON'))
     lock=PROJECT_ROOT/'requirements.lock.txt' if mlx else PROJECT_ROOT/'backends'/('native' if backend in ('moss','higgs') else backend)/'requirements.lock.txt'
     env=os.environ.copy()
     # sdist builds on exFAT produce AppleDouble build failures. This bounded,
@@ -53,4 +46,6 @@ def main():
     print(f'{backend} runtime ready: {python}\nData: {ROOT}')
 
 
-if __name__=='__main__':main()
+if __name__=='__main__':
+    try:main()
+    except (RuntimeError,subprocess.CalledProcessError) as error:raise SystemExit(str(error)) from None
