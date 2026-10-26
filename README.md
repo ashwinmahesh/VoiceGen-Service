@@ -30,7 +30,7 @@ Screenshots use benign demonstration records and fake inference; displayed timin
 
 Screenshots use demo data. Model files and recordings can live on an external SSD. Source code, Python environments, and one shared SQLite queue stay together in the project folder on your Mac. See [storage setup](QUICKSTART.md#1-install-and-set-up).
 
-Setup automatically reuses a compatible installed Python, or downloads one into the project when needed. You do not need to install Python 3.11 and 3.14 yourself. Starting the studio uses the environments already set up and does not download anything.
+Setup automatically reuses a compatible installed Python, or downloads one into the project when needed. You do not need to install Python 3.11 and 3.14 yourself. Starting the studio uses the environments already set up and does not download anything. `make serve` exits with setup instructions unless at least one model has its verified files and compatible runtime ready.
 
 You can safely rerun `make setup`: verified model downloads are reused, while dependencies and support files are checked and updated in place as needed. Choose **q** in the model menu or press **Ctrl+C** during setup to cancel; existing downloads, voices, recordings, and queued jobs are kept.
 

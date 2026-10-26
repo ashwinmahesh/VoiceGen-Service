@@ -40,6 +40,8 @@ From the project folder:
 make serve
 ```
 
+If no model has completed setup, `make serve` exits with instructions to run `make setup`, before asking questions or starting either service. An environment by itself or an incomplete model download does not count. If you already completed setup, reconnect the configured model drive and try again.
+
 Choose the default from the numbered list: Higgs first, then VoxCPM2 and the remaining models. Enter uses your saved default, initially Higgs, when ready. This saves the default for both APIs; every set-up model remains available in the studio. Models still needing setup appear separately with installation instructions; only ready models receive selection numbers.
 
 Startup asks whether to enable the local LLM. **Enter keeps it on.** Open **[http://localhost:5743](http://localhost:5743/)** and keep the terminal open while using the studio.

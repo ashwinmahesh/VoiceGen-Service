@@ -89,7 +89,10 @@ except Exception as error:
     try:
         result=subprocess.run([str(python),'-c',probe],cwd=root,env=environment,capture_output=True,text=True,timeout=8)
         if result.returncode:return [(result.stderr.strip() or 'Runtime readiness check failed')[-500:]]
-        return json.loads(result.stdout)
+        errors=json.loads(result.stdout)
+        if not isinstance(errors,list) or not all(isinstance(error,str) and error for error in errors):
+            return ['Cannot verify setup: invalid readiness response']
+        return errors
     except (OSError,subprocess.TimeoutExpired,ValueError) as error:return [f'Cannot verify setup: {error}']
 
 
@@ -137,13 +140,15 @@ def main():
         if not choices:
             show_unavailable(unavailable)
             detail=next(iter(unavailable.values()),['No installed assets'])[0]
-            raise SystemExit('No set-up voice models are ready. '+detail+'\nRun make setup, or reconnect the configured model drive.')
+            raise SystemExit('No set-up voice models are ready. Complete make setup for at least one model before running make serve.\n'
+                             +detail+'\nRun make setup, or reconnect the configured model drive if setup was already completed.')
         if default not in choices:
             print(f'{model_name(default)} is not ready; Enter will select {model_name(choices[0])}.',file=sys.stderr)
     model=choose_model(default,args.model,interactive,choices=choices,serving=args.action=='serve',unavailable=unavailable,setup_complete=setup_complete)
     if args.action=='serve' and not args.dry_run:
         errors=setup_errors(root,model,original,override)
-        if errors:raise SystemExit(f'{model_name(model)} is not ready: {errors[0]}\nRun make setup MODEL={model}, or reconnect its configured model drive.')
+        if errors:raise SystemExit(f'{model_name(model)} setup is incomplete or unavailable: {errors[0]}\n'
+                                         f'Run make setup MODEL={model} successfully before serving it, or reconnect its configured model drive.')
     command=['make',args.action+'-selected','MODEL='+model]
     if args.action=='serve' and not choose_llm(args.no_llm,interactive):command.append('NO_LLM=1')
     environment=os.environ.copy()
