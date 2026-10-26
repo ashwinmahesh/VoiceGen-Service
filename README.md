@@ -6,6 +6,22 @@ The studio supports **seven speech models**, with **Higgs TTS 3 as the default**
 
 **[Follow the quick start](QUICKSTART.md)** for installation, your first recording, API examples, and settings. If you have already set up the project, run `make serve` and open **[localhost:5743](http://localhost:5743/)**.
 
+## Inside the studio
+
+**Generate:** choose or design a voice, enter dialogue, direct the performance, and audition the results.
+
+![Full Generate page with voice controls and multiple listening options](docs/images/studio-page.jpg)
+
+**Collection:** browse previous takes or save and upload voices with names, descriptions, and searchable tags.
+
+![Full Collection page with a saved voice, search, and tags](docs/images/collection-page.jpg)
+
+**Queue:** monitor work, remove waiting jobs, clear pending work, or retry a failed take. The studio's default “Generate immediately” option runs next after the current take, ahead of ordinary waiting jobs.
+
+![Full page with the Queue modal open](docs/images/queue-modal.jpg)
+
+Screenshots use demo data. Model files and recordings can live on an external SSD. Source code, Python environments, and one shared SQLite queue stay together in the project folder on your Mac. See [storage setup](QUICKSTART.md#1-install-and-set-up).
+
 ## Getting better voices and performances
 
 VoiceGen brings several techniques into one place:
@@ -39,22 +55,6 @@ Expansion follows different rules for each supported model and mode. The studio 
 | Fish Audio S2 Pro | Recorded voices with exact transcripts and delivery tags. |
 
 Choose an installed model at startup. Your Collection and queue are shared across models. Some features vary by model, and Chatterbox and IndexTTS are experimental on 24 GB Macs. See [model requirements and licenses](BACKENDS.md) before choosing one; the studio also displays relevant license notices.
-
-## Inside the studio
-
-**Generate:** choose or design a voice, enter dialogue, direct the performance, and audition the results.
-
-![Full Generate page with voice controls and multiple listening options](docs/images/studio-page.jpg)
-
-**Collection:** browse previous takes or save and upload voices with names, descriptions, and searchable tags.
-
-![Full Collection page with a saved voice, search, and tags](docs/images/collection-page.jpg)
-
-**Queue:** monitor work, remove waiting jobs, clear pending work, or retry a failed take. The studio's default “Generate immediately” option runs next after the current take, ahead of ordinary waiting jobs.
-
-![Full page with the Queue modal open](docs/images/queue-modal.jpg)
-
-Screenshots use demo data. Model files and recordings can live on an external SSD. Source code, Python environments, and one shared SQLite queue stay together in the project folder on your Mac. See [storage setup](QUICKSTART.md#1-install-and-set-up).
 
 ## API overview
 
