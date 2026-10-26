@@ -28,7 +28,7 @@ class ReservationTests(unittest.TestCase):
         from unittest.mock import patch,Mock
         from native_engine import NativeEngine
         from schemas import Generation
-        from test_contract import wav
+        from .test_contract import wav
         with tempfile.TemporaryDirectory(dir=ROOT/'cache/tmp') as temporary:
             root=Path(temporary);(root/'logs').mkdir()
             destination=root/'fixture.wav';engine=NativeEngine()

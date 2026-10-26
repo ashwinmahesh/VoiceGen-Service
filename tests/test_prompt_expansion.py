@@ -11,7 +11,7 @@ import capabilities
 import prompt_expansion as expansion
 import server
 from schemas import Generation,CandidateGeneration
-import test_contract
+from . import test_contract
 
 
 class ExpansionTests(unittest.TestCase):

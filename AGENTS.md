@@ -22,6 +22,6 @@ Keep private state, media, weights, environments, local settings and credentials
 - `make queue`: foreground queue API alone; reuse a matching instance.
 - `make serve`: select a ready backend, ensure/reuse the independent queue API, then run the generator in the foreground. LLM is enabled by default; `NO_LLM=1` disables it.
 - Generator Ctrl-C finishes active work and leaves pending jobs and the queue API intact. `make stop` stops only a verified idle managed generator; `make stop-queue` separately stops the verified queue API.
-- `make test`: complete automated suite with fake inference, including queue/generator process isolation and crash/restart recovery. It does not establish real speech quality. `make smoke` performs real inference against a running generator when appropriate to the change and authorized work.
+- Tests live in `tests/`. `make test` discovers `tests/test_*.py` and runs the complete automated suite with fake inference, including queue/generator process isolation and crash/restart recovery. It does not establish real speech quality. `make smoke` performs real inference against a running generator when appropriate to the change and authorized work.
 
 Use isolated project-local test state and benign media fixtures. Preserve pre-existing user-started services and active jobs. After testing or maintenance, finish active test jobs and stop every agent-started generator, queue API and preview; verify listeners are gone. Do not automatically restore Vox or another backend. Do not install login/autostart services or stop unrelated listeners.

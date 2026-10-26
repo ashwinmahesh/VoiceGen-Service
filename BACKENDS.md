@@ -72,9 +72,9 @@ Copies of the exact available primary license texts are in `third_party/`. Docum
 
 ```sh
 # Reference backends require an authorized recording; exact transcript required by Fish/Higgs:
-.venv-mlx/bin/python smoke_test.py --port 8017 --reference /absolute/reference.wav --transcript 'Exact recorded words.' --text 'Welcome home.'
+.venv-mlx/bin/python -m tests.smoke_test --port 8017 --reference /absolute/reference.wav --transcript 'Exact recorded words.' --text 'Welcome home.'
 # Design-only MOSS:
-.venv-native/bin/python smoke_test.py --port 8017 --description 'A calm, cultured baritone.' --text 'Welcome home.'
+.venv-native/bin/python -m tests.smoke_test --port 8017 --description 'A calm, cultured baritone.' --text 'Welcome home.'
 ```
 
 Smoke checks decode WAV, finite/nonsilent data, duration/rate and saved metadata; they do not establish accent, emotion, completeness, or identity by listening. Timings depend on hardware and first-use compilation. Chatterbox and Index completed MPS smoke on this Apple M6/24 GB machine but showed high end-of-job MPS driver allocations around 27 GB and slow synthesis; treat them as experimental. Driver allocation is an allocator figure, **not measured peak physical/system RAM**. Do not disable high-watermark safeguards. Fish/native measurements and exact validation paths are reported in the integration handoff. Retain original and effective settings plus model/runtime provenance for every output.

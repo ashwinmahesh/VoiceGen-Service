@@ -8,8 +8,8 @@ from unittest.mock import patch
 from schemas import CandidateGeneration
 from jobs import JobManager
 from candidate_diversity import definition,built_in,build
-import test_contract
-import test_queue
+from . import test_contract
+from . import test_queue
 import server
 
 

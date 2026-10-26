@@ -9,7 +9,7 @@ import soundfile as sf
 import pause_edits
 from schemas import PauseAdjustment, Generation
 import storage
-import test_contract
+from . import test_contract
 
 
 def request(spans=None,**extra):

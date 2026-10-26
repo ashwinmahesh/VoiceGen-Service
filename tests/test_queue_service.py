@@ -13,7 +13,7 @@ from unittest.mock import patch
 import urllib.error
 import urllib.request
 
-PROJECT = Path(__file__).resolve().parent
+PROJECT = Path(__file__).resolve().parents[1]
 
 
 def request(port,path='/health',method='GET',payload=None,origin=None):
@@ -119,7 +119,7 @@ class QueueServiceTests(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stderr+result.stdout)
         return int((self.root/f'queue-{self.queue_port}.pid').read_text())
     def start_generator(self):
-        process=self.spawn('test_queue_service.py','--fake-generator')
+        process=self.spawn('-m','tests.test_queue_service','--fake-generator')
         wait_for(lambda:request(self.gen_port)[1].get('service'))
         return process
     def submit(self,text='Hello.',**kw):
@@ -229,7 +229,7 @@ assert len(queue_server.list_models()['models'])==7
         self.start_queue();generator=self.start_generator()
         active=self.submit('Held.')
         wait_for(lambda:(self.media/'calls.jsonl').exists())
-        second=self.spawn('test_queue_service.py','--fake-generator',env={**self.env,'TEST_GENERATOR_PORT':str(free_port())})
+        second=self.spawn('-m','tests.test_queue_service','--fake-generator',env={**self.env,'TEST_GENERATOR_PORT':str(free_port())})
         self.assertNotEqual(second.wait(timeout=10),0)
         duplicate=self.spawn('queue_server.py','--port',str(free_port()))
         self.assertNotEqual(duplicate.wait(timeout=10),0)
@@ -351,7 +351,7 @@ class QueueFailureTests(unittest.TestCase):
 
     def test_generator_storage_errors_are_503_and_health_remains_available(self):
         import sqlite3
-        from test_contract import ContractTests
+        from .test_contract import ContractTests
         fixture=ContractTests();fixture.setUp()
         try:
             with patch.object(fixture.manager,'existing',side_effect=sqlite3.OperationalError('locked')):
@@ -374,7 +374,7 @@ class QueueFailureTests(unittest.TestCase):
 
     def test_health_does_not_wait_for_full_queue_timeout_when_sqlite_is_locked(self):
         import sqlite3
-        from test_contract import ContractTests
+        from .test_contract import ContractTests
         fixture=ContractTests();fixture.setUp()
         try:
             with sqlite3.connect(fixture.manager.store.path) as db:

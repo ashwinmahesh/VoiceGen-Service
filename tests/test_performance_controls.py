@@ -8,7 +8,7 @@ import capabilities,engine,native_engine,server
 from config import PROJECT_ROOT
 from schemas import Generation,generation_metadata
 from performance_controls import rendered_text,applied_performance,qwen_sampling,spoken_transcript,HIGGS_CATALOG
-import test_contract
+from . import test_contract
 
 
 def profile(backend):return json.loads((PROJECT_ROOT/'backends'/backend/'service.json').read_text())
@@ -204,9 +204,9 @@ class AutoCloningTests(unittest.TestCase):
 
 class FrozenCharacterDefaultTests(unittest.TestCase):
     def test_old_chatterbox_default_is_not_recomputed_on_dispatch(self):
-        from test_queue import QueueFixture
+        from .test_queue import QueueFixture
         fixture=QueueFixture(methodName='runTest');fixture.setUp();self.addCleanup(fixture.tearDown)
-        from test_contract import wav
+        from .test_contract import wav
         reference=fixture.root/'references'/('a'*32+'.wav');reference.write_bytes(wav())
         old=fixture.manager(backend='chatterbox')
         requested=Generation(text='A full character line.',reference_id='a'*32,clone_mode='reference',language='English')

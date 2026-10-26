@@ -13,7 +13,7 @@ from config import ROOT, PROJECT_ROOT
 from durable_queue import QueueStore, QueueConflict
 from jobs import JobManager, BusyError
 from schemas import Generation, CandidateGeneration
-from test_contract import FakeEngine, wav
+from .test_contract import FakeEngine, wav
 from voice_catalog import atomic_json
 
 

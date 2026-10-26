@@ -93,8 +93,8 @@ open:
 	open http://127.0.0.1:$(PORT)/
 test:
 	MODEL_BACKEND=voxcpm2 "$(TEST_PYTHON)" -c 'from config import prepare_storage; prepare_storage()'
-	MODEL_BACKEND=voxcpm2 "$(TEST_PYTHON)" -m unittest -v test_contract test_extensions test_storage_configuration test_backends test_pause_edits test_queue test_inference_locks test_performance_controls test_punctuation_pacing test_prompt_expansion test_candidate_diversity test_queue_service
+	MODEL_BACKEND=voxcpm2 "$(TEST_PYTHON)" -m unittest discover -s tests -t . -p 'test_*.py' -v
 smoke:
-	"$(PYTHON)" smoke_test.py --port $(PORT)
+	"$(PYTHON)" -m tests.smoke_test --port $(PORT)
 sync-check:
 	"$(PYTHON)" sync_source.py --check "$(PEER)"
