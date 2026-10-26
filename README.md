@@ -148,9 +148,58 @@ On this Mac, the project is at `~/Documents/models/VoiceGen-Service`. The existi
 
 `make status` shows generator state; `make queue-status` checks the queue service. If you changed ports, use the same `PORT` or `QUEUE_PORT` value with later commands.
 
-## Scripts, API, and development
+## API overview
 
-The studio and generation API use **[localhost:5743](http://localhost:5743/)**. The separate queue API uses **[localhost:55205](http://localhost:55205/docs)** and can accept jobs while the generator is off. `GET /api/models` on the queue API lists supported models and identifies Higgs as the default.
+Here are the available endpoints. See [API.md](API.md) for request formats, examples, and errors. Both services also offer interactive documentation at `/docs` and the full schema at `/openapi.json` while running.
+
+### Generator — localhost:5743
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/health` | Check the generator and queue status. |
+| GET | `/api/capabilities` | See the selected model's features and controls. |
+| POST | `/api/generate` | Generate one take. |
+| POST | `/api/candidates` | Generate 1–5 voice options. |
+| GET | `/api/candidates/{id}` | Check a batch and its results. |
+| POST | `/api/prompts/expand` | Preview expanded voice or delivery directions. |
+| GET | `/api/jobs` | List jobs. |
+| GET | `/api/jobs/{id}` | Check a job and its result. |
+| DELETE | `/api/jobs/{id}` | Remove a waiting job. |
+| DELETE | `/api/jobs` | Clear waiting jobs. |
+| POST | `/api/jobs/{id}/retry` | Retry a failed job. |
+| GET | `/api/history` | Browse generated takes. |
+| GET | `/api/artifacts/{id}` | Get a take's details. |
+| GET | `/api/metadata/{id}` | Download a take's saved metadata. |
+| GET | `/api/audio/{kind}/{id}` | Play or download audio. |
+| POST | `/api/artifacts/{id}/pauses` | Save a version with adjusted pauses. |
+| GET | `/api/voices` | Search the voice library. |
+| GET | `/api/voices/{id}` | Get a saved voice. |
+| POST | `/api/voices` | Save a voice to the library. |
+| PATCH | `/api/voices/{id}` | Edit a voice's name, notes, tags, or transcript. |
+| POST | `/api/voices/upload` | Upload a recording directly to the library. |
+| GET | `/api/voice-tags` | List voice-library tags. |
+| POST | `/api/references` | Upload a reference recording. |
+| GET | `/api/references/{id}/original` | Download the original reference file. |
+| POST | `/api/model/unload` | Release the model's memory. |
+
+On the generator, `/api/queue` is an alias for the `/api/jobs` routes above. `POST /api/jobs` and `POST /api/queue` are also aliases for `/api/generate`.
+
+### Queue service — localhost:55205
+
+This service can accept jobs while the generator is off. Its queue endpoints use a different request format from the generator; see the [queue API guide](API.md#standalone-queue-crud-api-port-55205).
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/health` | Check the queue service. |
+| GET | `/api/models` | List supported models and the default. |
+| POST | `/api/queue` | Add a job. |
+| GET | `/api/queue` | List jobs. |
+| GET | `/api/queue/{id}` | Get a job's details and result. |
+| PATCH | `/api/queue/{id}` | Update a waiting entry. |
+| DELETE | `/api/queue/{id}` | Remove a waiting entry. |
+| DELETE | `/api/queue` | Clear waiting entries. |
+
+## More documentation
 
 - [API guide](API.md): request examples, queue operations, model controls, and errors.
 - [Model details](BACKENDS.md): environments, downloads, licenses, and supported features.
