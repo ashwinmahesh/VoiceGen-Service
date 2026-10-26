@@ -44,7 +44,7 @@ class ExpansionTests(unittest.TestCase):
         self.assertEqual(record['llm']['voxcpm2']['source'],'backends/voxcpm2/prompt_expansion.json')
         self.assertTrue(record['updates']['description'].startswith(record['original']['description']+'\n'))
         self.assertEqual(self.f.client.get('/api/queue').json()['total'],0)
-        request={'text':text,**record['updates'],'prompt_expansion_id':record['id'],'candidate_count':2,'idempotency_key':'expanded-pair'}
+        request={'text':text,**record['updates'],'prompt_expansion_id':record['id'],'candidate_count':2,'candidate_variation':'seed_only','idempotency_key':'expanded-pair'}
         batch=self.f.client.post('/api/candidates',json=request);self.assertEqual(batch.status_code,202,batch.text)
         for job in batch.json()['jobs']:
             done=self.f.finish(job);self.assertEqual(done['status'],'done')
@@ -52,7 +52,7 @@ class ExpansionTests(unittest.TestCase):
             self.assertEqual(done['result']['prompt_expansion'],record)
         self.assertEqual(len(self.calls),1)
         with patch.object(server.app.state,'llm_enabled',False):
-            replay=self.f.client.post('/api/generate',json={k:v for k,v in request.items() if k not in ('candidate_count','idempotency_key')})
+            replay=self.f.client.post('/api/generate',json={k:v for k,v in request.items() if k not in ('candidate_count','candidate_variation','idempotency_key')})
             self.assertEqual(replay.status_code,202,replay.text);self.f.finish(replay.json())
         self.assertEqual(len(self.calls),1)
         self.assertEqual(self.f.client.post('/api/candidates',json=request).json()['id'],batch.json()['id'])
@@ -130,7 +130,7 @@ class ExpansionTests(unittest.TestCase):
         for request in [Generation(text='Hello.',description='A voice.'),CandidateGeneration(text='Hello.',description='A voice.')]:
             dumped=request.model_dump_json(exclude={'idempotency_key','prompt_expansion_id','qwen3','moss'})
             if isinstance(request,CandidateGeneration):
-                dumped=request.model_dump_json(exclude={'idempotency_key','prompt_expansion_id'})
+                dumped=request.model_dump_json(exclude={'idempotency_key','prompt_expansion_id','candidate_variation','candidate_use_llm'})
                 actual=JobManager.candidate_fingerprint(request)
             else:actual=JobManager.fingerprint(request)
             self.assertEqual(actual,hashlib.sha256(dumped.encode()).hexdigest())

@@ -14,6 +14,10 @@ def capabilities():
     caps=backend_capabilities()
     caps.limits['candidates']={'min':1,'max':5,'default':2,'sequential':True,
         'seed_strategy':'Base seed plus option index, wrapping at 2**32',
+        'variation_default':'auto','variation_choices':['auto','distinct','seed_only'],
+        'candidate_use_llm_default':True,
+        'distinct_design_backends':['voxcpm2','qwen3','moss'],
+        'variation_note':'Auto contrasts voice descriptions in design mode; references/presets retain their selected identity. LLM when enabled, built-in directions otherwise.',
         'submit_url':'/api/candidates','status_url':'/api/candidates/{id}'}
     caps.limits.update({'queue':{'durable':True,'database':str(PROJECT_ROOT/'state/queue.sqlite3'),'api_generate_immediately_default':False,'ui_generate_immediately_default':True,
                          'ordering':'Immediate FIFO before normal FIFO; active inference is never interrupted',

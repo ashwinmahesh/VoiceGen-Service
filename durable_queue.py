@@ -197,16 +197,42 @@ class QueueStore:
         with self.transaction() as db:
             return db.execute("SELECT 1 FROM entries WHERE status='queued' AND backend=? LIMIT 1",(backend,)).fetchone() is not None
 
-    def claim(self, backend):
+    def claim(self, backend, allow_llm=True):
         with self.transaction() as db:
-            row = db.execute('''SELECT * FROM entries WHERE status='queued' AND backend=?
-                ORDER BY generate_immediately DESC,sequence LIMIT 1''',(backend,)).fetchone()
+            rows = db.execute('''SELECT * FROM entries WHERE status='queued' AND backend=?
+                ORDER BY generate_immediately DESC,sequence''',(backend,))
+            row=None
+            for candidate in rows:
+                plan=json.loads(candidate['payload']).get('candidate_plan',{})
+                if plan.get('method')=='llm' and not plan.get('ready') and not allow_llm:continue
+                row=candidate;break
             if row is None:
                 return None
             db.execute('''UPDATE entries SET status='running',attempts=attempts+1,
                 started_at=?,completed_at=NULL,updated_at=?,stage='Starting',error=NULL WHERE id=?''',
                 (now(),now(),row['id']))
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(row['id'],)).fetchone())
+
+    def freeze_candidate_variants(self, batch_id, variants):
+        """Commit every effective design together before any member synthesizes."""
+        with self.transaction() as db:
+            batch=self._candidate_batch(db,db.execute('SELECT * FROM candidate_batches WHERE id=?',(batch_id,)).fetchone())
+            if len(batch['jobs'])!=len(variants):raise QueueConflict('Diversity plan differs from the admitted candidate count')
+            if all(row['payload'].get('candidate_plan',{}).get('ready') for row in batch['jobs']):return
+            for row,variant in zip(batch['jobs'],variants):
+                if row['status']=='done':raise QueueConflict('Cannot change a completed candidate design')
+                payload=row['payload'];payload['effective']['description']=variant['description']
+                payload['candidate_variant']=variant;payload['candidate_plan']['ready']=True
+                db.execute('UPDATE entries SET payload=?,updated_at=? WHERE id=?',
+                           (json.dumps(payload,allow_nan=False),now(),row['id']))
+
+    def fail_candidate_planning(self, batch_id, error):
+        with self.transaction() as db:
+            batch=self._candidate_batch(db,db.execute('SELECT * FROM candidate_batches WHERE id=?',(batch_id,)).fetchone())
+            for row in batch['jobs']:
+                if row['status']=='queued':
+                    db.execute("UPDATE entries SET status='error',stage='Distinct voice planning failed',error=?,completed_at=?,updated_at=? WHERE id=?",
+                               (error,now(),now(),row['id']))
 
     def interrupted(self):
         with self.transaction() as db:

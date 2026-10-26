@@ -15,6 +15,21 @@ from data_owner import own_data_directory
 
 
 class BackendTests(unittest.TestCase):
+    def test_llm_startup_default_interactive_choice_and_explicit_opt_out(self):
+        import io
+        from startup_select import choose_llm
+        self.assertTrue(choose_llm())
+        self.assertTrue(choose_llm(interactive=True,input_fn=lambda:'',stream=io.StringIO()))
+        self.assertFalse(choose_llm(interactive=True,input_fn=lambda:'N',stream=io.StringIO()))
+        self.assertFalse(choose_llm(disabled=True,interactive=True,input_fn=lambda:self.fail('Explicit opt-out must skip input')))
+        answers=iter(['wrong','y'])
+        self.assertTrue(choose_llm(interactive=True,input_fn=lambda:next(answers),stream=io.StringIO()))
+        import subprocess,sys
+        base=[sys.executable,str(PROJECT_ROOT/'startup_select.py'),'serve','--model','higgs','--non-interactive','--dry-run']
+        import json
+        self.assertNotIn('NO_LLM=1',json.loads(subprocess.check_output(base,text=True))['command'])
+        self.assertIn('NO_LLM=1',json.loads(subprocess.check_output(base+['--no-llm'],text=True))['command'])
+
     def profile(self,backend):
         import json
         return json.loads((PROJECT_ROOT/'backends'/backend/'service.json').read_text())
@@ -166,7 +181,7 @@ class BackendTests(unittest.TestCase):
             root=Path(folder);(root/'logs').mkdir()
             state={'service':'fish','project':str(PROJECT_ROOT),'storage':str(root)}
             process=Mock(pid=12345);process.poll.return_value=None
-            with patch.object(sys,'argv',['manage.py','start','--port','8113']),patch('manage.PROFILE',self.profile('fish')),patch('manage.ROOT',root),patch('manage.prepare_storage'),patch('manage.health',side_effect=[None,state]),patch('manage.socket.socket'),patch('manage.subprocess.Popen',return_value=process) as launch,redirect_stdout(io.StringIO()):
+            with patch.object(sys,'argv',['manage.py','start','--port','8113']),patch('manage.PROFILE',self.profile('fish')),patch('manage.ROOT',root),patch('manage.prepare_storage'),patch('prompt_assets.check_assets'),patch('prompt_assets.check_runtime'),patch('manage.health',side_effect=[None,state]),patch('manage.socket.socket'),patch('manage.subprocess.Popen',return_value=process) as launch,redirect_stdout(io.StringIO()):
                 with self.assertLogs(level='WARNING') as output:manage.main()
                 self.assertIn('MODEL LICENSE WARNING',output.output[0])
                 self.assertIn('Fish S2 Pro',output.output[0])

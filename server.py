@@ -30,6 +30,7 @@ manager = JobManager(engine, db_path=PROJECT_ROOT/'state/queue.sqlite3')
 @asynccontextmanager
 async def lifespan(app):
     prepare_storage()
+    manager.llm_enabled=app.state.llm_enabled
     from prompt_expansion import capability
     capability(app.state.llm_enabled)  # Validate all published profile specifications before queue recovery.
     if app.state.llm_enabled:
@@ -37,7 +38,7 @@ async def lifespan(app):
         check_assets();check_runtime()
     from license_notices import warn_at_startup
     warn_at_startup(PROFILE['backend'])
-    print('Local voice prompt expansion: '+('enabled · Qwen3.5-2B 4-bit' if app.state.llm_enabled else 'disabled · use make serve WITH_LLM=1 to enable'),flush=True)
+    print('Local voice prompt expansion: '+('enabled · Qwen3.5-2B 4-bit' if app.state.llm_enabled else 'disabled · restart without NO_LLM=1 to enable'),flush=True)
     from data_owner import own_data_directory
     with own_data_directory(ROOT) as owner:
         manager.data_owner = owner
@@ -50,7 +51,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title='Local Voice Studio API',version='2.1.0',lifespan=lifespan)
-app.state.llm_enabled=False
+app.state.llm_enabled=True
 app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
 app.add_middleware(BodyLimit)
 
@@ -119,7 +120,7 @@ def health():
 
 @app.post('/api/prompts/expand',response_model=PromptExpansion)
 async def expand_voice_guidance(payload: ExpandVoiceGuidance):
-    if not app.state.llm_enabled:raise HTTPException(422,'Local prompt expansion is disabled. Start with make serve WITH_LLM=1.')
+    if not app.state.llm_enabled:raise HTTPException(422,'Local prompt expansion is disabled. Start with make serve without NO_LLM=1.')
     try:
         effective,reference,transcript,info=prepare_generation(payload.generation)
         # A disconnected preview must not cancel a queued executor task and strand its lease.
@@ -178,8 +179,8 @@ def admit_generation(request, candidates=False):
         errors = all_errors()+runtime_errors()
         if errors: raise HTTPException(503,'Incomplete setup. Run make setup for the selected MODEL. '+ '; '.join(errors))
         destination = storage.output_folder(request.output_dir)
-        submit = manager.submit_candidates if candidates else manager.submit
-        return submit(request,effective,reference,transcript,destination,reference_info)
+        if candidates:return manager.submit_candidates(request,effective,reference,transcript,destination,reference_info,llm_enabled=app.state.llm_enabled)
+        return manager.submit(request,effective,reference,transcript,destination,reference_info)
     except BusyError as exc:
         raise HTTPException(409,str(exc)) from None
     except (ValueError,OSError,RuntimeError) as exc:
@@ -408,11 +409,11 @@ if __name__ == '__main__':
     import uvicorn
     parser = argparse.ArgumentParser()
     parser.add_argument('--port',type=int,default=DEFAULT_PORT)
-    parser.add_argument('--with-llm',action='store_true',help='Enable optional local voice guidance previews')
+    parser.add_argument('--no-llm',action='store_true',help='Disable the local prompt LLM (enabled by default)')
     parser.add_argument('--backend',choices=__import__('backend_selection').BACKENDS)
     args = parser.parse_args()
-    app.state.llm_enabled=args.with_llm
-    if args.with_llm:
+    app.state.llm_enabled=not args.no_llm
+    if app.state.llm_enabled:
         from prompt_assets import check_assets,check_runtime
         check_assets();check_runtime()
     # Fail before lifespan recovery when another listener already owns the port.

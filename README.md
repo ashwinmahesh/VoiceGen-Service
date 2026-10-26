@@ -12,21 +12,21 @@ Full-page screenshots of the separate Generate and Collection pages, plus the pa
 
 ### Generate a line
 
-Choose or upload a saved voice, enter the line, and choose **1–5 options** (default **2**). Each option has its own player, download and **Save voice** action. Designed voices explore different seeds; saved/reference voices produce alternative takes of the selected voice.
+Choose or upload a saved voice, enter the line, and choose **1–5 options** (default **2**). Each option has its own player, download and **Save voice** action. Designed voices explore contrasting descriptions and seeds; saved/reference voices produce alternative takes of the selected voice. The Prompt expansion switch defaults on when the backend serves the LLM.
 
-![Full Generate page with two illustrative voice options, visible expanded guidance for the form and selected take, and the 1–5 option selector](docs/images/studio-page.jpg)
+![Full Generate page with distinct illustrative voice designs, inspectable per-option prompts, and the 1–5 option selector](docs/images/studio-page.jpg)
 
 ### Collection
 
 Search History and Voice library, edit names/descriptions/tags, or use **Upload voice** to add your own recording directly.
 
-![Full Collection page with a newly uploaded demo voice and searchable tags](docs/images/collection-page.jpg)
+![Full Collection page with a saved demonstration voice and searchable tags](docs/images/collection-page.jpg)
 
 ### Queue
 
 Open **Queue** from the header on either page. The centered modal uses 80% of the screen height, with entries scrolling between the filters and pagination. It lists jobs with status filters, paging, pending removal/clear and failed-job retry. Each entry's action buttons are stacked vertically on the right.
 
-![Full page with the Queue modal showing queued demo takes and Monitor/Remove actions stacked on the right](docs/images/queue-modal.jpg)
+![Full page with the Queue modal showing completed demonstration takes and actions stacked on the right](docs/images/queue-modal.jpg)
 
 ## Setup and storage
 
@@ -83,15 +83,15 @@ make start MODEL=voxcpm2
 
 ## Optional local voice prompt expansion
 
-Start with `make serve WITH_LLM=1` (or `make start WITH_LLM=1`) to enable **Preview expanded guidance**. Plain serving keeps it disabled. First setup installs the isolated `.venv-enhancer` and pinned shared Qwen3.5-2B 4-bit assets; existing installations can run `make setup-llm`. This runtime requires Python 3.14 independently of the selected speech backend (`LLM_PYTHON=/path/to/python3.14`). Speech environments are not upgraded by this setup.
+`make serve` and `make start` enable the prompt LLM by default. Interactive serving asks **Enable local prompt LLM? [Y/n]** after model selection; Enter keeps it on. Use `make serve NO_LLM=1` (or `make start NO_LLM=1`) to disable it and skip the question. Noninteractive serving defaults on. The direct Python CLIs use `--no-llm` for the same opt-out; the former WITH_LLM/--with-llm controls are retired. First setup installs the isolated `.venv-enhancer` and pinned shared Qwen3.5-2B 4-bit assets; existing installations can run `make setup-llm`. This runtime requires Python 3.14 independently of the selected speech backend (`LLM_PYTHON=/path/to/python3.14`). Speech environments are not upgraded by this setup.
 
 ```sh
 make setup                 # Downloads the LLM only when its verified assets are missing
-make serve WITH_LLM=1       # Enable local voice prompt expansion
-make serve WITH_LLM=0       # Disable it (also the default for plain make serve)
+make serve                 # LLM enabled; terminal startup offers [Y/n]
+make serve NO_LLM=1         # Explicitly disable the LLM for this run
 ```
 
-Write a description/delivery direction, preview the suggestion, then choose **Apply guidance** or **Keep original**. The applied **Expanded prompt** stays visible in the form, with the original available underneath. Each generated or reopened take shows its own **Expanded prompt for this take**, so the saved instructions remain inspectable after a reload or when browsing History. **Restore original guidance** undoes an applied suggestion. Spoken dialogue and reference transcripts stay verbatim and are excluded from the LLM input. It receives written guidance only and does not listen to recordings. Review suggestions for unwanted nuances, repetition, accent and identity changes; expansion is experimental and does not guarantee better audio.
+The **Prompt expansion** switch starts on when the backend serves the LLM, remembers your preference, and is disabled when the backend runs without it. Turning it off restores any applied preview to its original guidance, disables previews, and uses built-in contrast directions for design batches. For a single take or reference delivery, write a description/delivery direction, preview the suggestion, then choose **Apply guidance** or **Keep original**. The applied **Expanded prompt** stays visible in the form, with the original available underneath. Each generated or reopened take shows its own **Expanded prompt for this take**, so the saved instructions remain inspectable after a reload or when browsing History. **Restore original guidance** undoes an applied suggestion. Spoken dialogue and reference transcripts stay verbatim and are excluded from the LLM input. It receives written guidance only and does not listen to recordings. Review suggestions for unwanted nuances, repetition, accent and identity changes; expansion is experimental and does not guarantee better audio.
 
 Supported paths are Vox design or explicitly flexible reference delivery, Qwen VoiceDesign/CustomVoice, MOSS design, Fish short delivery tags and Higgs one existing catalog control. Vox recorded-performance cloning, Qwen Base reference, Chatterbox Original and the installed Index adapter have no compatible prose path and reject previews before loading the LLM. Fish/Higgs require a written direction and empty existing delivery controls. Their native rendered text remains inspectable under Advanced settings. Existing sampler, voice, accent and pause controls remain authoritative.
 
@@ -99,7 +99,7 @@ Each backend has a versioned [`backends/<model-id>/prompt_expansion.json`](backe
 
 On this installation, the enhancer reuses `/Volumes/ASH-SSD/models/prompt-enhancer/weights`; ignored `storage.json.prompt_llm_dir` remembers it. `PROMPT_LLM_DIR=/absolute/path` overrides it; a fresh checkout defaults to `DATA_DIR/prompt-enhancer/weights`. Setup verifies the pinned checksum and does not duplicate existing weights. Serving is offline and never downloads. Preview reserves the same GPU slot as speech, unloads resident speech weights, runs one short-lived LLM process and releases it before synthesis. Busy previews return409; queued speech is retained.
 
-Applied preview receipts are private JSON in `DATA_DIR/prompt-expansions`. Queue admission embeds the frozen original/expanded guidance and LLM/profile provenance into every option. Generation/restart/retry never reruns the LLM and can use an already applied receipt with plain serving. Editing guidance/voice/mode invalidates its receipt. Back up these records alongside private media and project-local SQLite state. See [API.md](API.md#voice-guidance-preview-and-application) and [the research, policy and measured limits](docs/voice-prompt-expansion.md).
+Applied preview receipts are private JSON in `DATA_DIR/prompt-expansions`. Queue admission embeds the frozen original/expanded guidance and LLM/profile provenance into every option. Restart/retry reuses applied previews with plain serving. Design batches can additionally plan distinct options as described below; once planned, those descriptions are also reused. Editing guidance/voice/mode invalidates its receipt. Back up these records alongside private media and project-local SQLite state. See [API.md](API.md#voice-guidance-preview-and-application) and [the research, policy and measured limits](docs/voice-prompt-expansion.md).
 
 ![Voice guidance preview with original and suggested instructions; synthetic demonstration](docs/images/prompt-expansion.jpg)
 
@@ -205,6 +205,10 @@ A successful response is HTTP 201 with the saved voice's `id` and `audio_url`. P
 
 ## Compare generated voice options
 
-**Number of options** accepts 1–5 and defaults to 2. Options generate sequentially with seeds `seed`, `seed+1`, and so on, wrapping within the unsigned 32-bit range. Text, voice/reference, transcript and delivery controls stay the same. Different seeds explore alternatives; they do not guarantee distinct voices or preserve identity by themselves. Preview each option, select it for the larger player/pause editor, or save that option directly into Collection.
+**Number of options** accepts 1–5 and defaults to 2. For Vox, Qwen VoiceDesign and MOSS designs, **Distinct voice designs** is the default: option 1 keeps your original description, while later options explore brighter, darker, focused or open resonance within your stated traits. With the LLM available and **Prompt expansion** on, the LLM refines each additional direction using the selected model's rules, and the service appends a fixed contrast direction. Without the LLM, built-in contrast directions work offline. Explicit accent, delivery, dialogue and sampler settings remain intact. Inspect the actual prompt on every option. This encourages contrast; listening is still needed to judge identity, accent and quality.
+
+Choose **Same prompt · different seeds** to retain identical descriptions. Saved/reference/preset batches, including Higgs, always produce alternate takes of the selected speaker; written voice-design contrasts are unavailable for those modes. Higgs keeps its preferred untagged baseline unless you explicitly apply a delivery control. Options run sequentially with seeds `seed`, `seed+1`, and so on, wrapping within the unsigned 32-bit range. Preview each option, select it for the larger player/pause editor, or save that option directly into Collection. **Reuse settings** on a chosen design uses that exact description and seed-only variation, so it does not immediately redesign the selected option.
+
+The shared API field is `candidate_variation: "auto" | "distinct" | "seed_only"` (`auto` by default). `candidate_use_llm:false` disables LLM variant planning for that batch even when available (default true; UI follows the switch). LLM-enabled design batches plan once under the shared GPU reservation, with one focused completion per additional option in one model load. All descriptions freeze in SQLite before speech starts. An unplanned LLM batch waits visibly if restarted with `NO_LLM=1`; a planned batch runs/retries without the LLM. Planning failure reports errors for the group rather than silently switching strategies. Existing speech defaults are unchanged.
 
 The UI uses `POST /api/candidates` with the ordinary generation fields plus `candidate_count` (default 2). Poll `GET /api/candidates/{id}` for the ordered jobs and their completed audio results. The group and all 1–5 jobs are committed together in the project's SQLite database; existing queue priority, restart recovery and per-job failure/removal/retry rules apply. A failed option does not discard successful audio. Reloading reconnects to the latest group; **View all options** in Queue or History also reopens it. Each completed take remains in History, and voices enter Voice library only when explicitly saved. Existing single-take `/api/generate`, `/api/queue` and `/api/jobs` requests remain compatible. See [API.md](API.md) for group status and retry details.

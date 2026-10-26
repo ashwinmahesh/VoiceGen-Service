@@ -46,6 +46,17 @@ def runtime_python(root, backend, original_backend, venv_override=None):
     return (path if path.is_absolute() else Path(root)/path)/'bin/python'
 
 
+def choose_llm(disabled=False,interactive=False,input_fn=input,stream=sys.stderr):
+    if disabled:return False
+    if not interactive:return True
+    while True:
+        print('Enable local prompt LLM? [Y/n]: ',end='',file=stream,flush=True)
+        answer=input_fn().strip().casefold()
+        if answer in ('','y','yes'):return True
+        if answer in ('n','no'):return False
+        print('Enter Y or N; Enter enables the LLM.',file=stream)
+
+
 def setup_errors(root, backend, original_backend, venv_override=None):
     """Read verified assets and runtime versions in the correct environment, without model loading."""
     python=runtime_python(root,backend,original_backend,venv_override)
@@ -85,6 +96,7 @@ def main():
     parser.add_argument('--keep-venv',action='store_true')
     parser.add_argument('--keep-port',action='store_true')
     parser.add_argument('--dry-run',action='store_true')
+    parser.add_argument('--no-llm',action='store_true')
     args=parser.parse_args()
     root=Path(__file__).resolve().parent
     default=json.loads((root/'service.json').read_text())['backend']
@@ -105,6 +117,7 @@ def main():
         errors=setup_errors(root,model,default,override)
         if errors:raise SystemExit(f'{model_name(model)} is not ready: {errors[0]}\nRun make setup MODEL={model}, or reconnect its configured model drive.')
     command=['make',args.action+'-selected','MODEL='+model]
+    if args.action=='serve' and not choose_llm(args.no_llm,interactive):command.append('NO_LLM=1')
     environment=os.environ.copy()
     if not args.keep_venv:environment.pop('VENV',None)
     if not args.keep_port:environment.pop('PORT',None)

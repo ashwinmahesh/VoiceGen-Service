@@ -43,7 +43,7 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('action',choices=['start','stop','status','health'])
     parser.add_argument('--port',type=int,default=DEFAULT_PORT)
-    parser.add_argument('--with-llm',action='store_true')
+    parser.add_argument('--no-llm',action='store_true')
     parser.add_argument('--backend',choices=__import__('backend_selection').BACKENDS)
     args=parser.parse_args()
     prepare_storage()
@@ -67,12 +67,12 @@ def main():
                 print(f'{PROFILE["name"]} stopped.'); return
             time.sleep(.2)
         raise SystemExit('Shutdown is still in progress. Check make status.')
-    if args.with_llm:
+    if not args.no_llm:
         from prompt_assets import check_assets,check_runtime
         check_assets();check_runtime()
     if matching(state):
-        if bool(state.get('prompt_expansion',{}).get('enabled'))!=args.with_llm:
-            raise SystemExit('This server has a different prompt LLM startup mode. Stop it when idle, then start with the desired WITH_LLM value.')
+        if bool(state.get('prompt_expansion',{}).get('enabled'))!=(not args.no_llm):
+            raise SystemExit('This server has a different prompt LLM startup mode. Stop it when idle, then start with or without NO_LLM=1.')
         print(f'Already running: http://127.0.0.1:{args.port}'); return
     with socket.socket() as probe:
         probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
@@ -83,7 +83,7 @@ def main():
     warn_at_startup(PROFILE['backend'])
     with log.open('a') as stream:
         process=subprocess.Popen([sys.executable,'-u',str(PROJECT_ROOT/'server.py'),'--port',str(args.port)] +
-                                 (['--with-llm'] if args.with_llm else [])+
+                                 (['--no-llm'] if args.no_llm else [])+
                                  (['--backend',BACKEND] if BACKEND else []),
             cwd=PROJECT_ROOT,stdin=subprocess.DEVNULL,stdout=stream,stderr=stream,start_new_session=True)
     pidfile.write_text(str(process.pid))

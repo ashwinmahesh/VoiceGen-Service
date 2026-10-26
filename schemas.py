@@ -147,6 +147,8 @@ def generation_metadata(request):
 
 class CandidateGeneration(Generation):
     candidate_count: int = Field(default=2, ge=1, le=5, strict=True)
+    candidate_variation: Literal['auto','distinct','seed_only'] = 'auto'
+    candidate_use_llm: bool = True
 
 
 class ExpandVoiceGuidance(BaseModel):
@@ -241,6 +243,8 @@ class Job(BaseModel):
     candidate_index: int | None = None
     candidate_count: int | None = None
     prompt_expansion: dict | None = None
+    candidate_variant: dict | None = None
+    candidate_variation: Literal['distinct','seed_only'] | None = None
 
 
 class CandidateBatch(BaseModel):
@@ -248,6 +252,7 @@ class CandidateBatch(BaseModel):
     created_at: str
     backend: str
     candidate_count: int
+    candidate_variation: Literal['distinct','seed_only'] = 'seed_only'
     status: Literal['queued','running','done','partial','error','deleted']
     done_count: int
     jobs: list[Job]

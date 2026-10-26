@@ -47,6 +47,7 @@ class ContractTests(unittest.TestCase):
             (self.root/name).mkdir(parents=True,exist_ok=True)
         self.engine=FakeEngine();self.manager=JobManager(self.engine,self.root,self.root/'gpu.lock')
         self.stack=ExitStack()
+        self.stack.enter_context(patch.object(server.app.state,'llm_enabled',False))
         for target,value in [('server.ROOT',self.root),('storage.ROOT',self.root),('storage.OUTPUT_DIR',self.root/'outputs'),
                              ('server.engine',self.engine),('server.manager',self.manager),('server.all_errors',lambda:[]),('server.runtime_errors',lambda:[]),
                              ('server.prepare_storage',lambda:None)]:

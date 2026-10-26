@@ -28,6 +28,7 @@ class JobManager:
         self.active = None
         self.unloading = False
         self.expanding = False
+        self.llm_enabled = False
         self.last_error = None
         self.stage = 'unloaded'
         self._initialized = False
@@ -102,11 +103,15 @@ class JobManager:
         result['paused'] = row['status']=='queued' and row['backend'] != self.profile['backend']
         if result['paused']:
             result['stage'] = 'Paused: select '+row['backend']+' at startup'
+        plan=row['payload'].get('candidate_plan',{})
+        if row['status']=='queued' and plan.get('method')=='llm' and not plan.get('ready') and not self.llm_enabled:
+            result['paused']=True;result['stage']='Paused: start without NO_LLM=1 to plan distinct voices'
         result['requested'] = {k:v for k,v in row['payload']['requested'].items() if k!='idempotency_key'}
         result['effective'] = {k:v for k,v in row['payload']['effective'].items() if k!='idempotency_key'}
-        result.update({key:row['payload'][key] for key in ('candidate_batch_id','candidate_index','candidate_count')
+        result.update({key:row['payload'][key] for key in ('candidate_batch_id','candidate_index','candidate_count','candidate_variation')
                        if key in row['payload']})
         if row['payload'].get('prompt_expansion'):result['prompt_expansion']=row['payload']['prompt_expansion']
+        if row['payload'].get('candidate_variant'):result['candidate_variant']=row['payload']['candidate_variant']
         return result
 
     def read(self, identity):
@@ -244,6 +249,8 @@ class JobManager:
     @staticmethod
     def candidate_fingerprint(request):
         excluded={'idempotency_key'}|({'prompt_expansion_id'} if request.prompt_expansion_id is None else set())
+        if request.candidate_variation=='auto':excluded.add('candidate_variation')
+        if request.candidate_use_llm:excluded.add('candidate_use_llm')
         return hashlib.sha256(request.model_dump_json(exclude=excluded).encode()).hexdigest()
 
     def public_candidates(self, batch):
@@ -254,7 +261,7 @@ class JobManager:
                   'done' if done == len(jobs) else 'partial' if done else
                   'deleted' if all(value=='deleted' for value in statuses) else 'error')
         return dict(id=batch['id'],backend=batch['backend'],created_at=batch['created_at'],
-                    candidate_count=len(jobs),status=status,done_count=done,jobs=jobs)
+                    candidate_count=len(jobs),candidate_variation=jobs[0].get('candidate_variation') or 'seed_only',status=status,done_count=done,jobs=jobs)
 
     def read_candidates(self, identity):
         if not IDENTITY.fullmatch(identity):
@@ -273,8 +280,11 @@ class JobManager:
             raise BusyError(str(exc)) from None
         return self.public_candidates(row) if row else None
 
-    def submit_candidates(self, request, effective, reference, transcript, destination, reference_info=None):
+    def submit_candidates(self, request, effective, reference, transcript, destination, reference_info=None, llm_enabled=False):
         self._ready()
+        from candidate_diversity import definition,built_in
+        plan=definition(request,effective,self.profile['backend'],llm_enabled)
+        variants=built_in(plan) if plan and plan['method']=='built_in' else None
         with self.guard:
             payload, mode, model = self._payload(request,effective,reference,transcript,destination,reference_info)
             from copy import deepcopy
@@ -283,7 +293,14 @@ class JobManager:
                 item = deepcopy(payload)
                 for key in ('requested','effective'):
                     item[key].pop('candidate_count',None)
+                    item[key].pop('candidate_variation',None)
+                    item[key].pop('candidate_use_llm',None)
                     item[key]['seed'] = (request.seed + index) % (2**32)
+                item['candidate_variation']='distinct' if plan else 'seed_only'
+                if plan:
+                    item['candidate_plan']={**plan,'ready':bool(variants)}
+                    if variants:
+                        item['candidate_variant']=variants[index];item['effective']['description']=variants[index]['description']
                 payloads.append(item)
             key = hashlib.sha256(request.idempotency_key.encode()).hexdigest() if request.idempotency_key else None
             try:
@@ -325,7 +342,7 @@ class JobManager:
                 with self.guard:
                     if not self._stop.is_set() and self.store.has_pending(self.profile['backend']):
                         handle = self.reserve()
-                        row = self.store.claim(self.profile['backend'])
+                        row = self.store.claim(self.profile['backend'],allow_llm=self.llm_enabled)
                         if row:
                             self.active = row['id']
                             self.last_error = None
@@ -381,6 +398,18 @@ class JobManager:
                 path = validate_mount(auxiliary['path'])
                 if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != auxiliary['sha256']:
                     raise ValueError('Queued emotion reference is missing or changed; restore admitted bytes before retrying')
+            if payload.get('candidate_plan') and not payload['candidate_plan']['ready']:
+                self.stage='expanding';self.update(identity,stage='Planning distinct voice designs')
+                try:
+                    from candidate_diversity import generate
+                    with inherit_reservations(self._owner,handle,self.data_owner):
+                        self.engine.unload()
+                        variants=generate(payload['candidate_plan'])
+                    self.store.freeze_candidate_variants(payload['candidate_batch_id'],variants)
+                except Exception as exc:
+                    self.store.fail_candidate_planning(payload['candidate_batch_id'],str(exc));raise
+                payload=self.store.read(identity)['payload']
+                effective=Generation.model_validate(payload['effective'])
             def stage(value):
                 self.stage = 'loading' if value=='Loading model' else 'generating'
                 self.update(identity,stage=value)
@@ -404,7 +433,8 @@ class JobManager:
                 'reference':{'path':str(reference),'transcript':payload['transcript'],**(payload['reference_info'] or {})} if reference else None}
             result['input_references'] = payload.get('aux_references',{})
             if payload.get('prompt_expansion'):result['prompt_expansion']=payload['prompt_expansion']
-            result.update({key:payload[key] for key in ('candidate_batch_id','candidate_index','candidate_count') if key in payload})
+            if payload.get('candidate_variant'):result['candidate_variant']=payload['candidate_variant']
+            result.update({key:payload[key] for key in ('candidate_batch_id','candidate_index','candidate_count','candidate_variation') if key in payload})
             backend=self.profile['backend']
             if isinstance(applied.get(backend),dict) and isinstance(metrics.get(backend),dict):
                 result[backend]={**applied[backend],**metrics[backend]}
