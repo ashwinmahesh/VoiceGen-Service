@@ -233,6 +233,29 @@ async function refresh() {
   await loadVoicePage();
 }
 function el(tag,text,cls){const node=document.createElement(tag);if(text!=null)node.textContent=text;if(cls)node.className=cls;return node}
+const queueIconPaths={
+ queue:'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+ monitor:'M4 4h16v12H4zM8 21h8M12 16v5',
+ play:'m8 5 11 7-11 7Z',
+ pause:'M8 5v14M16 5v14',
+ remove:'M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6',
+ clear:'M3 6h18M3 12h9M3 18h9m5-6 5 6m0-6-5 6',
+ close:'m6 6 12 12M18 6 6 18',
+ previous:'m14 6-6 6 6 6',next:'m10 6 6 6-6 6',
+ options:'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
+ resources:'M4 3v18h17M8 16v-5M13 16V7M18 16v-8',
+ retry:'M3 10a9 9 0 1 1 1 8M3 4v6h6',
+ grip:'M8 5h.01M16 5h.01M8 12h.01M16 12h.01M8 19h.01M16 19h.01'
+};
+function queueIcon(name){
+ const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');
+ for(const[key,value]of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':name==='grip'?'3':'1.6','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false',class:'queue-icon'}))icon.setAttribute(key,value);
+ const path=document.createElementNS(icon.namespaceURI,'path');path.setAttribute('d',queueIconPaths[name]);icon.append(path);return icon;
+}
+function queueLabel(control,icon,label){control.replaceChildren(queueIcon(icon),el('span',label));return control}
+function queueControl(tag,label,icon,cls='secondary'){return queueLabel(el(tag,null,cls),icon,label)}
+for(const[id,icon,label]of [['queue-pause','pause','Pause queue'],['queue-clear','clear','Clear pending'],['close-queue','close','Close'],['queue-prev','previous','Previous'],['queue-next','next','Next']])queueLabel($(id),icon,label);
+$('open-queue').prepend(queueIcon('queue'));
 function renderCards() {
   const isVoices = collection === 'voices';
   $('search').placeholder = isVoices ? 'Search voice names, descriptions, or tags…' : 'Search text, voice descriptions, or emotions…';
@@ -421,7 +444,7 @@ async function health(){
  if(healthInFlight)return;healthInFlight=true;
  try{
   const state=await api('/health');
-  queuePaused=!!state.queue_paused;$('queue-pause').textContent=queuePaused?'Resume queue':'Pause queue';
+  queuePaused=!!state.queue_paused;queueLabel($('queue-pause'),queuePaused?'play':'pause',queuePaused?'Resume queue':'Pause queue');
   if(!changingModel)await loadModelChoices();
   online=state.downloaded&&!state.runtime_errors?.length;
   queueWritable=state.queue_storage?.status!=='unavailable';queueNotices(state);
@@ -456,7 +479,7 @@ async function refreshQueue(){
   const card=el('article',null,'card queue-entry'),content=el('div',null,'queue-entry-content');
   card.dataset.jobId=row.id;card.dataset.queueStatus=row.status;
   if(row.status==='queued'){
-   const handle=el('button','⠿','queue-drag-handle');handle.type='button';handle.dataset.jobId=row.id;
+   const handle=el('button',null,'queue-drag-handle');handle.append(queueIcon('grip'));handle.type='button';handle.dataset.jobId=row.id;
    handle.setAttribute('aria-label','Reorder job: '+(row.requested?.text||row.id).slice(0,90));handle.setAttribute('aria-describedby','queue-reorder-hint');
    handle.title='Drag to reorder, adopting the target’s priority, or use the up and down arrow keys';handle.addEventListener('pointerdown',startQueueDrag);
    handle.addEventListener('lostpointercapture',()=>{if(queueDrag?.handle===handle)finishQueueDrag()});
@@ -467,16 +490,16 @@ async function refreshQueue(){
   content.append(el('p',row.requested?.text||row.id),el('p',row.stage,'hint'));
   if(row.error)content.append(el('p',row.error,'error'));
   const actions=el('div',null,'card-actions queue-actions');
-  if(row.candidate_batch_id){const options=el('button','View all options','secondary');options.type='button';options.onclick=()=>{$('queue-dialog').close();watchCandidates(row.candidate_batch_id)};actions.append(options);}
-  const inspect=el('button',row.status==='done'?'Open take':'Monitor','secondary queue-monitor');inspect.type='button';inspect.onclick=()=>{$('queue-dialog').close();row.result?showResult(row.result):watch(row.id)};actions.append(inspect);
-  if(row.status!=='queued'){const resourceLink=el('a','Resources & logs','secondary');resourceLink.href='/observability?job='+encodeURIComponent(row.id);actions.append(resourceLink)}
+  if(row.candidate_batch_id){const options=queueControl('button','View all options','options');options.type='button';options.onclick=()=>{$('queue-dialog').close();watchCandidates(row.candidate_batch_id)};actions.append(options);}
+  const inspect=queueControl('button',row.status==='done'?'Open take':'Monitor',row.status==='done'?'play':'monitor','secondary queue-monitor');inspect.type='button';inspect.onclick=()=>{$('queue-dialog').close();row.result?showResult(row.result):watch(row.id)};actions.append(inspect);
+  if(row.status!=='queued'){const resourceLink=queueControl('a','Resources & logs','resources');resourceLink.href='/observability?job='+encodeURIComponent(row.id);actions.append(resourceLink)}
   if(row.status==='queued'){
-   const run=el('button','Run Now','secondary queue-run-now');run.type='button';run.disabled=!!row.paused;
+   const run=queueControl('button','Run Now','play','secondary queue-run-now');run.type='button';run.disabled=!!row.paused;
    run.title=row.paused?row.stage:'Run next, ahead of other waiting jobs. The current batch finishes first.';
    run.onclick=()=>changeQueueOrder(row.id,null,true);actions.append(run);
-   const remove=el('button','Remove','secondary queue-remove');remove.type='button';remove.onclick=async()=>{try{await api('/api/queue/'+row.id,{method:'DELETE'});await refreshQueue()}catch(exc){error(exc.message)}};actions.append(remove);
+   const remove=queueControl('button','Remove','remove','secondary queue-remove');remove.type='button';remove.onclick=async()=>{try{await api('/api/queue/'+row.id,{method:'DELETE'});await refreshQueue()}catch(exc){error(exc.message)}};actions.append(remove);
   }
-  if(row.status==='error'&&!row.paused){const retry=el('button','Retry same entry','secondary');retry.type='button';retry.onclick=async()=>{try{const job=await post('/api/jobs/'+row.id+'/retry',{});$('queue-dialog').close();watch(job.id);await refreshQueue()}catch(exc){error(exc.message)}};actions.append(retry)}
+  if(row.status==='error'&&!row.paused){const retry=queueControl('button','Retry same entry','retry');retry.type='button';retry.onclick=async()=>{try{const job=await post('/api/jobs/'+row.id+'/retry',{});$('queue-dialog').close();watch(job.id);await refreshQueue()}catch(exc){error(exc.message)}};actions.append(retry)}
   card.append(content,actions);$('queue-entries').append(card);
  }
  $('queue-entries').scrollTop=queueScroll;
@@ -691,7 +714,7 @@ async function selectVoiceModel(backend){
  }finally{changingModel=false;controls();if(pendingModelRestore){const row=pendingModelRestore;pendingModelRestore=null;restore(row)}}
 }
 $('voice-model').onchange=()=>{if($('voice-model').value)selectVoiceModel($('voice-model').value).catch(exc=>error(exc.message))};
-$('queue-pause').onclick=async()=>{try{const state=await post('/api/queue/'+(queuePaused?'resume':'pause'),{});queuePaused=state.paused;$('queue-pause').textContent=queuePaused?'Resume queue':'Pause queue';await health()}catch(exc){error(exc.message)}};
+$('queue-pause').onclick=async()=>{try{const state=await post('/api/queue/'+(queuePaused?'resume':'pause'),{});queuePaused=state.paused;queueLabel($('queue-pause'),queuePaused?'play':'pause',queuePaused?'Resume queue':'Pause queue');await health()}catch(exc){error(exc.message)}};
 (async()=>{try{const model=await loadModelChoices();if(model)await selectVoiceModel(model);else error('No set-up voice models are ready. Run make setup or reconnect model storage.')}catch(exc){error(exc.message)}setInterval(health,5000)})();
 
 function buildBackendSettings(){
