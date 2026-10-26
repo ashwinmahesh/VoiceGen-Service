@@ -15,6 +15,10 @@ html[data-page="collection"] #voice-catalog{margin-top:0}
 html[data-page="collection"] #cards{max-height:none;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
 .header-links a[aria-current="page"]{color:var(--accent)}
 .queue-dialog{width:min(850px,calc(100vw - 32px))}
+.queue-entry{display:grid;grid-template-columns:minmax(0,1fr) max-content;gap:16px;align-items:start}
+.queue-entry-content{min-width:0;overflow-wrap:anywhere}
+.queue-actions{margin:0;flex-direction:column;align-items:stretch;flex-wrap:nowrap}
+.queue-actions .secondary{width:100%;text-align:center;white-space:nowrap}
 .candidate-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:15px 0 22px}.candidate-grid .card[data-selected=true]{border-color:var(--accent)}#candidate-results{margin-top:20px}#candidate-results h2{font-size:18px}#candidate-summary{margin-bottom:10px}
 @media(max-width:720px){.header-links{display:flex}.top-actions{flex-wrap:wrap}.queue-dialog{padding:18px}html[data-page="collection"] #cards{grid-template-columns:1fr}}
 </style>

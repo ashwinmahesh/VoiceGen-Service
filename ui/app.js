@@ -308,15 +308,16 @@ async function refreshQueue(){
  $('queue-clear').disabled=!(page.counts.queued>0);$('queue-prev').disabled=queueOffset===0;$('queue-next').disabled=!page.has_more;
  $('queue-page').textContent=page.total?`${queueOffset+1}–${queueOffset+page.data.length} of ${page.total}`:'No matching entries';
  for(const row of page.data){
-  const card=el('article',null,'card');card.append(el('strong',`${row.status} · ${row.backend||'legacy'} · ${row.generate_immediately?'Immediate':'Normal FIFO'}`));
-  card.append(el('p',row.requested?.text||row.id),el('p',row.paused?'Paused until '+row.backend+' is selected at startup':row.stage,'hint'));
-  if(row.error)card.append(el('p',row.error,'error'));
-  const actions=el('div',null,'card-actions');
+  const card=el('article',null,'card queue-entry'),content=el('div',null,'queue-entry-content');
+  content.append(el('strong',`${row.status} · ${row.backend||'legacy'} · ${row.generate_immediately?'Immediate':'Normal FIFO'}`));
+  content.append(el('p',row.requested?.text||row.id),el('p',row.paused?'Paused until '+row.backend+' is selected at startup':row.stage,'hint'));
+  if(row.error)content.append(el('p',row.error,'error'));
+  const actions=el('div',null,'card-actions queue-actions');
   if(row.candidate_batch_id){const options=el('button','View all options','secondary');options.type='button';options.onclick=()=>{$('queue-dialog').close();watchCandidates(row.candidate_batch_id)};actions.append(options);}
   const inspect=el('button',row.status==='done'?'Open take':'Monitor','secondary');inspect.type='button';inspect.onclick=()=>{$('queue-dialog').close();row.result?showResult(row.result):watch(row.id)};actions.append(inspect);
   if(row.status==='queued'){const remove=el('button','Remove pending','secondary');remove.type='button';remove.onclick=async()=>{try{await api('/api/queue/'+row.id,{method:'DELETE'});await refreshQueue()}catch(exc){error(exc.message)}};actions.append(remove)}
   if(row.status==='error'&&!row.paused&&row.backend===caps?.backend){const retry=el('button','Retry same entry','secondary');retry.type='button';retry.onclick=async()=>{try{const job=await post('/api/queue/'+row.id+'/retry',{});$('queue-dialog').close();watch(job.id);await refreshQueue()}catch(exc){error(exc.message)}};actions.append(retry)}
-  card.append(actions);$('queue-entries').append(card);
+  card.append(content,actions);$('queue-entries').append(card);
  }
 }
 $('queue-clear').onclick=async()=>{try{const result=await api('/api/queue',{method:'DELETE'});announce(`Removed ${result.deleted} pending takes. Running speech continues.`);await refreshQueue()}catch(exc){error(exc.message)}};
