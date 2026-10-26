@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from body_limit import BodyLimit
 from queue_status import storage_error_response
-from queue_schemas import QueueMove
+from queue_schemas import QueueMove, QueueState, ModelDescriptor, ModelList
 from durable_queue import QueueStore, QueueConflict
 from queue_config import PROJECT_ROOT, QUEUE_DB, DEFAULT_QUEUE_PORT, DEFAULT_MODEL, MODELS
 from model_readiness import ReadyModels,ModelUnavailable
@@ -112,19 +112,6 @@ class QueueHealth(BaseModel):
     default_model: str
 
 
-class ModelDescriptor(BaseModel):
-    modes: list[str]
-    id: str
-    name: str
-    is_default: bool
-
-
-class ModelList(BaseModel):
-    default_model: str
-    active_model: str | None = None
-    data: list[ModelDescriptor]
-    runtime_model_switching: bool = True
-
 
 def public(row):
     reason=None
@@ -186,11 +173,11 @@ def submit(request: Submission):
         raise HTTPException(422,'Payload must be finite JSON') from None
 
 
-@app.post('/api/queue/pause')
+@app.post('/api/queue/pause',response_model=QueueState)
 def pause():return store.pause(True)
 
 
-@app.post('/api/queue/resume')
+@app.post('/api/queue/resume',response_model=QueueState)
 def resume():return store.pause(False)
 
 

@@ -219,6 +219,44 @@ class RuntimeAPITests(unittest.TestCase):
             self.assertEqual(response.status_code,422,response.text);self.assertIn('make setup MODEL=fish',response.json()['detail'])
         self.assertEqual(self.manager.store.listing()['total'],0)
 
+    def test_queue_openapi_covers_shared_management_and_typed_responses(self):
+        for client,entry_model in ((self.client,'Job'),(self.queue,'Entry')):
+            schema=client.get('/openapi.json').json();paths=schema['paths'];models=schema['components']['schemas']
+            for path,methods in {
+                '/api/queue':{'get','delete'},'/api/queue/{identity}/move':{'post'},
+                '/api/queue/{identity}/run-now':{'post'},'/api/queue/pause':{'post'},'/api/queue/resume':{'post'},
+            }.items():self.assertTrue(methods<=set(paths[path]),(path,methods))
+            fields={row['name'] for row in paths['/api/queue']['get']['parameters']}
+            self.assertEqual(fields,{'status','model','limit','offset'})
+            for path in ('/api/queue/pause','/api/queue/resume'):
+                response=paths[path]['post']['responses']['200']['content']['application/json']['schema']
+                self.assertEqual(response['$ref'],'#/components/schemas/QueueState')
+            response=paths['/v1/models']['get']['responses']['200']['content']['application/json']['schema']
+            self.assertEqual(response['$ref'],'#/components/schemas/ModelList')
+            self.assertIn('modes',models['ModelDescriptor']['required'])
+            self.assertTrue({'position','blocked_reason'}<=set(models[entry_model]['properties']))
+        # Pausing through either origin changes the same direct-SQL state.
+        self.assertEqual(self.queue.post('/api/queue/pause').json(),{'paused':True})
+        self.assertTrue(self.client.get('/health').json()['queue_paused'])
+        self.assertEqual(self.client.post('/api/queue/resume').json(),{'paused':False})
+        self.assertFalse(self.queue.get('/health').json()['paused'])
+        from queue_schemas import ModelList
+        docs=(PROJECT_ROOT/'API.md').read_text().split('**`GET /v1/models`**',1)[1]
+        example=json.loads(docs.split('```json',1)[1].split('```',1)[0])
+        ModelList.model_validate(example)
+
+    def test_retry_unavailable_model_is_actionable_and_preserves_failed_entry(self):
+        failed=self.done(self.submit('voxcpm2','Crash.'))
+        self.assertEqual(failed['status'],'error',failed)
+        before=self.manager.store.read(failed['id'])
+        self.ready.discard('voxcpm2');self.catalog.cache.clear()
+        response=self.client.post('/api/jobs/'+failed['id']+'/retry')
+        self.assertEqual(response.status_code,422,response.text)
+        self.assertIn('make setup MODEL=voxcpm2',response.json()['detail'])
+        after=self.manager.store.read(failed['id'])
+        for field in ('status','attempts','payload','fingerprint','backend'):
+            self.assertEqual(before[field],after[field],field)
+
     def test_shared_saved_default_idempotency_and_explicit_model(self):
         first=self.submit(idempotency_key='default-key')
         self.manager.store.set_setting('default_model','higgs')

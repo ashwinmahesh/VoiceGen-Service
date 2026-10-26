@@ -1,4 +1,4 @@
-"""Shared Voice Studio v2 API. Service-specific behavior is in service.json."""
+"""Shared Voice Studio v4 API. Service-specific behavior is in service.json."""
 import argparse
 import asyncio
 from contextlib import asynccontextmanager, nullcontext
@@ -9,7 +9,7 @@ from typing import Literal
 from uuid import uuid4
 from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage,model_context
 from queue_config import QUEUE_DB, DEFAULT_QUEUE_PORT
-from queue_schemas import QueueMove
+from queue_schemas import QueueMove, QueueState, ModelList
 from resource_schemas import ResourceOverview, ResourceJobPage, ResourceJobHistory
 from queue_status import api_status, storage_error_response, STORAGE_ERROR
 from model_readiness import ReadyModels,ModelUnavailable
@@ -177,10 +177,10 @@ def request_context(model=None):
     return model_context(target) if manager.runtime is True else nullcontext()
 
 
-@app.get('/v1/models')
+@app.get('/v1/models',response_model=ModelList)
 def model_discovery():
     if manager.runtime is not True:
-        rows=[{'id':PROFILE['backend'],'name':PROFILE['name']}];default=PROFILE['backend']
+        rows=[{'id':PROFILE['backend'],'name':PROFILE['name'],'modes':list(PROFILE.get('modes',{}))}];default=PROFILE['backend']
     else:
         manager._ready();rows=manager.catalog.models();default=manager.store.default_model()
     return {'data':[{**row,'is_default':row['id']==default} for row in rows],
@@ -340,11 +340,11 @@ def runtime_health():
         queue_service=api_status(app.state.queue_port,manager.store.path),prompt_expansion=__import__('prompt_expansion').capability(app.state.llm_enabled))
 
 
-@app.post('/api/queue/pause')
+@app.post('/api/queue/pause',response_model=QueueState)
 def queue_pause():return manager.store.pause(True)
 
 
-@app.post('/api/queue/resume')
+@app.post('/api/queue/resume',response_model=QueueState)
 def queue_resume():
     result=manager.store.pause(False);manager._wake.set();return result
 
@@ -378,6 +378,7 @@ def queue_delete(identity: str):
 @app.post('/api/jobs/{identity}/retry',status_code=202,response_model=Job)
 def queue_retry(identity: str):
     try: return manager.retry(identity)
+    except ModelUnavailable as exc: raise HTTPException(422,str(exc)) from None
     except FileNotFoundError: raise HTTPException(404,'Queue entry not found') from None
     except BusyError as exc: raise HTTPException(409,str(exc)) from None
 

@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class QueueMove(BaseModel):
+    """Supply exactly one target: before_id, after_id, or direction (up/down)."""
     model_config = ConfigDict(extra='forbid')
     before_id: str | None = Field(default=None,pattern=r'^[a-f0-9]{32}$')
     after_id: str | None = Field(default=None,pattern=r'^[a-f0-9]{32}$')
@@ -14,3 +15,22 @@ class QueueMove(BaseModel):
         if sum(value is not None for value in (self.before_id,self.after_id,self.direction)) != 1:
             raise ValueError('Supply exactly one of before_id, after_id, or direction')
         return self
+
+
+class QueueState(BaseModel):
+    """Persisted global pause state; immediate work can still run while paused."""
+    paused: bool
+
+
+class ModelDescriptor(BaseModel):
+    id: str
+    name: str
+    modes: list[str]
+    is_default: bool
+
+
+class ModelList(BaseModel):
+    default_model: str
+    active_model: str | None = None
+    data: list[ModelDescriptor]
+    runtime_model_switching: bool = True

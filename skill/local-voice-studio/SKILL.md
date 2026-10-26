@@ -49,7 +49,7 @@ Example recorded voice:
 {"model":"higgs","voice_id":"VOICE_ID","text":"Welcome home.","idempotency_key":"scene-1-take"}
 ```
 
-HTTP 202 means persisted, not completed. Poll `GET /api/jobs/{id}` for done/error and use `result.audio_url`, verified absolute `path`, and metadata. Keep a stable key and original body after timeouts; changed requests with a key return409. Do not resubmit an error automatically; explicitly retry `/api/jobs/{id}/retry` if intended.
+HTTP 202 means persisted, not completed. Poll `GET /api/jobs/{id}` for done/error and use `result.audio_url`, verified absolute `path`, and metadata. Keep a stable key and original body after timeouts; changed requests with a key return409. Do not resubmit an error automatically; explicitly retry `/api/jobs/{id}/retry` if intended. If its model is unavailable, retry returns422 with setup guidance and leaves the failed job unchanged.
 
 `POST /api/candidates` adds `candidate_count` 1–5 (default2), `candidate_variation` auto/distinct/seed_only, and `candidate_use_llm` (defaulttrue). Poll `/api/candidates/{id}` for ordered child jobs and full/partial/error state. Description-based Vox/Qwen/MOSS batches can explore contrasting resonance/articulation within explicit character constraints. Original is option1. The served/enabled LLM can refine variants together; otherwise built-in directions apply. Recordings/presets, including Higgs, produce seed-only alternate takes of the same speaker; explicit distinct is rejected. Prompts freeze before speech, retries reuse them, and successful children remain usable after another child fails. Save the preferred take to Collection.
 
@@ -57,7 +57,7 @@ Keep spoken words and transcripts exact. Delivery controls and comma/sentence pa
 
 ## Shared queue
 
-Both services access the same ignored project-local `state/queue.sqlite3`. One generator holds the consumer lease and processes all ready models in global order. Whole candidate batches finish before switching. It reuses the current adapter where possible and releases/reaps it before another starts. Backend children retain the global worker lease while warm; actual native/LLM descendants inherit per-job GPU/data/consumer descriptors. Unverifiable cleanup stops consumption, never starts overlapping models.
+Both services access the same ignored project-local `state/queue.sqlite3`. Their OpenAPI uses shared model-discovery, move and pause response schemas; pause/resume returns `{ "paused": true }` or false. One generator holds the consumer lease and processes all ready models in global order. Whole candidate batches finish before switching. It reuses the current adapter where possible and releases/reaps it before another starts. Backend children retain the global worker lease while warm; actual native/LLM descendants inherit per-job GPU/data/consumer descriptors. Unverifiable cleanup stops consumption, never starts overlapping models.
 
 Generator queue operations: GET `/api/queue` (status/model/limit/offset), DELETE one `/api/queue/{id}` or clear `/api/queue`, POST `/{id}/move` (one of before_id/after_id/direction), POST `/{id}/run-now`, and POST `/api/queue/pause` or `/resume`. Job status/retry use `/api/jobs/{id}`. Discovery/OpenAPI are canonical; no old aliases or migration routing are required.
 

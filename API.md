@@ -314,9 +314,9 @@ curl --fail-with-body \
 
 List responses contain `data`, `total`, `counts`, `limit`, `offset`, `has_more`, and `next_offset`. Counts cover all statuses for the chosen model; `total` reflects the chosen status filter.
 
-Deletion affects **waiting work only**. It does not cancel active generation or delete completed audio, History, or voices. Deleting an already deleted job reports zero removed. Retrying requires an `error` job whose model is ready; other states return 409.
+Deletion affects **waiting work only**. It does not cancel active generation or delete completed audio, History, or voices. Deleting an already deleted job reports zero removed. Retrying requires an `error` job whose model is ready; other states return 409. If its model is unavailable, retry returns 422 with setup guidance and leaves the failed entry unchanged.
 
-`POST /api/queue/pause` pauses normal waiting work; `/api/queue/resume` resumes it. Both APIs share this saved switch. Immediate jobs can run while paused. A running job is never interrupted.
+`POST /api/queue/pause` pauses normal waiting work; `/api/queue/resume` resumes it. Both APIs share this saved switch. Immediate jobs can run while paused. A running job is never interrupted. Both endpoints return `{"paused": true}` or `{"paused": false}`, including the saved state shared by the two services.
 
 ### Reorder or run next
 
@@ -368,7 +368,7 @@ Use this API to add work while the generator is off. Start it with `make queue`;
   "default_model": "higgs",
   "active_model": null,
   "runtime_model_switching": true,
-  "data": [{"id": "higgs", "name": "Higgs TTS 3", "is_default": true}]
+  "data": [{"id": "higgs", "name": "Higgs TTS 3", "modes": ["reference"], "is_default": true}]
 }
 ```
 
@@ -419,7 +419,7 @@ Start `make serve` to process the shared queue across ready models. `MODEL=higgs
 
 Listing uses the same status/pagination fields as the generator, including optional **`model`** filtering with global positions. Clear can also use `?model=higgs`.
 
-Entries include `id`, `sequence`, `queue_order`, `model`, `payload`, `generate_immediately`, `status`, `stage`, timestamps, `attempts`, `result`, `error`, and `prepared`. `prepared: true` means the generator has checked and saved the generation settings. Lists also include totals, counts, and pagination.
+Entries include `id`, `sequence`, `queue_order`, `position`, `blocked_reason`, `model`, `payload`, `generate_immediately`, `status`, `stage`, timestamps, `attempts`, `result`, `error`, and `prepared`. `position` is the global 1-based waiting position (null for other states); filtering retains global positions. `blocked_reason` explains unavailable-model work and is null when unblocked. `prepared: true` means the generator has checked and saved the generation settings. Lists also include totals, counts, and pagination.
 
 PATCH restrictions:
 
