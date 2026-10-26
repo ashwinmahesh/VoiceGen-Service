@@ -45,4 +45,4 @@ Use isolated project-local test state and benign media fixtures. Preserve pre-ex
 
 Keep the browser brand **Voice Studios** and the shared `ui/icon.svg` consistent across Studio, Collection and Observability. Model selection changes controls and status, never the header brand or app title. The PNG phone icon and ICO favicon are raster versions of that SVG.
 
-Queue actions use decorative local SVG icons with visible text labels. Keep Monitor blue, Run Now green and Remove red, using subdued opaque fills rather than bright colors or grey replacements. Other queue controls stay neutral. Keep row actions equally sized and right aligned; preserve icons when pause/resume labels update.
+Queue actions use decorative local SVG icons with visible text labels. Keep Monitor blue, Run Now green and Remove red, using subdued opaque fills rather than bright colors or grey replacements. Other queue controls stay neutral. Keep the primary row actions compact, equally sized and right aligned; longer utility labels fit their content without excessive horizontal space. Preserve icons when pause/resume labels update.
