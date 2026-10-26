@@ -49,12 +49,13 @@ def runtime_python(root, backend, original_backend, venv_override=None):
 def choose_llm(disabled=False,interactive=False,input_fn=input,stream=sys.stderr):
     if disabled:return False
     if not interactive:return True
+    print('Prompt expansion uses a small language model on your Mac to refine voice descriptions and acting directions without changing the words spoken.',file=stream)
     while True:
-        print('Enable local prompt LLM? [Y/n]: ',end='',file=stream,flush=True)
+        print('Enable local prompt expansion? [Y/n]: ',end='',file=stream,flush=True)
         answer=input_fn().strip().casefold()
         if answer in ('','y','yes'):return True
         if answer in ('n','no'):return False
-        print('Enter Y or N; Enter enables the LLM.',file=stream)
+        print('Enter Y or N; Enter enables prompt expansion.',file=stream)
 
 
 def setup_errors(root, backend, original_backend, venv_override=None):

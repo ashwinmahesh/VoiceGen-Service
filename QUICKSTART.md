@@ -64,7 +64,7 @@ Other model IDs are `qwen3`, `chatterbox`, `indextts`, `moss`, and `fish`. Start
 1. **Choose a voice.** For Higgs, upload a reference recording or select a saved voice. Uploads must be 1–30 seconds and at most 25 MiB. A clear 5–15 second sample is a useful starting point.
 2. **Enter the exact reference transcript.** These are the words already spoken in the recording, separate from your new dialogue. Higgs and Fish require it.
 3. **Enter the new dialogue.** Start with a short passage so you can judge the voice, accent, and delivery.
-4. **Choose the performance settings.** The studio shows the selected model's available controls. Expand **Advanced settings** for additional options.
+4. **Choose the performance settings.** The studio shows the selected model's available controls. Hover over a grey **?** icon for an explanation, focus it with the keyboard, or tap it on a phone. Expand **Advanced settings** for additional options.
 5. **Try prompt expansion if available.** With the switch on, select **Preview expanded guidance**, review it, and apply it or keep your original. For supported batches of different voice designs, the LLM can refine each option automatically. Original and expanded guidance remain visible.
 6. **Choose 1–5 options** and select **Generate speech**. The default is two. With Higgs or another recorded voice, these are alternative takes of the same speaker. Supported voice-design modes can explore different descriptions.
 7. **Listen and save.** Download a take or choose **Save voice** to reuse it for more lines.

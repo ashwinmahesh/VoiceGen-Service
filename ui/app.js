@@ -157,6 +157,7 @@ function updateCapabilities(){
  updatePacingControls();
  $('steering-field').hidden=!caps.extensions?.emotion_steering;
  $('steering-strength-field').hidden=!$('steering-emotion').value;
+ installControlHelp();
 }
 $('clone-mode').onchange=()=>{updateCapabilities();persist()};
 $('steering-emotion').onchange=()=>{if($('steering-emotion').value){if($('emotion-preset').value==='natural'){$('emotion').value='';$('emotion-preset').value='custom'}if(Number($('temperature').value)===.9)$('temperature').value='1.1'}updateCapabilities();persist()};
@@ -681,3 +682,117 @@ async function openPageSelection(){
  else if(/^[a-f0-9]{32}$/.test(params.get('job')||'')){watch(params.get('job'));return true;}
  return false;
 }
+
+const controlHelp={
+ description:'Describe the voice you want: pitch, age, accent and vocal texture. This designs a voice; save a take to reuse its recording.',
+ voice:'Reuse a recording from your voice library for new dialogue. The recording supplies the speaker identity; catalog notes help you find it.',
+ reference:'Upload 1–30 seconds of clean speech, up to 25 MB. A sample that already has the intended accent and delivery is a useful starting point.',
+ 'preset-voice':'Choose a built-in Qwen speaker. You can direct its delivery without designing a new speaker.',
+ 'steering-emotion':'An experimental Qwen preset control that adds a learned emotion direction. It can also change the voice or pronunciation.',
+ 'steering-strength':'How strongly the experimental emotion direction is applied, from 0–12. Stronger settings can alter the speaker or pronunciation.',
+ 'clone-mode':'Auto follows the recorded performance when it has an exact transcript and no new acting directions. Flexible reference accepts new directions; combined and continuation follow the recording.',
+ 'ref-text':'The exact words already spoken in the reference, not your new dialogue. Leave blank to use a saved transcript. Higgs and Fish require one; Vox combined and continuation also need it.',
+ accent:'Describe the accent you want in supported design or delivery modes. A matching reference recording usually provides a stronger accent cue than written instructions.',
+ 'emotion-preset':'Choose a starting acting direction, then edit the wording below. Available delivery controls depend on the speech model and voice source.',
+ text:'The words the character should say. Start with a short passage so you can compare delivery and check that every word was spoken.',
+ 'index-emotion-mode':'Follow the speaker recording, transfer emotion from another recording, or mix named emotions. The original speaker reference still supplies the voice.',
+ 'emotion-reference':'A separate recording that supplies emotion for IndexTTS. It changes delivery while the original speaker recording remains the voice reference.',
+ 'rendered-preview':'Shows the text and any supported performance tags sent to the speech model. Your original dialogue is kept separately.',
+ seed:'Controls random variation. Keep it fixed when comparing settings; the same seed alone does not preserve a voice across different lines.',
+ steps:'Vox generation steps, from 1–30. More steps take longer and do not always produce a better take; the default is 10.',
+ guidance:'How strongly Vox follows its voice conditioning and directions, from 1–5. Higher is not always better; compare against the default of 2.',
+ 'max-tokens':()=>caps?.backend==='moss'?'A ceiling on generated audio frames, not a requested duration. MOSS can raise it to its text-based minimum.':'A safety limit on generated audio, not a requested duration. Reaching it can cut a line short; try a shorter passage or a higher limit.',
+ temperature:'Controls sampling variation. Lower values narrow the choices; higher values allow more variation and can reduce consistency. Start with this model’s default.',
+ language:'The language of the new dialogue. Available languages depend on the model; this does not choose a regional accent.',
+ 'output-dir':'An absolute folder on the Mac running the service. Leave blank for the configured output folder; an external drive must be connected.',
+ 'prompt-expansion-enabled':'Use a small local language model to refine voice and acting directions. Preview and apply guidance for a take; supported voice-design batches can plan different options automatically. Spoken words stay unchanged.',
+ 'expansion-guidance':'Describe the delivery you want the local language model to help refine. Review its suggestion before applying it; it does not listen to your recording.',
+ 'candidate-count':'Generate 1–5 options, one at a time. Recorded voices produce alternate takes; supported voice-design modes can explore different voices. The default is two.',
+ 'candidate-variation':'Distinct designs keep your first description and explore contrasting voice traits for later options. Same prompt changes only the seed. Explicit accent and acting directions remain constraints.',
+ 'generate-immediately':'Run next after the current take, ahead of ordinary waiting work. It does not interrupt active generation. Turn off to join the normal queue.',
+ 'voice-name':'A name for this reusable voice in Collection. Saving it lets you select its recording for later lines.',
+ search:'Search generated History or saved voices in the current Collection tab. Voice search includes names, descriptions and tags.',
+ 'tag-filter':'Show saved voices with this exact tag. Tags organize the library; they do not change the generated accent or performance.',
+ 'voice-sort':'Choose how saved voices are ordered: newest, recently updated, or name.',
+ 'page-size':'How many entries to show on each Collection page.',
+ 'queue-status':'Filter the saved jobs by status. Pending includes waiting and running jobs; other models’ jobs wait until that model is served.',
+ 'queue-size':'How many queue entries to show on each page.',
+ 'voice-upload-file':'Import 1–30 seconds of speech into Collection, up to 25 MB. The original recording is preserved; uploading does not train a model.',
+ 'edit-voice-name':'A searchable name for the saved voice. Renaming it does not change its recording.',
+ 'edit-voice-description':'Notes about the character for your library. These notes do not replace or change the saved voice recording.',
+ 'edit-transcript':'The exact words in this saved audio excerpt. Required when using Higgs or Fish; leave empty if uncertain rather than guessing.',
+ 'edit-voice-tags':'Comma-separated labels for finding this voice later. Use up to 20 tags, with at most 40 characters each.',
+ 'pause-start':'The start of the entire quiet gap you listened to, in seconds. Select silence inside the recording, not spoken audio.',
+ 'pause-end':'The end of that quiet gap, in seconds. Listen to the selection before adding it; audible selections are rejected.',
+ 'pause-minimum':'The minimum total length of each selected gap, in milliseconds. Only missing silence is added; already longer gaps and spoken samples stay unchanged.',
+ 'pause-output-dir':'Where to save the separate edited recording on the server’s Mac. Leave blank for the configured default; the original stays available.',
+ 'pause-reviewed':'Confirm you listened to every selected gap and checked it is silence between phrases. The tool does not find sentence boundaries for you.',
+ exaggeration:'Chatterbox’s expression strength, from 0–1. Higher values can change pacing or accent, so compare with the recommended default.',
+ cfg_weight:'Chatterbox’s guidance strength, from 0–1. It affects how generation follows its conditioning; compare settings while keeping the same reference.',
+ duration_factor:'IndexTTS timing factor: values above 1 are slower and values below 1 are faster. It changes delivery length rather than adding an exact gap.',
+ interval_silence:'Silence between IndexTTS’s generated segments, in milliseconds. Segments are not necessarily sentences; use punctuation pauses for sentence and comma gaps.',
+ emotion_alpha:'How strongly IndexTTS blends the chosen emotion recording or mixture. Requires an emotion source; stronger settings may change the performance more.',
+ 'chatterbox-delivery-preset':'Starting combinations of Chatterbox expression and guidance. The more expressive option is experimental and may weaken the accent.',
+ 'fish-delivery-tags':'Up to four short acting cues, one per line. Brackets are added for you. Leave empty to follow the reference; extra acting can change its accent.',
+ 'higgs-emotion':'An optional Higgs emotion for this take. Follow recording adds no emotion tag and is a useful baseline for keeping the reference performance.',
+ 'higgs-prosody':'An optional Higgs control for speaking speed, pitch or expression. It guides the performance rather than setting an exact audio duration.',
+ 'higgs-style':'An optional Higgs style: singing, shouting or whispering. Follow recording adds no style tag.',
+ 'model-top-p':'How broad a range of likely next sounds the model considers. Lower values narrow the choices; higher values allow more variety.',
+ 'model-top-k':'Limits the number of likely next choices considered at each step. Start with the model’s default and change one sampling setting at a time.',
+ 'punctuation-pauses':()=>caps?.backend==='moss'?'Ask MOSS for longer sentence and comma pauses in one complete take. The timings are approximate targets, not measured inserted silence.':'Generate separate phrases with the same voice and add silence at punctuation. Turn off for continuous delivery; phrase generation can change the flow.',
+ sentence_pause_ms:()=>caps?.backend==='moss'?'Approximate total sentence-pause target in milliseconds for MOSS. Exact timing is not guaranteed; zero omits this pause target.':'Extra silence after sentence punctuation, in milliseconds, on top of the model’s natural pauses. Zero skips sentence splitting; final punctuation adds no trailing gap.',
+ comma_pause_ms:()=>caps?.backend==='moss'?'Approximate total comma-pause target in milliseconds for MOSS. Exact timing is not guaranteed; zero omits this pause target.':'Extra silence after commas, in milliseconds, on top of natural pauses. Zero skips comma splitting; the value is not an exact total gap length.'
+};
+for(const name of ['happy','angry','sad','afraid','disgusted','melancholic','surprised','calm']){
+ controlHelp['index-vector-'+name]=`Contribution of ${name} to the IndexTTS emotion mixture, from 0–1. The total across all eight emotions must not exceed 1.`;
+}
+
+const helpTooltip=el('div',null,'control-help');
+helpTooltip.id='control-help-tooltip';helpTooltip.hidden=true;helpTooltip.setAttribute('role','tooltip');helpTooltip.setAttribute('popover','manual');
+document.body.append(helpTooltip);
+let activeHelp=null,helpHideTimer=null;
+function hideControlHelp(){
+ clearTimeout(helpHideTimer);
+ if(typeof helpTooltip.hidePopover==='function'&&helpTooltip.matches(':popover-open'))helpTooltip.hidePopover();
+ helpTooltip.hidden=true;
+ if(activeHelp){activeHelp.setAttribute('aria-expanded','false');activeHelp.removeAttribute('aria-describedby');}
+ activeHelp=null;
+}
+function showControlHelp(button){
+ clearTimeout(helpHideTimer);
+ if(activeHelp!==button)hideControlHelp();
+ activeHelp=button;
+ const copy=controlHelp[button.dataset.helpFor];helpTooltip.textContent=typeof copy==='function'?copy():copy;
+ const owner=button.closest('dialog[open]')||document.body;
+ if(helpTooltip.parentElement!==owner)owner.append(helpTooltip);
+ helpTooltip.style.visibility='hidden';helpTooltip.hidden=false;
+ if(typeof helpTooltip.showPopover==='function'&&!helpTooltip.matches(':popover-open'))helpTooltip.showPopover();
+ const anchor=button.getBoundingClientRect(),width=helpTooltip.offsetWidth,height=helpTooltip.offsetHeight;
+ helpTooltip.style.left=Math.max(12,Math.min(anchor.left+anchor.width/2-width/2,innerWidth-width-12))+'px';
+ helpTooltip.style.top=(anchor.bottom+height+10<innerHeight?anchor.bottom+7:Math.max(12,anchor.top-height-7))+'px';
+ helpTooltip.style.visibility='visible';button.setAttribute('aria-expanded','true');button.setAttribute('aria-describedby',helpTooltip.id);
+}
+function scheduleHelpHide(){
+ clearTimeout(helpHideTimer);
+ helpHideTimer=setTimeout(()=>{if(activeHelp&&!activeHelp.matches(':hover,:focus')&&!helpTooltip.matches(':hover'))hideControlHelp()},150);
+}
+function installControlHelp(){
+ for(const id of Object.keys(controlHelp)){
+  const control=$(id);if(!control)continue;
+  const label=document.querySelector(`label[for="${id}"]`)||control.closest('label');
+  if(!label)continue;
+  if(label.parentElement.classList.contains('help-label-row')){label.parentElement.querySelector('.help-trigger').setAttribute('aria-label','Help: '+label.textContent.trim());continue;}
+  const row=el('div',null,'help-label-row'+(label.contains(control)?' help-toggle-row':'')),button=el('button','?','help-trigger');
+  button.type='button';button.dataset.helpFor=id;button.setAttribute('aria-label','Help: '+label.textContent.trim());button.setAttribute('aria-expanded','false');
+  label.before(row);row.append(label,button);
+  button.addEventListener('pointerenter',()=>showControlHelp(button));button.addEventListener('focus',()=>showControlHelp(button));
+  button.addEventListener('pointerleave',scheduleHelpHide);button.addEventListener('blur',scheduleHelpHide);
+  button.addEventListener('click',event=>{event.preventDefault();showControlHelp(button)});
+ }
+}
+helpTooltip.addEventListener('pointerenter',()=>clearTimeout(helpHideTimer));helpTooltip.addEventListener('pointerleave',scheduleHelpHide);
+document.addEventListener('pointerdown',event=>{if(activeHelp&&!activeHelp.contains(event.target)&&!helpTooltip.contains(event.target))hideControlHelp()},true);
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&activeHelp){event.preventDefault();event.stopPropagation();hideControlHelp()}},true);
+document.addEventListener('close',hideControlHelp,true);
+window.addEventListener('resize',hideControlHelp);document.addEventListener('scroll',hideControlHelp,true);
+installControlHelp();

@@ -19,7 +19,10 @@ class BackendTests(unittest.TestCase):
         import io
         from startup_select import choose_llm
         self.assertTrue(choose_llm())
-        self.assertTrue(choose_llm(interactive=True,input_fn=lambda:'',stream=io.StringIO()))
+        explanation=io.StringIO()
+        self.assertTrue(choose_llm(interactive=True,input_fn=lambda:'',stream=explanation))
+        self.assertIn('on your Mac',explanation.getvalue())
+        self.assertIn('without changing the words spoken',explanation.getvalue())
         self.assertFalse(choose_llm(interactive=True,input_fn=lambda:'N',stream=io.StringIO()))
         self.assertFalse(choose_llm(disabled=True,interactive=True,input_fn=lambda:self.fail('Explicit opt-out must skip input')))
         answers=iter(['wrong','y'])
