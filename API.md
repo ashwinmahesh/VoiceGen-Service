@@ -20,6 +20,7 @@ Each service has interactive documentation at **`/docs`** and its complete reque
 - [Generation fields](#generation-fields)
 - [Voices and reference recordings](#voices-and-reference-recordings)
 - [Manage jobs through the generator](#manage-jobs-through-the-generator)
+- [Reorder or run next](#reorder-or-run-next)
 - [Use the standalone queue](#standalone-queue-api-port-55205)
 - [Model settings](#model-settings)
 - [Sentence and comma pauses](#sentence-and-comma-pauses)
@@ -273,6 +274,8 @@ These endpoints use **port 5743**. They manage the same saved jobs used by the U
 | DELETE | `/api/jobs/{id}` | Remove one waiting job. |
 | DELETE | `/api/jobs` | Clear waiting jobs. |
 | POST | `/api/jobs/{id}/retry` | Retry a failed job; returns 202. |
+| POST | `/api/jobs/{id}/move` | Reorder a waiting job; returns 200. |
+| POST | `/api/jobs/{id}/run-now` | Put a waiting job first; returns 200. |
 
 Example listing:
 
@@ -292,7 +295,42 @@ List responses contain `data`, `total`, `counts`, `limit`, `offset`, `has_more`,
 
 Deletion affects **waiting work only**. It does not cancel active generation or delete completed audio, History, or voices. Deleting an already deleted job reports zero removed. Retrying requires an `error` job whose model is currently selected; other states return 409.
 
-On the generator, `/api/queue` is an alias for these `/api/jobs` routes, including retry. `POST /api/jobs` and `POST /api/queue` also accept the same request as `/api/generate`.
+On the generator, `/api/queue` is an alias for these `/api/jobs` routes, including retry, move, and run-now. `POST /api/jobs` and `POST /api/queue` also accept the same request as `/api/generate`.
+
+### Reorder or run next
+
+**Move:** `POST /api/jobs/{id}/move` with exactly one of these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `direction` | `"up"` or `"down"`: move one place among waiting jobs in the shared queue, across all models. |
+| `before_id` | Place immediately before this waiting job ID. |
+| `after_id` | Place immediately after this waiting job ID. |
+
+```sh
+curl --fail-with-body http://localhost:5743/api/jobs/JOB_ID_HERE/move \
+  -H 'Content-Type: application/json' \
+  -d '{"direction": "up"}'
+```
+
+The UI's left-side handles use the same API. Drag to a highlighted position, or focus a handle and press the up/down arrow keys. Dropping beside a job in another priority group adopts that group's immediate/normal priority. Unchanged positions are a no-op.
+
+**Run Now:** `POST /api/jobs/{id}/run-now` puts a waiting job first, ahead of existing immediate jobs:
+
+```sh
+curl --fail-with-body -X POST \
+  http://localhost:5743/api/jobs/JOB_ID_HERE/run-now
+```
+
+Both actions return **200** with the updated job and persist across restarts. Fetch the queue again for its current list order. The current generation finishes first. The selected startup model still determines which jobs can execute; Run Now does not load another model or enable a disabled LLM. The UI disables Run Now for paused jobs.
+
+Only waiting jobs and waiting anchors can move. A running/completed/failed/deleted job returns **409**; a missing job/anchor returns **404**. Moving relative to itself or supplying multiple move fields returns **422**. If a job starts while you drag, refresh and try another waiting job.
+
+IDs, admission `sequence`, original generation settings, and submission retry keys stay unchanged. `queue_order` is a scheduling sort key, not a contiguous position or a writable request field. `generate_immediately` reports the current priority; the original submission fingerprint is retained. Retry an uncertain submission with its original body, even after reordering it.
+
+For an uncertain move response, refresh the queue before repeating an up/down move: repeating a relative step moves again. Before/after anchors are preferable when you need a specific position.
+
+These actions also work on **`/api/queue/{id}/move`** and **`/api/queue/{id}/run-now`** on either service. Port **55205** returns its normal queue-entry response and can prioritize jobs while the generator is off.
 
 ## Standalone queue API (port 55205)
 
@@ -343,18 +381,20 @@ Start `make serve MODEL=higgs` to process Higgs jobs. Other models' jobs keep wa
 | GET | `/api/queue` | List jobs. |
 | GET | `/api/queue/{id}` | Get an entry's payload, status, result, or error. |
 | PATCH | `/api/queue/{id}` | Change a waiting entry's `payload` and/or `generate_immediately`. |
+| POST | `/api/queue/{id}/move` | Reorder a waiting entry. |
+| POST | `/api/queue/{id}/run-now` | Put a waiting entry first. |
 | DELETE | `/api/queue/{id}` | Remove a waiting entry. |
 | DELETE | `/api/queue` | Clear waiting entries. |
 
 Listing uses the same status/pagination fields as the generator, with **`model` instead of `backend`** for filtering. Clear can also use `?model=higgs`.
 
-Entries include `id`, `sequence`, `model`, `payload`, `generate_immediately`, `status`, `stage`, timestamps, `attempts`, `result`, `error`, and `prepared`. `prepared: true` means the generator has checked and saved the generation settings. Lists also include totals, counts, and pagination.
+Entries include `id`, `sequence`, `queue_order`, `model`, `payload`, `generate_immediately`, `status`, `stage`, timestamps, `attempts`, `result`, `error`, and `prepared`. `prepared: true` means the generator has checked and saved the generation settings. Lists also include totals, counts, and pagination.
 
 PATCH restrictions:
 
 - The entry must still be waiting.
 - Its payload can change only before the generator prepares it and only if it has no retry key.
-- Priority cannot change on a keyed entry. For changed keyed work, remove it and submit a new request with a new key.
+- PATCH cannot change priority on a keyed entry. Use the explicit move/Run Now actions for scheduling; changing its generation payload requires a new request and key.
 - Send at least one field; empty or `null` updates return 422.
 
 The same key, model, payload, and priority recover the original entry, including a removed entry. Changed inputs return 409. Queue-service keys are separate from generator keys. Failed jobs are retried through the generator's retry endpoint.

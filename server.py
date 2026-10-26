@@ -9,6 +9,7 @@ from typing import Literal
 from uuid import uuid4
 from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage
 from queue_config import QUEUE_DB, DEFAULT_QUEUE_PORT
+from queue_schemas import QueueMove
 from queue_status import api_status, storage_error_response, STORAGE_ERROR
 from engine import create_engine
 from assets import all_errors
@@ -252,6 +253,23 @@ def queue_retry(identity: str):
     try: return manager.retry(identity)
     except FileNotFoundError: raise HTTPException(404,'Queue entry not found') from None
     except BusyError as exc: raise HTTPException(409,str(exc)) from None
+
+
+@app.post('/api/jobs/{identity}/move',response_model=Job)
+@app.post('/api/queue/{identity}/move',response_model=Job)
+def queue_move(identity: str, request: QueueMove):
+    try:return manager.move(identity,**request.model_dump(exclude_none=True))
+    except FileNotFoundError:raise HTTPException(404,'Queue entry or target not found') from None
+    except BusyError as exc:raise HTTPException(409,str(exc)) from None
+    except ValueError as exc:raise HTTPException(422,str(exc)) from None
+
+
+@app.post('/api/jobs/{identity}/run-now',response_model=Job)
+@app.post('/api/queue/{identity}/run-now',response_model=Job)
+def queue_run_now(identity: str):
+    try:return manager.run_now(identity)
+    except FileNotFoundError:raise HTTPException(404,'Queue entry not found') from None
+    except BusyError as exc:raise HTTPException(409,str(exc)) from None
 
 
 @app.get('/api/history',response_model=ArtifactPage)

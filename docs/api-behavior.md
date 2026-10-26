@@ -6,11 +6,11 @@ These details support the [API guide](../API.md). Most clients only need the tas
 
 - The generator saves validated requested/effective settings, model/mode, destination, reference identity/path/metadata, exact transcript, and reference audio hash before acknowledging a submission. Standalone queue submissions are checked and prepared when the generator picks them up.
 - Later catalog edits do not change a prepared job. Missing or changed reference bytes cause a visible failure. IndexTTS's separate emotion reference is checked too. Restore the original bytes before retrying.
-- After an interrupted generation, restart restores its original queue ordering. A matching complete WAV plus JSON metadata file can be recognized as finished without repeating synthesis. Missing or inconsistent completion records require recovery or review.
+- After an interrupted generation, restart preserves its saved queue ordering, including manual moves. A matching complete WAV plus JSON metadata file can be recognized as finished without repeating synthesis. Missing or inconsistent completion records require recovery or review.
 - A crash before complete metadata exists can repeat synthesis under the same job ID. Saved admission and retry keys do not guarantee that generation happens exactly once across arbitrary crashes.
 - Failed work requires explicit retry. Removal retains the job's deleted record and retry-key mapping; it does not remove completed audio or reference media. Nothing is automatically pruned.
 
-One generator owns queue processing. The separate queue API does not claim jobs, recover generation, or reset active work. Immediate jobs run first-in-first-out ahead of normal first-in-first-out work, for the selected model. A continuous stream of immediate jobs can delay normal work.
+One generator owns queue processing. The separate queue API does not claim jobs, recover generation, or reset active work. Immediate jobs run ahead of normal work for the selected model; each group is first-in-first-out unless explicitly reordered. Manual moves and Run Now update scheduling order/priority, preserve admission sequence and fingerprints, and serialize with claims. A continuous stream of immediate jobs can delay normal work.
 
 The database and journals stay in project `state/`. SQLite uses rollback journaling and FULL synchronous writes. Back up queue state together with outputs and their metadata/indexes. Test overrides through `QUEUE_DB` must remain inside project `state/` and agree between services.
 

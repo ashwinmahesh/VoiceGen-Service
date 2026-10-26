@@ -16,7 +16,7 @@ The studio supports **seven speech models**, with **Higgs TTS 3 as the default**
 
 ![Full Collection page with a saved voice, search, and tags](docs/images/collection-page.jpg)
 
-**Queue:** monitor work, remove waiting jobs, clear pending work, or retry a failed take. The studio's default “Generate immediately” option runs next after the current take, ahead of ordinary waiting jobs.
+**Queue:** drag waiting jobs into order, choose **Run Now** to run one next, monitor progress, or remove pending work. The studio's default “Generate immediately” option runs next after the current take, ahead of ordinary waiting jobs.
 
 ![Full page with the Queue modal open](docs/images/queue-modal.jpg)
 
@@ -78,6 +78,8 @@ Here are the available endpoints. See [API.md](API.md) for request formats, exam
 | DELETE | `/api/jobs/{id}` | Remove a waiting job. |
 | DELETE | `/api/jobs` | Clear waiting jobs. |
 | POST | `/api/jobs/{id}/retry` | Retry a failed job. |
+| POST | `/api/jobs/{id}/move` | Move a waiting job up/down or beside another. |
+| POST | `/api/jobs/{id}/run-now` | Put a waiting job first. |
 | GET | `/api/history` | Browse generated takes. |
 | GET | `/api/artifacts/{id}` | Get a take's details. |
 | GET | `/api/metadata/{id}` | Download a take's saved metadata. |
@@ -107,6 +109,8 @@ This service can accept jobs while the generator is off. Its queue endpoints use
 | GET | `/api/queue` | List jobs. |
 | GET | `/api/queue/{id}` | Get a job's details and result. |
 | PATCH | `/api/queue/{id}` | Update a waiting entry. |
+| POST | `/api/queue/{id}/move` | Reorder a waiting entry. |
+| POST | `/api/queue/{id}/run-now` | Put a waiting entry first. |
 | DELETE | `/api/queue/{id}` | Remove a waiting entry. |
 | DELETE | `/api/queue` | Clear waiting entries. |
 

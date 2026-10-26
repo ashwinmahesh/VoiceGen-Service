@@ -242,6 +242,7 @@ class Job(BaseModel):
     error: str | None = None
     result: Artifact | None = None
     sequence: int | None = None
+    queue_order: int | None = None
     backend: str | None = None
     model: str | None = None
     mode: str | None = None

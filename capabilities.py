@@ -20,7 +20,8 @@ def capabilities():
         'variation_note':'Auto contrasts voice descriptions in design mode; references/presets retain their selected identity. LLM when enabled, built-in directions otherwise.',
         'submit_url':'/api/candidates','status_url':'/api/candidates/{id}'}
     caps.limits.update({'queue':{'durable':True,'database':str(PROJECT_ROOT/'state/queue.sqlite3'),'api_generate_immediately_default':False,'ui_generate_immediately_default':True,
-                         'ordering':'Immediate FIFO before normal FIFO; active inference is never interrupted',
+                         'ordering':'Immediate before normal; FIFO unless reordered. Run Now moves first without interrupting active work',
+                         'reorder':True,'run_now':True,
                          'backend_policy':'Only the startup backend executes; other pending backends are paused',
                          'cancel_running':False}})
     from license_notices import notice_for

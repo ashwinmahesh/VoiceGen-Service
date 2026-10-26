@@ -92,6 +92,10 @@ class QueueStore:
                 payload TEXT NOT NULL, key_hash TEXT UNIQUE, fingerprint TEXT NOT NULL,
                 stage TEXT NOT NULL, error TEXT, result TEXT)''')
             db.execute('CREATE INDEX IF NOT EXISTS runnable ON entries(status,backend,generate_immediately DESC,sequence)')
+            if 'queue_order' not in {row['name'] for row in db.execute('PRAGMA table_info(entries)')}:
+                db.execute('ALTER TABLE entries ADD COLUMN queue_order INTEGER NOT NULL DEFAULT 0')
+                db.execute('UPDATE entries SET queue_order=sequence')
+            db.execute('CREATE INDEX IF NOT EXISTS runnable_order ON entries(status,backend,generate_immediately DESC,queue_order,sequence)')
             db.execute('''CREATE TABLE IF NOT EXISTS candidate_batches (
                 id TEXT PRIMARY KEY, backend TEXT NOT NULL, created_at TEXT NOT NULL,
                 key_hash TEXT UNIQUE, fingerprint TEXT NOT NULL, job_ids TEXT NOT NULL)''')
@@ -137,6 +141,7 @@ class QueueStore:
                  payload,key_hash,fingerprint,stage) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (identity,backend,model,mode,'queued',int(immediate),timestamp,timestamp,
                  json.dumps(payload,allow_nan=False),key_hash,fingerprint,'Waiting for execution slot'))
+            db.execute('UPDATE entries SET queue_order=sequence WHERE id=?',(identity,))
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
 
     def read(self, identity):
@@ -163,6 +168,7 @@ class QueueStore:
                  payload,key_hash,fingerprint,stage) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (identity,routing_key,'','opaque','queued',int(immediate),timestamp,timestamp,
                  json.dumps(wrapped,allow_nan=False),key,fingerprint,'Waiting for consumer validation'))
+            db.execute('UPDATE entries SET queue_order=sequence WHERE id=?',(identity,))
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
 
     def edit_pending(self, identity, payload=None, immediate=None):
@@ -180,6 +186,55 @@ class QueueStore:
                 raise QueueConflict('Keyed priority is immutable; remove and submit with a new key')
             db.execute('UPDATE entries SET payload=?,generate_immediately=?,updated_at=? WHERE id=?',
                        (json.dumps(row['payload'],allow_nan=False),int(immediate if immediate is not None else row['generate_immediately']),now(),identity))
+            return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+
+    def move(self, identity, before_id=None, after_id=None, direction=None):
+        """Reorder waiting work atomically; crossing priority groups adopts the target's group."""
+        if sum(value is not None for value in (before_id,after_id,direction)) != 1:
+            raise ValueError('Supply exactly one move target')
+        if direction is not None and direction not in ('up','down'):
+            raise ValueError('Direction must be up or down')
+        with self.transaction() as db:
+            source=self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+            if source['status']!='queued':
+                raise QueueConflict('Only waiting entries can be reordered; active work is never interrupted')
+            rows=list(db.execute("SELECT id,generate_immediately FROM entries WHERE status='queued' ORDER BY generate_immediately DESC,queue_order,sequence"))
+            ids=[row['id'] for row in rows]
+            index=ids.index(identity)
+            if direction:
+                target=index+(-1 if direction=='up' else 1)
+                if target<0 or target>=len(ids):return source
+                before_id=ids[target] if direction=='up' else None
+                after_id=ids[target] if direction=='down' else None
+            anchor_id=before_id or after_id
+            if anchor_id==identity:raise ValueError('A job cannot be moved relative to itself')
+            anchor=self.decode(db.execute('SELECT * FROM entries WHERE id=?',(anchor_id,)).fetchone())
+            if anchor['status']!='queued':
+                raise QueueConflict('The target job is no longer waiting; refresh the queue and try again')
+            ids.remove(identity)
+            ids.insert(ids.index(anchor_id)+(0 if before_id else 1),identity)
+            if ids==[row['id'] for row in rows]:return source
+            db.execute('UPDATE entries SET generate_immediately=?,updated_at=? WHERE id=?',
+                       (int(anchor['generate_immediately']),now(),identity))
+            self._save_order(db,ids)
+            return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+
+    @staticmethod
+    def _save_order(db, identities):
+        # Sequence remains an immutable admission ID. Compact keys keep future
+        # sequence-based admissions at the back of their priority group.
+        db.executemany('UPDATE entries SET queue_order=? WHERE id=?',
+                       ((position,identity) for position,identity in enumerate(identities,1)))
+
+    def run_now(self, identity):
+        """Place one waiting job first, even ahead of existing immediate work."""
+        with self.transaction() as db:
+            source=self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+            if source['status']!='queued':
+                raise QueueConflict('Only waiting entries can run next; active work is never interrupted')
+            ids=[row['id'] for row in db.execute("SELECT id FROM entries WHERE status='queued' AND id!=? ORDER BY generate_immediately DESC,queue_order,sequence",(identity,))]
+            db.execute('UPDATE entries SET generate_immediately=1,updated_at=? WHERE id=?',(now(),identity))
+            self._save_order(db,[identity,*ids])
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
 
     def prepare_opaque(self, identity, payload, model, mode):
@@ -238,6 +293,7 @@ class QueueStore:
                      payload,key_hash,fingerprint,stage) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
                     (identity,backend,model,mode,'queued',int(immediate),timestamp,timestamp,
                      json.dumps(payload,allow_nan=False),None,fingerprint,'Waiting for execution slot'))
+                db.execute('UPDATE entries SET queue_order=sequence WHERE id=?',(identity,))
             db.execute('INSERT INTO candidate_batches VALUES (?,?,?,?,?,?)',
                        (batch_id,backend,timestamp,key_hash,fingerprint,json.dumps(identities)))
             return self._candidate_batch(db, db.execute('SELECT * FROM candidate_batches WHERE id=?',(batch_id,)).fetchone())
@@ -261,7 +317,7 @@ class QueueStore:
     def claim(self, backend, allow_llm=True):
         with self.transaction() as db:
             rows = db.execute('''SELECT * FROM entries WHERE status='queued' AND backend=?
-                ORDER BY generate_immediately DESC,sequence''',(backend,))
+                ORDER BY generate_immediately DESC,queue_order,sequence''',(backend,))
             row=None
             for candidate in rows:
                 plan=json.loads(candidate['payload']).get('candidate_plan',{})
@@ -338,7 +394,7 @@ class QueueStore:
                 clauses.append('status IN ('+','.join('?' for _ in statuses)+')'); args.extend(statuses)
             where = ' WHERE '+' AND '.join(clauses) if clauses else ''
             total = db.execute('SELECT count(*) FROM entries'+where,args).fetchone()[0]
-            rows = db.execute("SELECT * FROM entries"+where+" ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END,generate_immediately DESC,sequence LIMIT ? OFFSET ?",(*args,limit,offset))
+            rows = db.execute("SELECT * FROM entries"+where+" ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,generate_immediately DESC,queue_order,sequence LIMIT ? OFFSET ?",(*args,limit,offset))
             more = offset+limit < total
             return dict(data=[self.decode(row) for row in rows],total=total,counts=counts,
                         limit=limit,offset=offset,has_more=more,next_offset=offset+limit if more else None)

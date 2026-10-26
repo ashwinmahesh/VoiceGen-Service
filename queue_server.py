@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from body_limit import BodyLimit
 from queue_status import storage_error_response
+from queue_schemas import QueueMove
 from durable_queue import QueueStore, QueueConflict
 from queue_config import PROJECT_ROOT, QUEUE_DB, DEFAULT_QUEUE_PORT, DEFAULT_MODEL, MODELS, check_legacy_queue
 
@@ -66,6 +67,7 @@ class Edit(BaseModel):
 class Entry(BaseModel):
     id: str
     sequence: int
+    queue_order: int
     model: str
     payload: dict
     prepared: bool
@@ -116,7 +118,7 @@ class ModelList(BaseModel):
 
 
 def public(row):
-    return {key:row[key] for key in ('id','sequence','status','stage','created_at','updated_at',
+    return {key:row[key] for key in ('id','sequence','queue_order','status','stage','created_at','updated_at',
             'started_at','completed_at','attempts','generate_immediately','error','result')} | {
         'model':row['backend'],
         'payload':row['payload'].get('queue_request',row['payload'].get('queue_submission',row['payload'])),
@@ -186,6 +188,18 @@ def update(identity: str, request: Edit):
     except (TypeError,ValueError) as exc:
         if isinstance(exc,QueueConflict):raise
         raise HTTPException(422,'Payload must be finite JSON') from None
+
+
+@app.post('/api/queue/{identity}/move',response_model=Entry)
+def move(identity: str, request: QueueMove):
+    try:return public(store.move(identity,**request.model_dump(exclude_none=True)))
+    except QueueConflict:raise
+    except ValueError as exc:raise HTTPException(422,str(exc)) from None
+
+
+@app.post('/api/queue/{identity}/run-now',response_model=Entry)
+def run_now(identity: str):
+    return public(store.run_now(identity))
 
 
 @app.delete('/api/queue',response_model=Removal)

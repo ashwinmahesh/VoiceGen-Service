@@ -411,29 +411,110 @@ async function health(){
   $('status').dataset.offline=true;queueNotices(null);
  }finally{healthInFlight=false;controls()}
 }
-let queueOffset=0,queuePage=null,queueRequest=0;
+let queueOffset=0,queuePage=null,queueRequest=0,queueDrag=null,queueMutating=false;
 async function refreshQueue(){
+ if(queueDrag||queueMutating)return;
  const token=++queueRequest;
  const page=await api('/api/queue?'+new URLSearchParams({status:$('queue-status').value,limit:$('queue-size').value,offset:queueOffset}));
- if(token!==queueRequest)return;
+ if(token!==queueRequest||queueDrag||queueMutating)return;
  if(queueOffset&&queueOffset>=page.total){queueOffset=0;return refreshQueue()}
+ const queueScroll=$('queue-entries').scrollTop,focused=document.activeElement,focusRow=focused?.closest('.queue-entry'),queueFocus=focusRow?{id:focusRow.dataset.jobId,text:focused.textContent}:null;
  queuePage=page;$('queue-entries').replaceChildren();$('queue-badge').textContent=(page.counts.queued||0)+(page.counts.running||0)||'';
  $('queue-count').textContent=`${page.counts.queued||0} pending · ${page.counts.running||0} running · ${page.counts.error||0} failed`;
  $('queue-clear').disabled=!(page.counts.queued>0);$('queue-prev').disabled=queueOffset===0;$('queue-next').disabled=!page.has_more;
  $('queue-page').textContent=page.total?`${queueOffset+1}–${queueOffset+page.data.length} of ${page.total}`:'No matching entries';
  for(const row of page.data){
   const card=el('article',null,'card queue-entry'),content=el('div',null,'queue-entry-content');
-  content.append(el('strong',`${row.status} · ${row.backend||'legacy'} · ${row.generate_immediately?'Immediate':'Normal FIFO'}`));
+  card.dataset.jobId=row.id;card.dataset.queueStatus=row.status;
+  if(row.status==='queued'){
+   const handle=el('button','⠿','queue-drag-handle');handle.type='button';handle.dataset.jobId=row.id;
+   handle.setAttribute('aria-label','Reorder job: '+(row.requested?.text||row.id).slice(0,90));handle.setAttribute('aria-describedby','queue-reorder-hint');
+   handle.title='Drag to reorder, adopting the target’s priority, or use the up and down arrow keys';handle.addEventListener('pointerdown',startQueueDrag);
+   handle.addEventListener('lostpointercapture',()=>{if(queueDrag?.handle===handle)finishQueueDrag()});
+   handle.onkeydown=event=>{if(['ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();changeQueueOrder(row.id,{direction:event.key==='ArrowUp'?'up':'down'},false,true)}};
+   card.append(handle);
+  }else{const spacer=el('span',null,'queue-drag-spacer');spacer.setAttribute('aria-hidden','true');card.append(spacer)}
+  content.append(el('strong',`${row.status} · ${row.backend||'legacy'} · ${row.generate_immediately?'Immediate':'Normal'}`));
   content.append(el('p',row.requested?.text||row.id),el('p',row.stage,'hint'));
   if(row.error)content.append(el('p',row.error,'error'));
   const actions=el('div',null,'card-actions queue-actions');
   if(row.candidate_batch_id){const options=el('button','View all options','secondary');options.type='button';options.onclick=()=>{$('queue-dialog').close();watchCandidates(row.candidate_batch_id)};actions.append(options);}
   const inspect=el('button',row.status==='done'?'Open take':'Monitor','secondary');inspect.type='button';inspect.onclick=()=>{$('queue-dialog').close();row.result?showResult(row.result):watch(row.id)};actions.append(inspect);
-  if(row.status==='queued'){const remove=el('button','Remove pending','secondary');remove.type='button';remove.onclick=async()=>{try{await api('/api/queue/'+row.id,{method:'DELETE'});await refreshQueue()}catch(exc){error(exc.message)}};actions.append(remove)}
+  if(row.status==='queued'){
+   const run=el('button','Run Now','secondary queue-run-now');run.type='button';run.disabled=!!row.paused;
+   run.title=row.paused?row.stage:'Run next, ahead of other waiting jobs. The current take finishes first.';
+   run.onclick=()=>changeQueueOrder(row.id,null,true);actions.append(run);
+   const remove=el('button','Remove pending','secondary');remove.type='button';remove.onclick=async()=>{try{await api('/api/queue/'+row.id,{method:'DELETE'});await refreshQueue()}catch(exc){error(exc.message)}};actions.append(remove);
+  }
   if(row.status==='error'&&!row.paused&&row.backend===caps?.backend){const retry=el('button','Retry same entry','secondary');retry.type='button';retry.onclick=async()=>{try{const job=await post('/api/queue/'+row.id+'/retry',{});$('queue-dialog').close();watch(job.id);await refreshQueue()}catch(exc){error(exc.message)}};actions.append(retry)}
   card.append(content,actions);$('queue-entries').append(card);
  }
+ $('queue-entries').scrollTop=queueScroll;
+ if(queueFocus){const card=$('queue-entries').querySelector(`[data-job-id="${queueFocus.id}"]`);[...card?.querySelectorAll('button')||[]].find(button=>button.textContent===queueFocus.text&&!button.disabled)?.focus({preventScroll:true})}
 }
+async function changeQueueOrder(identity,target,runNow=false,refocus=false){
+ if(queueMutating||queueDrag)return;
+ queueMutating=true;queueRequest++;$('queue-error').hidden=true;$('queue-entries').setAttribute('aria-busy','true');
+ for(const button of $('queue-entries').querySelectorAll('button'))button.disabled=true;
+ try{
+  await post('/api/queue/'+identity+(runNow?'/run-now':'/move'),target||{});
+  announce(runNow?'Job will run next after the current generation finishes.':'Queue order saved.');
+ }catch(exc){error(exc.message)}
+ finally{
+  queueMutating=false;$('queue-entries').removeAttribute('aria-busy');
+  try{await refreshQueue();if(refocus||runNow){const card=$('queue-entries').querySelector(`[data-job-id="${identity}"]`);(card?.querySelector(runNow?'.queue-run-now':'.queue-drag-handle')||card?.querySelector('button'))?.focus()}}catch(exc){error(exc.message)}
+ }
+}
+function queueDropTarget(y){
+ const rows=[...$('queue-entries').querySelectorAll('[data-queue-status="queued"]')].filter(card=>card.dataset.jobId!==queueDrag.identity);
+ for(const card of $('queue-entries').children)delete card.dataset.drop;
+ const anchor=rows.find(card=>y<card.getBoundingClientRect().top+card.getBoundingClientRect().height/2)||rows.at(-1);
+ if(!anchor){queueDrag.target=null;return}
+ const placement=y<anchor.getBoundingClientRect().top+anchor.getBoundingClientRect().height/2?'before':'after';
+ anchor.dataset.drop=placement;queueDrag.target={[placement+'_id']:anchor.dataset.jobId};
+}
+function queueDragFrame(){
+ if(!queueDrag?.moving)return;
+ const box=$('queue-entries').getBoundingClientRect(),y=queueDrag.y;
+ if(y<box.top+40&&queueDrag.direction<0)$('queue-entries').scrollTop-=12;
+ else if(y>box.bottom-40&&queueDrag.direction>0)$('queue-entries').scrollTop+=12;
+ queueDropTarget(y);queueDrag.frame=requestAnimationFrame(queueDragFrame);
+}
+function startQueueDrag(event){
+ if(event.button!==0||queueMutating||queueDrag)return;
+ const handle=event.currentTarget;event.preventDefault();handle.focus({preventScroll:true});
+ queueRequest++;handle.setPointerCapture(event.pointerId);
+ queueDrag={identity:handle.dataset.jobId,handle,pointerId:event.pointerId,x:event.clientX,y:event.clientY,startX:event.clientX,startY:event.clientY,direction:0,moving:false,target:null};
+}
+function finishQueueDrag(commit=false){
+ if(!queueDrag)return;
+ const drag=queueDrag;queueDrag=null;cancelAnimationFrame(drag.frame);
+ if(drag.handle.hasPointerCapture(drag.pointerId))drag.handle.releasePointerCapture(drag.pointerId);
+ $('queue-entries').classList.remove('queue-dragging');
+ for(const card of $('queue-entries').children){delete card.dataset.drop;card.classList.remove('queue-moving')}
+ if(commit&&drag.moving&&drag.target)changeQueueOrder(drag.identity,drag.target,false,true);
+ else refreshQueue().catch(exc=>error(exc.message));
+}
+document.addEventListener('pointermove',event=>{
+ if(!queueDrag||event.pointerId!==queueDrag.pointerId)return;
+ queueDrag.direction=Math.sign(event.clientY-queueDrag.y)||queueDrag.direction;
+ queueDrag.x=event.clientX;queueDrag.y=event.clientY;
+ if(!queueDrag.moving&&Math.hypot(event.clientX-queueDrag.startX,event.clientY-queueDrag.startY)>6){
+  queueDrag.moving=true;$('queue-entries').classList.add('queue-dragging');queueDrag.handle.closest('.queue-entry').classList.add('queue-moving');
+  announce('Moving job. Release at the highlighted position, or press Escape to cancel.');queueDragFrame();
+ }
+ if(queueDrag.moving)event.preventDefault();
+},{passive:false});
+document.addEventListener('pointerup',event=>{
+ if(!queueDrag||event.pointerId!==queueDrag.pointerId)return;
+ const box=$('queue-entries').getBoundingClientRect();
+ if(queueDrag.moving)queueDropTarget(event.clientY);
+ finishQueueDrag(event.clientX>=box.left-24&&event.clientX<=box.right+24&&event.clientY>=box.top-48&&event.clientY<=box.bottom+48);
+});
+document.addEventListener('pointercancel',event=>{if(queueDrag?.pointerId===event.pointerId)finishQueueDrag()});
+window.addEventListener('blur',()=>finishQueueDrag());
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&queueDrag){event.preventDefault();event.stopPropagation();finishQueueDrag()}},true);
+$('queue-dialog').addEventListener('close',()=>finishQueueDrag());
 $('queue-clear').onclick=async()=>{try{const result=await api('/api/queue',{method:'DELETE'});announce(`Removed ${result.deleted} pending takes. Running speech continues.`);await refreshQueue()}catch(exc){error(exc.message)}};
 $('queue-status').onchange=$('queue-size').onchange=()=>{queueOffset=0;refreshQueue().catch(exc=>error(exc.message))};
 $('queue-prev').onclick=()=>{queueOffset=Math.max(0,queueOffset-Number($('queue-size').value));refreshQueue().catch(exc=>error(exc.message))};

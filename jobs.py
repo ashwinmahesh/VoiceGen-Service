@@ -114,7 +114,7 @@ class JobManager:
 
     def public(self, row):
         result = {k:row[k] for k in ['id','status','stage','created_at','updated_at','error','result',
-                  'sequence','backend','model','mode','generate_immediately','attempts','started_at','completed_at']}
+                  'sequence','queue_order','backend','model','mode','generate_immediately','attempts','started_at','completed_at']}
         result['paused'] = row['status']=='queued' and row['backend'] != self.profile['backend']
         if result['paused']:
             result['stage'] = 'Paused: select '+row['backend']+' at startup'
@@ -492,6 +492,20 @@ class JobManager:
         except QueueConflict as exc:
             raise BusyError(str(exc)) from None
         return dict(deleted=removed,active_job=self.active)
+
+    def move(self, identity, **target):
+        self._ready()
+        try:row=self.store.move(identity,**target)
+        except QueueConflict as exc:raise BusyError(str(exc)) from None
+        self._wake.set()
+        return self.public(row)
+
+    def run_now(self, identity):
+        self._ready()
+        try:row=self.store.run_now(identity)
+        except QueueConflict as exc:raise BusyError(str(exc)) from None
+        self._wake.set()
+        return self.public(row)
 
     def retry(self, identity):
         self._ready()

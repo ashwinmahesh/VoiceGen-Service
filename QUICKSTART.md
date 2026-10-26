@@ -73,7 +73,7 @@ Prompt expansion uses the separate local Qwen3.5-2B LLM, with rules tailored to 
 
 Open **Collection** for generated History and the saved voice library. Name, describe, tag, and search your voices there. **Upload voice** imports a recording directly into the library.
 
-Open **Queue** in the header to monitor progress. **Generate immediately**, checked by default in the UI, runs your request next after the active take, ahead of ordinary waiting jobs. It does not interrupt work already running. Pending jobs survive restarts and wait until their chosen model is running.
+Open **Queue** in the header to monitor progress. Drag a left-side handle to reorder waiting jobs, or focus it and use the up/down arrow keys. **Run Now** moves a waiting job first, ahead of other immediate jobs; the current generation finishes before it starts. **Generate immediately**, checked by default in the UI, runs your request next after the active take, ahead of ordinary waiting jobs. It does not interrupt work already running. Pending jobs survive restarts and wait until their chosen model is running.
 
 ## 4. Generate through the API
 
@@ -227,7 +227,8 @@ Pass settings after the Make target, for example `make serve MODEL=higgs PORT=57
 | Prompt expansion | UI switch and preview/apply; API preview through `/api/prompts/expand`. `candidate_use_llm: false` disables automatic LLM planning for a design batch. |
 | Seed | Selects a take's random variation; does not guarantee the same voice across different dialogue. |
 | Sentence/comma pauses | Advanced settings for supported models. API fields include `sentence_pause_ms` and `comma_pause_ms` under the model ID. MOSS timing is approximate; Higgs and Vox do not offer these fields. |
-| Run next | UI **Generate immediately**, or `generate_immediately: true`. API default is false. |
+| Run next | New requests: **Generate immediately** or `generate_immediately: true` (API default false). Existing jobs: Queue **Run Now** or `POST /api/jobs/{id}/run-now`. |
+| Queue order | Drag a handle, use its arrow keys, or call `POST /api/jobs/{id}/move`. Only waiting jobs move. |
 
 Use **Adjust pauses** on a completed take to extend quiet gaps while keeping the original. For all model-specific ranges and restrictions, see [API.md](API.md).
 
