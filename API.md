@@ -1,6 +1,6 @@
 # Local Voice Studio API 2.1.0
 
-The startup-selected **generator** serves the studio UI and the generation API on `http://localhost:5743`, with OpenAPI at `GET /openapi.json` and interactive documentation at `/docs`. The independent **queue CRUD** service uses `http://localhost:55205` and has its own OpenAPI/docs. It serves no generation UI and imports no model configuration or inference code. The generator reads the same project-local SQLite queue directly; stopping/restarting the queue HTTP service does not stop inference or recover active work. These are local job protocols, not OpenAI-compatible speech endpoints. Read the generator's `GET /api/capabilities` before building a voice request; unknown generation fields return 422.
+The startup-selected **generator** serves the studio UI and the generation API on `http://localhost:5743`, with OpenAPI at `GET /openapi.json` and interactive documentation at `/docs`. The independent **queue CRUD** service uses `http://localhost:55205` and has its own OpenAPI/docs. It serves no generation UI and imports no inference/runtime configuration or inference code; its model listing reads only static names/IDs. The generator reads the same project-local SQLite queue directly; stopping/restarting the queue HTTP service does not stop inference or recover active work. These are local job protocols, not OpenAI-compatible speech endpoints. Read the generator's `GET /api/capabilities` before building a voice request; unknown generation fields return 422.
 
 ## Standalone queue CRUD API (port 55205)
 
@@ -23,6 +23,7 @@ For VoiceGen, `payload` is one ordinary Generation request (the fields documente
 
 | Method / route | Queue-service behavior |
 | --- | --- |
+| `GET /api/models` | List all supported model IDs/names and the configured default from static metadata; no asset, installation or worker-readiness checks |
 | `POST /api/queue` | Persist `{model?,payload,generate_immediately?,idempotency_key?}`; HTTP 202 with a stable ID |
 | `GET /api/queue?status=pending&model=voxcpm2&limit=24&offset=0` | Paginated listing; optional model filter; statuses pending, all, queued, running, done, error, deleted; limit 1–100 |
 | `GET /api/queue/{id}` | Generic record with opaque original payload, model, status, stage, timestamps, attempts, result/error and `prepared` |
@@ -30,6 +31,8 @@ For VoiceGen, `payload` is one ordinary Generation request (the fields documente
 | `DELETE /api/queue/{id}` | Tombstone a waiting entry only; 409 for active/terminal work, 404 unknown |
 | `DELETE /api/queue?model=voxcpm2` | Clear waiting entries, optionally filtered; retain active work, history and media |
 | `GET /health` | Queue role/project/database/readiness and configured `default_model` only; no model readiness or worker registry |
+
+`GET http://localhost:55205/api/models` returns `{"default_model":"higgs","models":[{"id":"voxcpm2","name":"VoxCPM2","is_default":false},...]}` with all seven supported backends. Higgs has `is_default:true`. The IDs come from the same `model_registry.json` used by generator startup choices. This lists supported options rather than installed/ready models and works without the generator or model SSD. Use the generator's capabilities/health for readiness and controls. Listing models creates no jobs and does not change the default.
 
 Records expose `id`, `sequence`, `model`, `payload`, `generate_immediately`, `status`, `stage`, timestamps, `attempts`, `error`, `result`, and `prepared` (false until the generator freezes a raw payload). Lists add `total`, `counts`, `limit`, `offset`, `has_more` and `next_offset`. Same key/model/payload/priority recovers the original record, including tombstones; changed inputs return 409. Queue-service keys have a separate namespace from generator keys. Validation failures can be inspected here and retried with the generator's explicit retry endpoint, or submitted as corrected new requests. Only the generator updates execution state and performs crash recovery under its exclusive consumer lease. The queue API has its own distinct process lease and never claims or resets jobs.
 

@@ -1,4 +1,4 @@
-"""Queue-only paths and port. No model configuration or external assets required."""
+"""Static model labels, queue paths and port. No inference imports or asset probes."""
 import json
 import os
 from pathlib import Path
@@ -6,6 +6,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 STATE_DIR = PROJECT_ROOT/'state'
 DEFAULT_MODEL = json.loads((PROJECT_ROOT/'service_defaults.json').read_text())['model']
+MODELS = json.loads((PROJECT_ROOT/'model_registry.json').read_text())
 DEFAULT_QUEUE_PORT = int(os.environ.get('QUEUE_PORT', json.loads((PROJECT_ROOT/'queue_service.json').read_text())['port']))
 QUEUE_DB = Path(os.environ.get('QUEUE_DB', str(STATE_DIR/'queue.sqlite3'))).expanduser().absolute()
 if not QUEUE_DB.resolve().is_relative_to(STATE_DIR.resolve()) or STATE_DIR.is_symlink():

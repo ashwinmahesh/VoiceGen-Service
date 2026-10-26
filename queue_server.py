@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from body_limit import BodyLimit
 from durable_queue import QueueStore, QueueConflict
-from queue_config import PROJECT_ROOT, QUEUE_DB, DEFAULT_QUEUE_PORT, DEFAULT_MODEL, check_legacy_queue
+from queue_config import PROJECT_ROOT, QUEUE_DB, DEFAULT_QUEUE_PORT, DEFAULT_MODEL, MODELS, check_legacy_queue
 
 store = QueueStore(PROJECT_ROOT, QUEUE_DB)
 
@@ -29,7 +29,7 @@ async def lifespan(app):
         yield
 
 
-app = FastAPI(title='VoiceGen Queue CRUD API',version='1.0.0',lifespan=lifespan)
+app = FastAPI(title='VoiceGen Queue CRUD API',version='1.1.0',lifespan=lifespan)
 app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
 app.add_middleware(BodyLimit)
 
@@ -101,6 +101,17 @@ class QueueHealth(BaseModel):
     default_model: str
 
 
+class ModelDescriptor(BaseModel):
+    id: str
+    name: str
+    is_default: bool
+
+
+class ModelList(BaseModel):
+    default_model: str
+    models: list[ModelDescriptor]
+
+
 def public(row):
     return {key:row[key] for key in ('id','sequence','status','stage','created_at','updated_at',
             'started_at','completed_at','attempts','generate_immediately','error','result')} | {
@@ -129,6 +140,13 @@ async def missing(request, exc):
 def health():
     return {'service':'voicegen-queue','role':'queue-crud','project':str(PROJECT_ROOT),
             'queue_database':str(store.path),'status':'ready','default_model':DEFAULT_MODEL}
+
+
+@app.get('/api/models',response_model=ModelList,
+         description='List supported model IDs and names from static metadata. Does not check installation or worker readiness.')
+def list_models():
+    return {'default_model':DEFAULT_MODEL,
+            'models':[{**model,'is_default':model['id']==DEFAULT_MODEL} for model in MODELS]}
 
 
 @app.post('/api/queue',status_code=202,response_model=Entry)

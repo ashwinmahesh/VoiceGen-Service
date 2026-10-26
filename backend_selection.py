@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-BACKENDS = ('voxcpm2', 'qwen3', 'chatterbox', 'indextts', 'moss', 'fish', 'higgs')
+BACKENDS = tuple(model['id'] for model in json.loads((Path(__file__).resolve().parent/'model_registry.json').read_text()))
 AUDIOCPP_REVISION = '082177ecac45f1965929ded33cd81a85c13542f1'
 
 

@@ -135,6 +135,8 @@ class NoInference(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0,NoInference())
 import queue_server
 assert not any(n in sys.modules for n in ('config','engine','jobs','torch','mlx','numpy'))
+assert queue_server.list_models()['default_model']=='higgs'
+assert len(queue_server.list_models()['models'])==7
 '''
         env={**self.env,'DATA_DIR':'/Volumes/voicegen-unmounted-test/absent','MODEL_BACKEND':'not-a-model'}
         probe=subprocess.run([sys.executable,'-c',code],cwd=PROJECT,env=env,capture_output=True,text=True)
@@ -155,6 +157,17 @@ assert not any(n in sys.modules for n in ('config','engine','jobs','torch','mlx'
         self.assertEqual(request(self.queue_port,'/')[0],404)
         schema=request(self.queue_port,'/openapi.json')[1]['paths']
         self.assertNotIn('/api/generate',schema);self.assertNotIn('/api/capabilities',schema)
+        self.assertIn('/api/models',schema)
+        status,models=request(self.queue_port,'/api/models')
+        self.assertEqual(status,200)
+        self.assertEqual(models['default_model'],'higgs')
+        expected={'voxcpm2':'VoxCPM2','qwen3':'Qwen3-TTS','chatterbox':'Chatterbox Original',
+                  'indextts':'IndexTTS 2.5','moss':'MOSS VoiceGenerator','fish':'Fish Audio S2 Pro','higgs':'Higgs TTS 3'}
+        self.assertEqual({row['id']:row['name'] for row in models['models']},expected)
+        self.assertEqual([row['id'] for row in models['models'] if row['is_default']],['higgs'])
+        self.assertEqual(len(models['models']),len(expected))
+        # Listing is static metadata: it must not create media directories or queue work.
+        self.assertEqual(request(self.queue_port,'/api/queue')[1]['total'],0)
         status,defaulted=request(self.queue_port,'/api/queue','POST',{'payload':{'arbitrary':True}})
         self.assertEqual((status,defaulted['model']),(202,'higgs'))
         self.assertEqual(request(self.queue_port)[1]['default_model'],'higgs')

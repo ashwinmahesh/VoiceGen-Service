@@ -11,7 +11,7 @@ SHARED = ['VOICE_QUALITY.md','test_inference_locks.py','inference_locks.py','dur
 SHARED += ['punctuation_pacing.py','test_punctuation_pacing.py','performance_controls.py','test_performance_controls.py','license_notices.py','startup_select.py','.gitattributes','backend_selection.py','torch_engine.py','native_engine.py','fish_loader.py','runtime_setup.py','runtime_checks.py','data_owner.py','test_backends.py','BACKENDS.md']
 SHARED += ['prompt_assets.py','prompt_expansion.py','prompt_policy.py','prompt_profiles.py','prompt_worker.py','setup_prompt_llm.py','requirements.enhancer.lock.txt','test_prompt_expansion.py','docs/voice-prompt-expansion.md']
 SHARED += ['candidate_diversity.py','candidate_policy.py','test_candidate_diversity.py']
-SHARED += ['queue_config.py','queue_server.py','queue_manage.py','queue_service.json','service_defaults.json','requirements-queue.lock.txt','test_queue_service.py']
+SHARED += ['queue_config.py','queue_server.py','queue_manage.py','queue_service.json','service_defaults.json','model_registry.json','requirements-queue.lock.txt','test_queue_service.py']
 SHARED += [str(path.relative_to(PROJECT_ROOT)) for folder in ('backends','third_party')
            for path in sorted((PROJECT_ROOT/folder).rglob('*')) if path.is_file()]
 

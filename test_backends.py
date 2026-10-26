@@ -34,6 +34,17 @@ class BackendTests(unittest.TestCase):
         import json
         return json.loads((PROJECT_ROOT/'backends'/backend/'service.json').read_text())
 
+    def test_static_model_registry_matches_backend_profiles(self):
+        import json
+        models=json.loads((PROJECT_ROOT/'model_registry.json').read_text())
+        self.assertEqual(len({model['id'] for model in models}),len(models))
+        self.assertIn(default_backend(),{model['id'] for model in models})
+        self.assertEqual({model['id'] for model in models},
+                         {path.parent.name for path in (PROJECT_ROOT/'backends').glob('*/service.json')})
+        for model in models:
+            profile=self.profile(model['id'])
+            self.assertEqual((model['id'],model['name']),(profile['backend'],profile['name']))
+
     def request(self,**kwargs):
         return Generation(text='Welcome home.',reference_id='a'*32,**kwargs)
 
@@ -214,7 +225,7 @@ class BackendTests(unittest.TestCase):
         import sys
         with tempfile.TemporaryDirectory(dir=ROOT/'cache/tmp') as tmp:
             project=Path(tmp)/'project';project.mkdir()
-            for name in ['config.py','backend_selection.py','service.json','model_specs.json','extension_specs.json']:
+            for name in ['config.py','backend_selection.py','service.json','model_specs.json','extension_specs.json','model_registry.json','service_defaults.json']:
                 shutil.copyfile(PROJECT_ROOT/name,project/name)
             shutil.copytree(PROJECT_ROOT/'backends/qwen3',project/'backends/qwen3')
             data=Path(tmp)/'data'
