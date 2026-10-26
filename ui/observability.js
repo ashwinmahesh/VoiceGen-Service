@@ -45,7 +45,31 @@ function chart(metric,data,job){
  card.append(heading,scoped,value,plot,tooltip);return card;
 }
 function setView(next){view=next;if(next==='timeline')history.replaceState(null,'',location.pathname);$('timeline-panel').hidden=next!=='timeline';$('jobs-panel').hidden=next!=='jobs';$('timeline-tab').setAttribute('aria-selected',String(next==='timeline'));$('jobs-tab').setAttribute('aria-selected',String(next==='jobs'));refresh(true)}
-async function loadJob(identity,run=null){selectedJob=identity;selectedRun=run;const params=new URLSearchParams(location.search);params.set('job',identity);if(run)params.set('run',run);else params.delete('run');history.replaceState(null,'','?'+params);await refresh(true)}
+function clearJobLog(){
+ $('job-log-caption').textContent='Job-specific output, when retained. Updates with the charts every five seconds.';
+ $('job-log-output').textContent='';$('job-log-output').hidden=true;$('job-log-notice').textContent='Loading log for this attempt…';$('job-log-error').hidden=true;$('copy-job-log').disabled=true;
+}
+function recordedStages(job){
+ const rows=[];let previous=null;
+ for(const point of job.points){if(point.stage!==previous){rows.push({ts:point.ts,stage:point.stage});previous=point.stage}}
+ if(job.selected_run.ended_at)rows.push({ts:job.selected_run.ended_at,stage:{done:'Finished',error:'Generation failed',interrupted:'Generation interrupted'}[job.selected_run.status]||job.selected_run.status});
+ $('job-stage-list').replaceChildren(...rows.slice(-200).map(row=>{const item=node('li');item.append(node('span','+'+duration(Math.max(0,row.ts-job.start)),'stage-time'),node('span',row.stage));return item}));
+ if(!rows.length)$('job-stage-list').append(node('li','No recorded stage changes for this attempt.'));
+}
+async function loadJobLog(job,token){
+ try{
+  const logs=await api('/api/jobs/'+encodeURIComponent(job.job_id)+'/logs?attempt='+job.selected_run.attempt);if(token!==requestNumber)return;
+  const output=$('job-log-output'),follow=output.hidden||output.scrollHeight-output.scrollTop-output.clientHeight<24;
+  if(output.textContent!==logs.text)output.textContent=logs.text;
+  output.hidden=!logs.available||!logs.text;
+  if(follow)output.scrollTop=output.scrollHeight;
+  $('job-log-caption').textContent=`Attempt ${logs.attempt}${logs.source?' · '+logs.source:''} · Latest ${logs.max_bytes/1024} KiB${logs.truncated?' · earlier output omitted':''} · Updates every five seconds`;
+  $('job-log-notice').textContent=logs.notice||'';
+  $('job-log-error').textContent=logs.error||'';$('job-log-error').hidden=!logs.error;
+  $('copy-job-log').disabled=!logs.text;
+ }catch(exc){if(token!==requestNumber)return;clearJobLog();$('job-log-notice').textContent='Log unavailable: '+exc.message;}
+}
+async function loadJob(identity,run=null){clearJobLog();selectedJob=identity;selectedRun=run;const params=new URLSearchParams(location.search);params.set('job',identity);if(run)params.set('run',run);else params.delete('run');history.replaceState(null,'','?'+params);await refresh(true)}
 async function refresh(force=false){
  if(inFlight&&!force)return;const token=++requestNumber;inFlight=true;$('refresh-resources').disabled=true;
  try{
@@ -65,13 +89,13 @@ async function refresh(force=false){
     const tr=node('tr');tr.dataset.selected=String(row.job_id===selectedJob&&(!selectedRun||selectedRun===row.id));
     const job=node('td',row.job_id.slice(0,10));job.title=row.job_id;job.append(node('small',`${names[row.backend]||row.backend} · attempt ${row.attempt}`));
     for(const cell of [job,node('td',timeLabel(row.started_at,true)),node('td',row.status),node('td',duration((row.ended_at||Date.now()/1000)-row.started_at)),node('td',Number.isFinite(row.peak_rss_bytes)?number(row.peak_rss_bytes/2**30)+' GiB':'Unavailable'),node('td',Number.isFinite(row.peak_cpu_percent)?number(row.peak_cpu_percent)+'%':'Unavailable'),node('td',Number.isFinite(row.peak_gpu_percent)?number(row.peak_gpu_percent)+'%':'Unavailable')])tr.append(cell);
-    const action=node('td'),button=node('button','View charts','secondary');button.onclick=()=>loadJob(row.job_id,row.id);action.append(button);tr.append(action);return tr;
+    const action=node('td'),button=node('button','Charts & logs','secondary');button.onclick=()=>loadJob(row.job_id,row.id);action.append(button);tr.append(action);return tr;
    }));
    if(selectedJob){const suffix=selectedRun?'?run_id='+encodeURIComponent(selectedRun):'';const job=await api('/api/observability/jobs/'+encodeURIComponent(selectedJob)+suffix);if(token!==requestNumber)return;
     selectedRun=job.selected_run.id;$('job-detail').hidden=false;$('job-title').textContent='Job '+selectedJob.slice(0,10);
     $('job-caption').textContent=`${names[job.selected_run.backend]||job.selected_run.backend} · ${job.selected_run.model} · ${job.selected_run.status} · ${duration(job.end-job.start)} · ${job.summary.samples} samples`;
     $('job-attempt').replaceChildren(...job.runs.map(row=>new Option(`Attempt ${row.attempt} · ${timeLabel(row.started_at,true)}`,row.id)));$('job-attempt').value=selectedRun;
-    legend($('job-legend'),job);charts($('job-charts'),job,true);
+    legend($('job-legend'),job);charts($('job-charts'),job,true);recordedStages(job);await loadJobLog(job,token);
    }
   }
  }catch(exc){if(token===requestNumber)error(exc.message)}finally{if(token===requestNumber){inFlight=false;$('refresh-resources').disabled=false}}
@@ -81,6 +105,7 @@ document.querySelectorAll('[data-window]').forEach(b=>b.onclick=()=>{windowName=
 $('resource-model').onchange=()=>{model=$('resource-model').value;offset=0;selectedJob=selectedRun=null;$('job-detail').hidden=true;history.replaceState(null,'',location.pathname);refresh(true)};
 $('refresh-resources').onclick=()=>refresh(true);$('jobs-prev').onclick=()=>{offset=Math.max(0,offset-25);refresh(true)};$('jobs-next').onclick=()=>{offset+=25;refresh(true)};
 $('job-attempt').onchange=()=>loadJob(selectedJob,$('job-attempt').value);
+$('copy-job-log').onclick=async()=>{try{await navigator.clipboard.writeText($('job-log-output').textContent);$('job-log-notice').textContent='Visible log copied.'}catch{$('job-log-notice').textContent='Could not copy automatically. Select the log text and copy it.'}};
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
 const params=new URLSearchParams(location.search);if(/^[a-f0-9]{32}$/.test(params.get('job')||'')){selectedJob=params.get('job');selectedRun=/^[a-f0-9]{32}$/.test(params.get('run')||'')?params.get('run'):null;setView('jobs')}else refresh();
 setInterval(()=>{if(!document.hidden)refresh()},5000);

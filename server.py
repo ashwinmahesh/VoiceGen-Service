@@ -10,7 +10,7 @@ from uuid import uuid4
 from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage,model_context
 from queue_config import QUEUE_DB, DEFAULT_QUEUE_PORT
 from queue_schemas import QueueMove, QueueState, ModelList
-from resource_schemas import ResourceOverview, ResourceJobPage, ResourceJobHistory
+from resource_schemas import ResourceOverview, ResourceJobPage, ResourceJobHistory, JobLogs
 from queue_status import api_status, storage_error_response, STORAGE_ERROR
 from model_readiness import ReadyModels,ModelUnavailable
 from runtime_engine import RuntimeEngine
@@ -174,6 +174,23 @@ def resource_job(identity: str, run_id: str | None=Query(None,pattern='^[a-f0-9]
     end=selected['ended_at'] or time()
     return {**monitor.store.series(start,end,job_id=identity,run_id=selected['id']),'job_id':identity,'runs':runs,'selected_run':selected,
             'scopes':SCOPES,'collector':monitor.status()}
+
+
+@app.get('/api/jobs/{identity}/logs',response_model=JobLogs,tags=['Observability'],summary='Read the available job-specific runtime log')
+def generation_logs(identity: str, attempt: int | None=Query(None,ge=1)):
+    from job_logs import job_log
+    if not voice_catalog.IDENTITY.fullmatch(identity):raise HTTPException(404,'Job not found')
+    manager._ready()
+    try:
+        row=manager.store.read(identity)
+        result=job_log(row,manager.root,attempt)
+        # A retry can start while the file is being read; never label its output as the prior attempt.
+        current=manager.store.read(identity)
+        if (current['attempts'],current['started_at']) != (row['attempts'],row['started_at']):
+            result.update(available=False,text='',truncated=False,source=None,updated_at=None,error=None,
+                          notice='The job changed attempts while reading its log. Refresh to view the selected attempt.')
+        return result
+    except FileNotFoundError as exc:raise HTTPException(404,str(exc)) from None
 
 
 def requested_model(model=None):

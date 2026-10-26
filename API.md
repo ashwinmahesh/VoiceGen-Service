@@ -46,6 +46,20 @@ curl --fail-with-body 'http://localhost:5743/api/observability/jobs/JOB_ID_HERE'
 
 Timeline/detail responses include `points`, a `summary` of original sample counts and peaks, timestamps in Unix seconds, and metric scopes. Values include `cpu_percent`, `rss_bytes`, `gpu_percent`, `gpu_allocated_bytes`, and `gpu_in_use_bytes`; each bucket also has `peak_*` values. CPU at 100% means one core, and memory values are bytes. CPU/RSS cover VoiceGen's process tree. **GPU counters cover the entire Mac**, including other apps; they are not exclusive per-job consumption. Missing readings are null. Longer windows aggregate samples, preserving their peaks. Collector status reports recording errors and dropped samples.
 
+### Generation logs
+
+`GET /api/jobs/JOB_ID_HERE/logs` reads the latest available job-specific runtime output. Add `?attempt=1` to request a particular attempt. It works through the generator, including while the separate queue API is off.
+
+```sh
+curl --fail-with-body 'http://localhost:5743/api/jobs/JOB_ID_HERE/logs'
+```
+
+The response includes `job_id`, `model`, `attempt`, current queue `status`, `available`, `text`, `truncated`, `max_bytes`, `source`, `updated_at`, `notice`, and `error`. Times are Unix seconds. Reads return at most **64 KiB** from the file's tail; `truncated: true` means earlier output was omitted. The text has terminal control sequences removed and is intended to be displayed as plain text.
+
+Higgs and MOSS retain native runtime logs in the configured media store. Other models currently have sampled stages and generation errors, rather than reliable job-specific console output. Missing/disconnected logs and older attempts that were not retained separately return **200**, `available: false`, empty `text`, and an explanatory `notice`. The endpoint never substitutes a shared backend log or another attempt's output. An unknown job/attempt returns 404; invalid attempt numbers return 422; SQLite failures return 503.
+
+The Observability job view refreshes this output every five seconds alongside the charts. Its **Recorded stages** list comes from sampled resource history; it is separate from the raw runtime output and may miss brief stages.
+
 See [resource history](docs/observability.md) for response fields, sampling intervals, retention, model/phase labels, and measurement limits. These endpoints live on the generator, not the standalone queue API.
 
 ## Generate speech

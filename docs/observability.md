@@ -2,11 +2,17 @@
 
 Open **Observability** in the studio header, or visit `http://localhost:5743/observability` while the generator is running. Recording starts automatically when the generator starts. You do not need to keep the page open.
 
-**Over time** offers 5m, 30m, 1h, 6h, 24h, 3 days, and 7 days. Filter by the speech model used by each job. Model colors and hover details identify the model recorded with each point. **By job** lists recorded attempts with their status, duration, and resource peaks. Select **View charts** to see a whole attempt on a shorter elapsed-time axis. Choose another attempt to compare a retry. A Queue entry's **Resources** link opens the same view.
+**Over time** offers 5m, 30m, 1h, 6h, 24h, 3 days, and 7 days. Filter by the speech model used by each job. Model colors and hover details identify the model recorded with each point. **By job** lists recorded attempts with their status, duration, and resource peaks. Select **Charts & logs** to see a whole attempt on a shorter elapsed-time axis. Choose another attempt to compare a retry. A Queue entry's **Resources & logs** link opens the same view.
 
 ![Full job resource page with demonstration data](images/observability-job.jpg)
 
 This screenshot uses demonstration data, not measured model performance.
+
+## Generation logs
+
+A selected job shows **Generation log** beneath its resource charts. It refreshes every five seconds and has a **Copy visible log** button. Higgs and MOSS currently retain native runtime output; other models show a clear unavailable message, their sampled stages, and any current generation error. No output is borrowed from a shared server log.
+
+The view reads the latest 64 KiB and marks omitted earlier output. Logs stay in their existing configured media-store `logs/` folder, separate from the resource database and its seven-day retention. Disconnecting that store leaves charts readable and explains why the log is unavailable. Older retries were not archived separately; selecting one does not display the newest retry's log. **Recorded stages** is a sampled timeline for the selected attempt, not a complete console trace.
 
 ## What is measured
 
@@ -40,6 +46,7 @@ Resource writes wait up to 200 ms for SQLite and then drop the sample, report th
 | `GET /api/observability/jobs?model=higgs&limit=25&offset=0` | Recorded attempts, newest first. Limits are 1–100. Includes IDs, attempt number, model, status, times, sample count, and peaks. |
 | `GET /api/observability/jobs/JOB_ID` | Latest recorded attempt for that job, its charts, and up to 100 recorded attempts. |
 | `GET /api/observability/jobs/JOB_ID?run_id=RUN_ID` | Select a particular recorded attempt belonging to that job. |
+| `GET /api/jobs/JOB_ID/logs?attempt=1` | Read available runtime output for one attempt; omit `attempt` for the latest. |
 
 The `model` filter is the speech backend ID, such as `higgs` or `voxcpm2`. It includes prompt-expansion samples associated with that backend. Missing retained job history returns 404; invalid windows and pagination return 422. SQLite read failures return 503 and can be retried. Both APIs are documented through the generator's `/docs` and `/openapi.json`.
 

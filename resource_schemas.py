@@ -99,3 +99,18 @@ class ResourceJobHistory(ResourceSeries):
     job_id: str
     runs: list[ResourceRun]
     selected_run: ResourceRun
+
+
+class JobLogs(BaseModel):
+    job_id: str
+    model: str
+    attempt: int
+    status: str
+    available: bool
+    text: str
+    truncated: bool
+    max_bytes: int
+    source: str | None
+    updated_at: float | None
+    notice: str | None
+    error: str | None

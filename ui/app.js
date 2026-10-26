@@ -380,6 +380,7 @@ async function watch(identity){
  const started=Date.now();localStorage.setItem(storageKey+'-job',identity);
  try{while(watching===identity){const job=await api('/api/jobs/'+identity);if(watching!==identity)return;
   $('stage').textContent=job.stage;
+  $('working-job-resources').href='/observability?job='+encodeURIComponent(identity);
   $('elapsed').textContent=`${Math.floor((Date.now()-started)/1000)} seconds since monitoring began`;
   if(job.status==='done'){localStorage.removeItem(storageKey+'-job');showResult(job.result);await refresh();announce('Speech ready');break}
   if(job.status==='error'||job.status==='deleted'){localStorage.removeItem(storageKey+'-job');throw Error(job.error||'This pending take was removed.');}
@@ -468,7 +469,7 @@ async function refreshQueue(){
   const actions=el('div',null,'card-actions queue-actions');
   if(row.candidate_batch_id){const options=el('button','View all options','secondary');options.type='button';options.onclick=()=>{$('queue-dialog').close();watchCandidates(row.candidate_batch_id)};actions.append(options);}
   const inspect=el('button',row.status==='done'?'Open take':'Monitor','secondary queue-monitor');inspect.type='button';inspect.onclick=()=>{$('queue-dialog').close();row.result?showResult(row.result):watch(row.id)};actions.append(inspect);
-  if(row.status!=='queued'){const resourceLink=el('a','Resources','secondary');resourceLink.href='/observability?job='+encodeURIComponent(row.id);actions.append(resourceLink)}
+  if(row.status!=='queued'){const resourceLink=el('a','Resources & logs','secondary');resourceLink.href='/observability?job='+encodeURIComponent(row.id);actions.append(resourceLink)}
   if(row.status==='queued'){
    const run=el('button','Run Now','secondary queue-run-now');run.type='button';run.disabled=!!row.paused;
    run.title=row.paused?row.stage:'Run next, ahead of other waiting jobs. The current batch finishes first.';

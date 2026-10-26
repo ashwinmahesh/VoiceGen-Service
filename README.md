@@ -24,7 +24,7 @@ Screenshots use benign demonstration records and fake inference; displayed timin
 
 ![Full page with the Queue modal open](docs/images/queue-modal.jpg)
 
-**Observability:** chart CPU, memory, and GPU usage over time, filter by model, or inspect a job's resource use. Choose windows from five minutes to seven days. History is saved automatically while the generator runs; GPU figures cover the whole Mac.
+**Observability:** chart CPU, memory, and GPU usage over time, filter by model, or inspect a job's resource use. Choose windows from five minutes to seven days. History is saved automatically while the generator runs; GPU figures cover the whole Mac. Each job view also shows sampled stages and any retained generation log.
 
 ![Full Observability page with demonstration resource history](docs/images/observability-page.jpg)
 
@@ -85,6 +85,7 @@ Here are the available endpoints. See [API.md](API.md) for request formats, exam
 | GET | `/api/observability` | Chart resource history by time window and model. |
 | GET | `/api/observability/jobs` | List recorded job attempts and their resource peaks. |
 | GET | `/api/observability/jobs/{id}` | Inspect resource charts for one job or attempt. |
+| GET | `/api/jobs/{id}/logs` | Read available generation output for a job. |
 | POST | `/api/generate` | Generate one take. |
 | POST | `/api/candidates` | Generate 1–5 voice options. |
 | GET | `/api/candidates/{id}` | Check a batch and its results. |
