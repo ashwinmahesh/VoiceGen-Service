@@ -98,7 +98,7 @@ class PunctuationPacingTests(unittest.TestCase):
             for options in [{'comma_pause_ms':1501},{'sentence_pause_ms':-1},{'sentence_pause_ms':float('nan')},{'unknown':1}]:
                 with self.assertRaises(ValueError):self.request(backend,**options)
             request=self.request(backend)
-            exclusions={'idempotency_key':True,'prompt_expansion_id':True,'qwen3':True,'moss':True}
+            exclusions={'model':True,'idempotency_key':True,'prompt_expansion_id':True,'qwen3':True,'moss':True}
             if backend!='qwen3':exclusions[backend]=PACING_FIELDS
             # qwen3 did not exist as a namespace before this change.
             old=hashlib.sha256(request.model_dump_json(exclude=exclusions).encode()).hexdigest()

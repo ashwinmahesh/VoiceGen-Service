@@ -3,6 +3,10 @@ const $=id=>document.getElementById(id);let mode='design',collection='history',r
 const collectionPage=location.pathname.startsWith('/collection');
 if(collectionPage){$('page-title').textContent='Your collection';$('page-description').textContent='Find saved voices, listen to takes, and reuse a performance in the studio.';}
 $(collectionPage?'catalog-link':'studio-link').setAttribute('aria-current','page');
+let availableModels=[],modelChoiceReady=false,changingModel=false,queuePaused=false,awaitingSourceModel=false,lastModelList=null,pendingModelRestore=null;
+function sourceMode(source=mode){return ['saved','upload'].includes(source)?'reference':source}
+function readySourceModels(source=mode){return availableModels.filter(row=>row.modes?.includes(sourceMode(source)))}
+function readyDesignModels(){return readySourceModels('design')}
 let pageSize = 24, caps=null, storageKey='voice-studio', historyPage={data:[],total:0,has_more:false}, pendingKey=null;
 let voicePage = {data: [], total: 0, has_more: false};
 let currentCandidates=null, candidateCards=new Map();
@@ -12,23 +16,23 @@ const presets={natural:'Natural, conversational delivery with relaxed pacing.',j
 async function api(path,options={}){const response=await fetch(path,options);if(!response.ok){let body;try{body=await response.json()}catch{}throw Error(typeof body?.detail==='string'?body.detail:body?.detail?.[0]?.msg||`Request failed (${response.status})`)}return response.json()}
 function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
 function error(message){const target=$($('queue-dialog').open?'queue-error':collectionPage?'page-error':'error');target.textContent=message;target.hidden=false}function announce(text){$('announcement').textContent=text}
-function controls(){ $('generate').disabled=!online||!queueWritable||submitting||uploading||enhancing;$('unload').disabled=!online||busy||enhancing;$('new-seed').disabled=busy;updatePromptExpansion() }
+function controls(){ $('generate').disabled=!online||!queueWritable||submitting||uploading||enhancing||changingModel||!modelChoiceReady;$('unload').disabled=!online||busy||enhancing;$('new-seed').disabled=busy;updatePromptExpansion() }
 function clearExpansion(){appliedExpansion=null;pendingExpansion=null;updatePromptExpansion();}
 function updatePromptExpansion(){
  if(!caps)return;
- const available=!!caps.limits.prompt_expansion?.enabled,enabled=available&&$('prompt-expansion-enabled').checked,backend=caps.backend;
+ const available=modelChoiceReady&&!!caps.limits.prompt_expansion?.enabled,enabled=available&&$('prompt-expansion-enabled').checked,backend=caps.backend;
  $('prompt-expansion-enabled').disabled=!available||enhancing;
  updateCandidateVariation();
  const profile=caps.models[backend]?.prompt_expansion,profileMode=['saved','upload'].includes(mode)?'reference':mode;
  const spec=profile?.modes[profileMode];
  const supported=!!spec?.available&&(!spec.clone_modes||spec.clone_modes.includes($('clone-mode').value));
- $('expansion-profile').hidden=!profile;
+ $('expansion-profile').hidden=!profile||!modelChoiceReady;
  $('expansion-profile-info').textContent=profile?`${profile.name} · ${spec?.label||profileMode} · Profile v${profile.version}`:'';
  $('expansion-profile-rules').textContent=spec?.available?(supported?spec.instructions:'This reference mode follows recorded performance. Choose flexible Voice reference to use delivery instructions.'):spec?.reason||'No expansion specification for this mode.';
  $('expansion-guidance-field').hidden=!enabled||!supported;
  $('expand-guidance').disabled=!online||!enabled||!supported||busy||enhancing||uploading||submitting||!!appliedExpansion;
  $('expand-guidance').textContent=enhancing?'Expanding guidance…':'Preview expanded guidance';
- $('prompt-expansion-hint').textContent=!available?'LLM disabled at startup. Restart with make serve without NO_LLM=1 to enable.':!enabled?'Off. No LLM previews or per-option planning; distinct designs use built-in directions.':!supported?(spec?.reason||'This mode follows recorded performance. Choose flexible Voice reference to direct a different delivery.'):'On. Design batches use LLM contrast planning. For a single take or reference delivery, preview and apply guidance below. Dialogue and transcripts stay unchanged.';
+ $('prompt-expansion-hint').textContent=!modelChoiceReady?'Choose a model to see prompt-expansion support.':!available?'LLM disabled at startup. Restart with make serve without NO_LLM=1 to enable.':!enabled?'Off. No LLM previews or per-option planning; distinct designs use built-in directions.':!supported?(spec?.reason||'This mode follows recorded performance. Choose flexible Voice reference to direct a different delivery.'):'On. Design batches use LLM contrast planning. For a single take or reference delivery, preview and apply guidance below. Dialogue and transcripts stay unchanged.';
  $('expansion-applied').hidden=!appliedExpansion;$('restore-guidance').hidden=!appliedExpansion;
  renderExpansion(appliedExpansion,'applied-expansion-details','Applied to your next generation');
  if(appliedExpansion)$('expansion-applied').textContent='Expanded guidance applied · '+appliedExpansion.llm.model+' · '+appliedExpansion.llm.seconds+'s. Original retained.';
@@ -79,7 +83,17 @@ $('apply-expansion').onclick=()=>{
 };
 $('prompt-expansion-enabled').onchange=()=>{expansionChoice=$('prompt-expansion-enabled').checked;if(!expansionChoice&&appliedExpansion){applyGuidanceValues(appliedExpansion.original);clearExpansion()}pendingKey=null;updatePromptExpansion();persist()};
 $('restore-guidance').onclick=()=>{if(appliedExpansion)applyGuidanceValues(appliedExpansion.original);clearExpansion();pendingKey=null;persist();};
-function setMode(next){if(caps){if(next==='design'&&caps.modes.design.available===false)next='upload';if((next==='saved'||next==='upload')&&caps.modes.reference.available===false)next='design'}pendingKey=null;clearExpansion();mode=next;for(const button of document.querySelectorAll('[data-mode]'))button.setAttribute('aria-selected',button.dataset.mode===mode);for(const name of ['design','saved','upload','preset'])$(name+'-panel').hidden=name!==mode;updateCapabilities();updatePromptExpansion();persist()}
+function setMode(next){
+ if(caps){
+  if(!readySourceModels(next).length)return;
+  awaitingSourceModel=caps.modes[sourceMode(next)]?.available===false;
+ }
+ pendingKey=null;clearExpansion();mode=next;
+ for(const button of document.querySelectorAll('[data-mode]'))button.setAttribute('aria-selected',button.dataset.mode===mode);
+ for(const name of ['design','saved','upload','preset'])$(name+'-panel').hidden=name!==mode;
+ renderModelChoices();updateCapabilities();updatePromptExpansion();controls();persist();
+}
+
 document.querySelectorAll('[data-mode]').forEach(button=>button.onclick=()=>{if(button.getAttribute('aria-disabled')==='true'){showControlHelp(button);return}setMode(button.dataset.mode)});
 $('emotion-preset').onchange=()=>{clearExpansion();$('emotion').value=presets[$('emotion-preset').value];persist()};$('emotion').oninput=()=>{$('emotion-preset').value='custom';persist()};
 function count(){$('count').textContent=`${$('text').value.length} / ${caps?.limits.text_characters||3000}`}count();
@@ -99,7 +113,7 @@ function candidateExpansion(row){
 function settings(){
  const referenceMode=mode==='saved'||mode==='upload';
  const direction=referenceMode?(caps?.modes.reference.emotion&&$('clone-mode').value==='reference'):mode==='preset'||caps?.modes.design.emotion;
- const result={prompt_expansion_id:appliedExpansion?.id||null,candidate_count:Number($('candidate-count').value),candidate_use_llm:!!caps?.limits.prompt_expansion?.enabled&&$('prompt-expansion-enabled').checked,candidate_variation:mode==='design'?$('candidate-variation').value:'auto',generate_immediately:$('generate-immediately').checked,text:$('text').value,description:mode==='design'?$('description').value:'',
+ const result={model:caps?.backend,prompt_expansion_id:appliedExpansion?.id||null,candidate_count:Number($('candidate-count').value),candidate_use_llm:!!caps?.limits.prompt_expansion?.enabled&&$('prompt-expansion-enabled').checked,candidate_variation:mode==='design'?$('candidate-variation').value:'auto',generate_immediately:$('generate-immediately').checked,text:$('text').value,description:mode==='design'?$('description').value:'',
    emotion:direction?$('emotion').value:'',accent:direction?$('accent').value:'',
    seed:Number($('seed').value),max_tokens:caps?.limits.max_tokens_fixed?1000:Number($('max-tokens').value),
    preset_voice:mode==='preset'?$('preset-voice').value||null:null,
@@ -125,7 +139,7 @@ function settings(){
  if(Object.keys(options).length)result[caps.backend]=options;
  return result;
 }
-function persist(){if(caps)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(),prompt_expansion_choice:expansionChoice,prompt_expansion:appliedExpansion,description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
+function persist(){if(caps&&!awaitingSourceModel)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(),prompt_expansion_choice:expansionChoice,prompt_expansion:appliedExpansion,description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
 function updateCapabilities(){
  if(!caps)return;
  const referenceMode=mode==='saved'||mode==='upload';
@@ -134,11 +148,12 @@ function updateCapabilities(){
  $('emotion-hint').textContent=referenceMode&&$('clone-mode').value==='auto'?'Auto follows recorded performance when transcribed. Retained emotion/accent fields are not sent; choose flexible Voice reference to apply them.':referenceMode&&['continuation','combined'].includes($('clone-mode').value)?'Continuation and combined cloning follow the reference delivery. Choose Voice reference to direct a different emotion or accent.':direction?'Direct the performance in words. Voice identity and expression are approximate.':'This model takes its voice from the recording. Use only the controls and inline tags listed below.';
  $('accent-hint').textContent=direction?'A prompt direction, not a trained accent pack. A recording with the desired accent is usually the stronger cue.':'The reference recording supplies the accent in this mode.';
  for(const key of ['steps','guidance','temperature'])$(key+'-field').hidden=!caps.controls[key];
- document.querySelector('[data-mode="preset"]').hidden=!caps.modes.preset?.available;
- const designTab=document.querySelector('[data-mode="design"]'),designDisabled=caps.modes.design.available===false;
+ document.querySelector('[data-mode="preset"]').hidden=!readySourceModels('preset').length;
+ const designTab=document.querySelector('[data-mode="design"]'),designDisabled=!readyDesignModels().length;
  designTab.hidden=false;designTab.setAttribute('aria-disabled',String(designDisabled));
  designTab.dataset.helpFor='voice-design-tab';
- for(const name of ['saved','upload'])document.querySelector('[data-mode="'+name+'"]').hidden=caps.modes.reference.available===false;
+ if(designDisabled&&mode==='design')modelChoiceReady=false;
+ for(const name of ['saved','upload'])document.querySelector('[data-mode="'+name+'"]').hidden=!readySourceModels('upload').length;
  $('language-field').hidden=caps.languages.length<2;
  $('text').maxLength=caps.limits.text_characters;
  $('max-tokens-field').hidden=!!caps.limits.max_tokens_fixed;
@@ -159,11 +174,18 @@ function updateCapabilities(){
  updatePacingControls();
  $('steering-field').hidden=!caps.extensions?.emotion_steering;
  $('steering-strength-field').hidden=!$('steering-emotion').value;
+ $('performance-guidance').hidden=awaitingSourceModel;$('inline-hint').hidden=awaitingSourceModel||!$('inline-hint').textContent;
+ $('performance-controls').hidden=awaitingSourceModel;$('backend-settings').hidden=awaitingSourceModel;
+ $('apply-recommended').closest('details').hidden=awaitingSourceModel;
+ if(awaitingSourceModel){$('emotion-hint').textContent=$('accent-hint').textContent='Choose a model to see its supported performance controls.';$('performance-guidance').hidden=true;$('inline-hint').hidden=true;$('expansion-profile').hidden=true;$('performance-controls').hidden=true;$('rendered-preview-field').hidden=true;$('backend-settings').hidden=true;$('license-notice').hidden=true;$('model-badge').textContent='Choose a model for this voice source';}
  installControlHelp();
 }
 $('clone-mode').onchange=()=>{updateCapabilities();persist()};
 $('steering-emotion').onchange=()=>{if($('steering-emotion').value){if($('emotion-preset').value==='natural'){$('emotion').value='';$('emotion-preset').value='custom'}if(Number($('temperature').value)===.9)$('temperature').value='1.1'}updateCapabilities();persist()};
 function restore(row){
+ const requestedModel=row.backend||row.requested?.model||row.model;
+ if(requestedModel&&availableModels.some(model=>model.id===requestedModel)&&requestedModel!==caps?.backend){if(changingModel){pendingModelRestore=row;return}selectVoiceModel(requestedModel).then(()=>restore(row)).catch(exc=>error(exc.message));return}
+
  $('candidate-count').value=String(row.candidate_count??2);
  expansionChoice=row.candidate_variant?false:row.prompt_expansion_choice??null;
  $('prompt-expansion-enabled').checked=!!caps.limits.prompt_expansion?.enabled&&(expansionChoice??true);
@@ -176,6 +198,7 @@ function restore(row){
  if(row.preset_voice&&caps.modes.preset?.available){$('preset-voice').value=row.preset_voice;setMode('preset')}
  else if(row.voice_id&&voiceRows.some(v=>v.id===row.voice_id)){$('voice').value=row.voice_id;setMode('saved');voicePreview()}
  else if(row.reference_id){reference={id:row.reference_id};$('reference-info').textContent='Using the reference saved with this take.';$('reference-preview').src=`/api/audio/references/${row.reference_id}`;$('reference-preview').hidden=false;setMode('upload')}
+ else if(['design','saved','upload','preset'].includes(row.mode))setMode(readySourceModels(row.mode).length?row.mode:readySourceModels('upload').length?'upload':'design');
  else setMode('design');
  for(const key of ['exaggeration','cfg_weight','duration_factor','interval_silence','emotion_alpha'])if($(key))$(key).value=row[caps.backend]?.[key]??row[key]??caps.controls[caps.backend]?.[key]?.default??1;
  $('emotion-reference-id').value=row[caps.backend]?.emotion_reference_id||row.emotion_reference_id||'';$('emotion-vector').value=(row[caps.backend]?.emotion_vector||row.emotion_vector)?.join(',')||'';
@@ -330,7 +353,7 @@ function renderCandidates(batch){
    save.onclick=()=>openVoiceEditor({output_id:job.result.id,name:'',description:job.result.description||'',transcript:job.result.duration<=30?spokenTranscript(job.result):'',tags:[]});
    download.href=job.result.audio_url+'?download=true';download.download='';actions.append(select,save,download);card.append(actions);
   }else if(job.status==='error'&&!job.paused&&job.backend===caps?.backend){
-   const retry=el('button','Retry this option','secondary');retry.type='button';retry.onclick=async()=>{try{await post('/api/queue/'+job.id+'/retry',{});watchCandidates(batch.id)}catch(exc){error(exc.message)}};card.append(retry);
+   const retry=el('button','Retry this option','secondary');retry.type='button';retry.onclick=async()=>{try{await post('/api/jobs/'+job.id+'/retry',{});watchCandidates(batch.id)}catch(exc){error(exc.message)}};card.append(retry);
   }
   if(previous)previous.element.replaceWith(card);else $('candidate-cards').append(card);
   candidateCards.set(job.id,{signature,element:card});
@@ -364,7 +387,7 @@ async function watch(identity){
  finally{if(watching===identity){watching=null;controls();refreshQueue().catch(()=>{})}}
 }
 $('form').onsubmit=async event=>{
- event.preventDefault();if(submitting||uploading)return;let request;try{request=settings()}catch(exc){error(exc.message);return}
+ event.preventDefault();if(!modelChoiceReady){error('Choose a set-up model that supports this voice source.');return}if(submitting||uploading)return;let request;try{request=settings()}catch(exc){error(exc.message);return}
  if(mode==='preset'&&!request.preset_voice){error('Choose an expressive preset voice first.');return}
  if(mode==='saved'&&!request.voice_id){error('Choose a saved voice first.');return}
  if(mode==='upload'&&!request.reference_id){error('Choose an audio reference first.');return}
@@ -396,6 +419,8 @@ async function health(){
  if(healthInFlight)return;healthInFlight=true;
  try{
   const state=await api('/health');
+  queuePaused=!!state.queue_paused;$('queue-pause').textContent=queuePaused?'Resume queue':'Pause queue';
+  if(!changingModel)await loadModelChoices();
   online=state.downloaded&&!state.runtime_errors?.length;
   queueWritable=state.queue_storage?.status!=='unavailable';queueNotices(state);
   $('status').dataset.offline=!online;
@@ -445,11 +470,11 @@ async function refreshQueue(){
   if(row.status!=='queued'){const resourceLink=el('a','Resources','secondary');resourceLink.href='/observability?job='+encodeURIComponent(row.id);actions.append(resourceLink)}
   if(row.status==='queued'){
    const run=el('button','Run Now','secondary queue-run-now');run.type='button';run.disabled=!!row.paused;
-   run.title=row.paused?row.stage:'Run next, ahead of other waiting jobs. The current take finishes first.';
+   run.title=row.paused?row.stage:'Run next, ahead of other waiting jobs. The current batch finishes first.';
    run.onclick=()=>changeQueueOrder(row.id,null,true);actions.append(run);
    const remove=el('button','Remove','secondary queue-remove');remove.type='button';remove.onclick=async()=>{try{await api('/api/queue/'+row.id,{method:'DELETE'});await refreshQueue()}catch(exc){error(exc.message)}};actions.append(remove);
   }
-  if(row.status==='error'&&!row.paused&&row.backend===caps?.backend){const retry=el('button','Retry same entry','secondary');retry.type='button';retry.onclick=async()=>{try{const job=await post('/api/queue/'+row.id+'/retry',{});$('queue-dialog').close();watch(job.id);await refreshQueue()}catch(exc){error(exc.message)}};actions.append(retry)}
+  if(row.status==='error'&&!row.paused){const retry=el('button','Retry same entry','secondary');retry.type='button';retry.onclick=async()=>{try{const job=await post('/api/jobs/'+row.id+'/retry',{});$('queue-dialog').close();watch(job.id);await refreshQueue()}catch(exc){error(exc.message)}};actions.append(retry)}
   card.append(content,actions);$('queue-entries').append(card);
  }
  $('queue-entries').scrollTop=queueScroll;
@@ -617,7 +642,55 @@ $('voice-prev').onclick = () => {catalogOffset = Math.max(0, catalogOffset - pag
 $('voice-next').onclick = () => {catalogOffset += pageSize; loadCollection().catch(exc => error(exc.message));};
 $('browse-voices').onclick=()=>{location.href='/collection?tab=voices'};
 $('page-size').onchange=()=>{pageSize=Number($('page-size').value);catalogOffset=0;loadCollection().catch(exc=>error(exc.message))};
-(async()=>{try{caps=await api('/api/capabilities');$('prompt-expansion-enabled').checked=!!caps.limits.prompt_expansion?.enabled;storageKey=caps.service;document.title=caps.name+' Voice Studio';$('brand-name').textContent=caps.name;$('model-badge').textContent=`${caps.sample_rate/1000} kHz · ${caps.quantization} · On your Mac`;$('model-footer').textContent=`${caps.name} · ${caps.quantization} · ${caps.limits.runtime||'MLX'} on Apple Silicon`;$('storage-footer').textContent=caps.storage;$('output-dir').placeholder=caps.output_dir;$('language').replaceChildren(...caps.languages.map(x=>new Option(x,x)));$('preset-voice').replaceChildren(...caps.presets.map(x=>new Option(`${x.name} · ${x.language}`,x.id)));for(const emotion of caps.extensions?.emotion_steering?.emotions||[])$('steering-emotion').append(new Option(emotion[0].toUpperCase()+emotion.slice(1),emotion));$('settings-hint').textContent=(caps.limits.max_tokens_fixed?'This upstream Chatterbox API uses a fixed 1000-token ceiling. ':caps.backend==='moss'?'The audio-frame ceiling can be raised by the upstream text-derived minimum. ':'The audio token limit is a safety cap. Reaching it can cut a take short. ')+(caps.limits.memory_note||'A matching seed alone does not lock a voice.');const notice=caps.models[caps.backend];if(notice?.notice){$('license-text').textContent=notice.notice;$('license-link').href=notice.license_url;$('license-notice').hidden=false}buildBackendSettings();buildPerformanceControls();updateCapabilities();await refresh();const saved=JSON.parse(localStorage.getItem(storageKey+'-form')||'null');if(saved)restore(saved);else setMode(caps.modes.design.available===false?'upload':'design');await health();const pageSelected=await openPageSelection();const batch=localStorage.getItem(storageKey+'-candidates'),job=localStorage.getItem(storageKey+'-job');if(!watching&&!collectionPage&&!pageSelected){if(batch)watchCandidates(batch);else if(job)watch(job)}}catch(exc){error(exc.message)}setInterval(health,5000)})();
+function renderModelChoices(){
+ if(!lastModelList)return;
+ const rows=caps?readySourceModels():availableModels;
+ const selected=awaitingSourceModel?'':caps?.backend||lastModelList.default_model;
+ $('voice-model').replaceChildren(...rows.map(row=>new Option(row.name+(row.id===lastModelList.default_model?' (default)':''),row.id)));
+ modelChoiceReady=rows.some(row=>row.id===selected);
+ if(modelChoiceReady)$('voice-model').value=selected;
+ else{$('voice-model').prepend(new Option(mode==='design'?'Choose a voice-design model…':'Choose a capable model…',''));$('voice-model').value=''}
+ if(collectionPage){$('brand-name').textContent='Voice Studio';document.title='Collection · Voice Studio';$('model-badge').textContent='All voice models';$('license-notice').hidden=true;}
+ else if(caps){$('brand-name').textContent=awaitingSourceModel?'Voice Studio':caps.name;$('model-footer').textContent=awaitingSourceModel?'Choose a voice model · On your Mac':`${caps.name} · ${caps.quantization} · ${caps.limits.runtime||'MLX'} on Apple Silicon`;document.title=awaitingSourceModel?'Choose a model · Voice Studio':caps.name+' Voice Studio';if(!awaitingSourceModel){$('model-badge').textContent=`${caps.sample_rate/1000} kHz · ${caps.quantization} · On your Mac`;$('license-notice').hidden=!caps.models[caps.backend]?.notice;}}
+ $('voice-model-hint').textContent=(awaitingSourceModel?'Choose a model for this voice source. ':'')+'One shared queue · Default: '+lastModelList.default_model+(lastModelList.active_model?' · Active: '+lastModelList.active_model:'');
+}
+async function loadModelChoices(){
+ lastModelList=await api('/v1/models');availableModels=lastModelList.data;renderModelChoices();
+ if(caps)updateCapabilities();
+ return modelChoiceReady?$('voice-model').value:awaitingSourceModel?null:availableModels[0]?.id;
+}
+async function selectVoiceModel(backend){
+ if(changingModel)return;
+ const draftMode=awaitingSourceModel?mode:null;
+ changingModel=true;controls();
+ try{
+  caps=await api('/api/capabilities?'+new URLSearchParams({model:backend}));
+  awaitingSourceModel=false;modelChoiceReady=true;
+  $('prompt-expansion-enabled').checked=!!caps.limits.prompt_expansion?.enabled;
+  storageKey=caps.service;document.title=caps.name+' Voice Studio';$('brand-name').textContent=caps.name;
+  $('model-badge').textContent=`${caps.sample_rate/1000} kHz · ${caps.quantization} · On your Mac`;
+  $('model-footer').textContent=`${caps.name} · ${caps.quantization} · ${caps.limits.runtime||'MLX'} on Apple Silicon`;
+  $('storage-footer').textContent=caps.storage;$('output-dir').placeholder=caps.output_dir;
+  $('language').replaceChildren(...caps.languages.map(x=>new Option(x,x)));
+  $('preset-voice').replaceChildren(...caps.presets.map(x=>new Option(`${x.name} · ${x.language}`,x.id)));
+  $('steering-emotion').replaceChildren(new Option('None',''));
+  for(const emotion of caps.extensions?.emotion_steering?.emotions||[])$('steering-emotion').append(new Option(emotion[0].toUpperCase()+emotion.slice(1),emotion));
+  $('settings-hint').textContent=(caps.limits.max_tokens_fixed?'This upstream Chatterbox API uses a fixed 1000-token ceiling. ':caps.backend==='moss'?'The audio-frame ceiling can be raised by the upstream text-derived minimum. ':'The audio token limit is a safety cap. Reaching it can cut a take short. ')+(caps.limits.memory_note||'A matching seed alone does not lock a voice.');
+  const notice=caps.models[caps.backend];$('license-notice').hidden=!notice?.notice;
+  if(notice?.notice){$('license-text').textContent=notice.notice;$('license-link').href=notice.license_url;}
+  buildBackendSettings();buildPerformanceControls();updateCapabilities();await refresh();
+  const saved=JSON.parse(localStorage.getItem(storageKey+'-form')||'null');
+  if(draftMode)setMode(draftMode);else if(saved)restore(saved);else setMode(caps.modes.design.available===false?'upload':'design');
+  await health();
+  const pageSelected=await openPageSelection();
+  const batch=localStorage.getItem(storageKey+'-candidates'),job=localStorage.getItem(storageKey+'-job');
+  if(!watching&&!collectionPage&&!pageSelected){if(batch)watchCandidates(batch);else if(job)watch(job)}
+  renderModelChoices();
+ }finally{changingModel=false;controls();if(pendingModelRestore){const row=pendingModelRestore;pendingModelRestore=null;restore(row)}}
+}
+$('voice-model').onchange=()=>{if($('voice-model').value)selectVoiceModel($('voice-model').value).catch(exc=>error(exc.message))};
+$('queue-pause').onclick=async()=>{try{const state=await post('/api/queue/'+(queuePaused?'resume':'pause'),{});queuePaused=state.paused;$('queue-pause').textContent=queuePaused?'Resume queue':'Pause queue';await health()}catch(exc){error(exc.message)}};
+(async()=>{try{const model=await loadModelChoices();if(model)await selectVoiceModel(model);else error('No set-up voice models are ready. Run make setup or reconnect model storage.')}catch(exc){error(exc.message)}setInterval(health,5000)})();
 
 function buildBackendSettings(){
  $('backend-settings').replaceChildren();
@@ -793,7 +866,7 @@ const controlHelp={
  'expansion-guidance':'Describe the delivery you want the local language model to help refine. Review its suggestion before applying it; it does not listen to your recording.',
  'candidate-count':'Generate 1–5 options, one at a time. Recorded voices produce alternate takes; supported voice-design modes can explore different voices. The default is two.',
  'candidate-variation':'Distinct designs keep your first description and explore contrasting voice traits for later options. Same prompt changes only the seed. Explicit accent and acting directions remain constraints.',
- 'generate-immediately':'Run next after the current take, ahead of ordinary waiting work. It does not interrupt active generation. Turn off to join the normal queue.',
+ 'generate-immediately':'Run next after the current batch, ahead of ordinary waiting work. It does not interrupt active generation. Turn off to join the normal queue.',
  'voice-name':'A name for this reusable voice in Collection. Saving it lets you select its recording for later lines.',
  search:'Search generated History or saved voices in the current Collection tab. Voice search includes names, descriptions and tags.',
  'tag-filter':'Show saved voices with this exact tag. Tags organize the library; they do not change the generated accent or performance.',
@@ -880,7 +953,7 @@ document.addEventListener('keydown',event=>{if(event.key==='Escape'&&activeHelp)
 document.addEventListener('close',hideControlHelp,true);
 window.addEventListener('resize',hideControlHelp);document.addEventListener('scroll',hideControlHelp,true);
 installControlHelp();
-controlHelp['voice-design-tab']=()=>caps?.modes.design.unavailable_reason||'';
+controlHelp['voice-design-tab']=()=>readyDesignModels().length?'':caps?.modes.design.unavailable_reason||'Switch to a model which supports voice generation: VoxCPM2, Qwen3-TTS, MOSS VoiceGenerator';
 const voiceDesignTab=document.querySelector('[data-mode="design"]');
 voiceDesignTab.addEventListener('pointerenter',()=>{if(voiceDesignTab.getAttribute('aria-disabled')==='true')showControlHelp(voiceDesignTab)});
 voiceDesignTab.addEventListener('focus',()=>{if(voiceDesignTab.getAttribute('aria-disabled')==='true')showControlHelp(voiceDesignTab)});

@@ -10,11 +10,11 @@ These details support the [API guide](../API.md). Most clients only need the tas
 - A crash before complete metadata exists can repeat synthesis under the same job ID. Saved admission and retry keys do not guarantee that generation happens exactly once across arbitrary crashes.
 - Failed work requires explicit retry. Removal retains the job's deleted record and retry-key mapping; it does not remove completed audio or reference media. Nothing is automatically pruned.
 
-One generator owns queue processing. The separate queue API does not claim jobs, recover generation, or reset active work. Immediate jobs run ahead of normal work for the selected model; each group is first-in-first-out unless explicitly reordered. Manual moves and Run Now update scheduling order/priority, preserve admission sequence and fingerprints, and serialize with claims. A continuous stream of immediate jobs can delay normal work.
+One generator owns queue processing. The separate queue API does not claim jobs, recover generation, or reset active work. Immediate jobs run ahead of normal work across all ready models; each group is first-in-first-out unless explicitly reordered. Manual moves and Run Now update scheduling order/priority, preserve admission sequence and fingerprints, and serialize with claims. A continuous stream of immediate jobs can delay normal work.
 
 The database and journals stay in project `state/`. SQLite uses rollback journaling and FULL synchronous writes. Back up queue state together with outputs and their metadata/indexes. Test overrides through `QUEUE_DB` must remain inside project `state/` and agree between services.
 
-Legacy SSD queues are backed up and migrated by generator startup. Conflicting old/new databases stop startup for review. Legacy JSON job/key records remain readable; interrupted JSON jobs without replayable inputs remain errors requiring History review.
+The shared project database is used directly; this release does not migrate older queue formats or fall back to other databases. Existing saved voices, History, media and indexes keep their storage paths.
 
 ## Model and request limits
 
@@ -33,7 +33,7 @@ Chatterbox uses up to the first six seconds for speech-token conditioning, ten s
 
 ## Batches and prompt expansion
 
-Batches and their child jobs are saved together. Seeds increment from the base seed, wrapping at 2**32. Distinct descriptions freeze together before speech; retries reuse them. A planning failure marks waiting siblings as errors without silently substituting other prompts. Deleted children stay deleted. Older batches remain seed-only.
+Batches and their child jobs are saved together. Seeds increment from the base seed, wrapping at 2**32. Distinct descriptions freeze together before speech; retries reuse them. A planning failure marks waiting siblings as errors without silently substituting other prompts. Deleted children stay deleted. Each batch keeps its admitted variation plan. Once a batch begins, its remaining eligible children finish before switching to another model, including when Run Now promotes another model’s job.
 
 `candidate_variant` records the original description, added direction, refinement, fixed contrast direction, method (`llm` or `built_in`), policy/profile, and option index/label. Batch/index/count/variation information is also retained on outputs.
 

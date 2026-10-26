@@ -24,6 +24,7 @@ def health(port, timeout=1):
 
 def matching(state):
     return bool(isinstance(state,dict) and state.get('service')=='voicegen-queue' and state.get('role')=='queue-crud'
+                and state.get('api_version')=='4.0.0' and state.get('queue_scope')=='shared'
                 and state.get('project')==str(PROJECT_ROOT) and state.get('queue_database')==str(QUEUE_DB.resolve()))
 
 

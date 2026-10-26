@@ -50,9 +50,9 @@ See [resource history](docs/observability.md) for response fields, sampling inte
 
 ## Generate speech
 
-These examples use the default **Higgs TTS 3** model. Start it with `make serve MODEL=higgs`. The generator always uses the model selected at startup; check `GET /api/capabilities` for its available features.
+These examples use the default **Higgs TTS 3** model. Start it with `make serve MODEL=higgs`. Startup saves the default for both APIs. Every request can choose any set-up `model`; when omitted or null, the saved default is used and frozen on admission. Check `GET /v1/models` for ready IDs and `GET /api/capabilities?model=higgs` for that model’s controls.
 
-**Designing a new voice:** use VoxCPM2, Qwen3-TTS, or MOSS. Higgs requires a saved voice or reference recording. A description-only request to the generator's `/api/generate`, its job/queue aliases, or `/api/candidates` returns **422** with an explanation and the supported-model names, before creating a job. Capabilities expose this list at `modes.design.supported_models`, plus `available` and an `unavailable_reason` when disabled. The independent queue API still accepts an unvalidated payload with 202; the matching generator validates it later and marks an unsupported request `error` with the same explanation, without running inference.
+**Designing a new voice:** use VoxCPM2, Qwen3-TTS, or MOSS. Higgs requires a saved voice or reference recording. A description-only request to the generator's `/api/generate` or `/api/candidates` returns **422** with an explanation and the supported-model names, before creating a job. Capabilities expose this list at `modes.design.supported_models`, plus `available` and an `unavailable_reason` when disabled. The studio allows entering Design whenever a capable model is ready, leaving the model selection empty when the previous one cannot design. If none is ready, the disabled tab retains the same supported-model tooltip. `supported_models` lists alternatives and `ready_models` lists the ready subset. The independent queue API still accepts a ready model’s unvalidated speech payload with 202; the generator validates its speech payload later and marks an unsupported request `error` with the same explanation, without running inference.
 
 ### 1. Upload a voice
 
@@ -173,12 +173,13 @@ Keep the same batch key after a timeout to recover its original jobs. Batch keys
 
 ## Generation fields
 
-Send JSON with `Content-Type: application/json`. Unknown fields and unsupported controls return **422**. Check **`GET /api/capabilities`** before using a different model.
+Send JSON with `Content-Type: application/json`. Unknown fields and unsupported controls return **422**. Check **`GET /api/capabilities?model=MODEL_ID`** before using a different model.
 
 ### Dialogue and voice source
 
 | Field | Meaning and limits |
 | --- | --- |
+| `model` | Optional ready model ID; omitted/null uses the shared saved default. Frozen at admission. |
 | `text` | Required new dialogue. Nonblank, up to 3,000 characters; Chatterbox allows 1,000 and MOSS 500. |
 | `voice_id` | Saved voice from Collection. |
 | `reference_id` | Uploaded recording from `/api/references`. |
@@ -288,37 +289,38 @@ These endpoints use **port 5743**. They manage the same saved jobs used by the U
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| GET | `/api/jobs` | List waiting and running jobs. |
+| GET | `/api/queue` | List waiting and running jobs across models. |
+| POST | `/api/queue/pause` / `/api/queue/resume` | Pause/resume normal waiting work. |
 | GET | `/api/jobs/{id}` | Get status, settings, result, or error. |
-| DELETE | `/api/jobs/{id}` | Remove one waiting job. |
-| DELETE | `/api/jobs` | Clear waiting jobs. |
+| DELETE | `/api/queue/{id}` | Remove one waiting job. |
+| DELETE | `/api/queue` | Clear waiting jobs. |
 | POST | `/api/jobs/{id}/retry` | Retry a failed job; returns 202. |
-| POST | `/api/jobs/{id}/move` | Reorder a waiting job; returns 200. |
-| POST | `/api/jobs/{id}/run-now` | Put a waiting job first; returns 200. |
+| POST | `/api/queue/{id}/move` | Reorder a waiting job; returns 200. |
+| POST | `/api/queue/{id}/run-now` | Put a waiting job first; returns 200. |
 
 Example listing:
 
 ```sh
 curl --fail-with-body \
-  'http://localhost:5743/api/jobs?status=pending&backend=higgs&limit=24&offset=0'
+  'http://localhost:5743/api/queue?status=pending&model=higgs&limit=24&offset=0'
 ```
 
 | Query field | Default | Options |
 | --- | --- | --- |
 | `status` | `pending` | `pending` means queued or running. Also accepts `all`, `queued`, `running`, `done`, `error`, or `deleted`. |
-| `backend` | All models | Optional model ID. Also supported when clearing waiting jobs. |
+| `model` | All models | Optional model ID. Also supported when clearing waiting jobs. |
 | `limit` | `24` | 1–100. |
 | `offset` | `0` | Zero or greater. |
 
 List responses contain `data`, `total`, `counts`, `limit`, `offset`, `has_more`, and `next_offset`. Counts cover all statuses for the chosen model; `total` reflects the chosen status filter.
 
-Deletion affects **waiting work only**. It does not cancel active generation or delete completed audio, History, or voices. Deleting an already deleted job reports zero removed. Retrying requires an `error` job whose model is currently selected; other states return 409.
+Deletion affects **waiting work only**. It does not cancel active generation or delete completed audio, History, or voices. Deleting an already deleted job reports zero removed. Retrying requires an `error` job whose model is ready; other states return 409.
 
-On the generator, `/api/queue` is an alias for these `/api/jobs` routes, including retry, move, and run-now. `POST /api/jobs` and `POST /api/queue` also accept the same request as `/api/generate`.
+`POST /api/queue/pause` pauses normal waiting work; `/api/queue/resume` resumes it. Both APIs share this saved switch. Immediate jobs can run while paused. A running job is never interrupted.
 
 ### Reorder or run next
 
-**Move:** `POST /api/jobs/{id}/move` with exactly one of these fields:
+**Move:** `POST /api/queue/{id}/move` with exactly one of these fields:
 
 | Field | Meaning |
 | --- | --- |
@@ -327,41 +329,50 @@ On the generator, `/api/queue` is an alias for these `/api/jobs` routes, includi
 | `after_id` | Place immediately after this waiting job ID. |
 
 ```sh
-curl --fail-with-body http://localhost:5743/api/jobs/JOB_ID_HERE/move \
+curl --fail-with-body http://localhost:5743/api/queue/JOB_ID_HERE/move \
   -H 'Content-Type: application/json' \
   -d '{"direction": "up"}'
 ```
 
 The UI's left-side handles use the same API. Drag to a highlighted position, or focus a handle and press the up/down arrow keys. Dropping beside a job in another priority group adopts that group's immediate/normal priority. Unchanged positions are a no-op.
 
-**Run Now:** `POST /api/jobs/{id}/run-now` puts a waiting job first, ahead of existing immediate jobs:
+**Run Now:** `POST /api/queue/{id}/run-now` puts a waiting job first, ahead of existing immediate jobs:
 
 ```sh
 curl --fail-with-body -X POST \
-  http://localhost:5743/api/jobs/JOB_ID_HERE/run-now
+  http://localhost:5743/api/queue/JOB_ID_HERE/run-now
 ```
 
-Both actions return **200** with the updated job and persist across restarts. Fetch the queue again for its current list order. The current generation finishes first. The selected startup model still determines which jobs can execute; Run Now does not load another model or enable a disabled LLM. The UI disables Run Now for paused jobs.
+Both actions return **200** with the updated job and persist across restarts. Fetch the queue again for its current list order. The current candidate batch finishes first. The generator switches models as needed, reusing the current backend for consecutive jobs and releasing it before loading another. Run Now cannot make a missing model available or enable a disabled LLM. Blocked jobs remain queued while eligible work proceeds.
 
 Only waiting jobs and waiting anchors can move. A running/completed/failed/deleted job returns **409**; a missing job/anchor returns **404**. Moving relative to itself or supplying multiple move fields returns **422**. If a job starts while you drag, refresh and try another waiting job.
 
-IDs, admission `sequence`, original generation settings, and submission retry keys stay unchanged. `queue_order` is a scheduling sort key, not a contiguous position or a writable request field. `generate_immediately` reports the current priority; the original submission fingerprint is retained. Retry an uncertain submission with its original body, even after reordering it.
+IDs, admission `sequence`, original generation settings, and submission retry keys stay unchanged. `queue_order` is an internal sort key. Each listed waiting entry also has its global 1-based `position`, retained when filtering by model. `generate_immediately` reports the current priority; the original submission fingerprint is retained. Retry an uncertain submission with its original body, even after reordering it.
 
 For an uncertain move response, refresh the queue before repeating an up/down move: repeating a relative step moves again. Before/after anchors are preferable when you need a specific position.
 
-These actions also work on **`/api/queue/{id}/move`** and **`/api/queue/{id}/run-now`** on either service. Port **55205** returns its normal queue-entry response and can prioritize jobs while the generator is off.
+These same scheduling paths work on either service. Port **55205** returns its normal queue-entry response and can prioritize jobs while the generator is off.
 
 ## Standalone queue API (port 55205)
 
-Use this API to add work while the generator is off. Start it with `make queue`; `make serve` also starts or reuses it. It can run without model files or the media SSD.
+Use this API to add work while the generator is off. Start it with `make queue`; `make serve` also starts or reuses it. Existing entries remain readable, movable and removable without model storage. New admissions require a set-up model; the queue process uses read-only checks and never loads speech weights.
 
 **The request format differs from the generator's:** generation fields go inside `payload`.
 
 ### List models
 
-**`GET /api/models`** returns `default_model` and all supported `models`, each with `id`, `name`, and `is_default`. This lists supported models, not installation or readiness status.
+**`GET /v1/models`** on either API returns only ready models:
 
-Supported IDs: `higgs`, `voxcpm2`, `qwen3`, `chatterbox`, `indextts`, `moss`, and `fish`. The project default is **`higgs`**.
+```json
+{
+  "default_model": "higgs",
+  "active_model": null,
+  "runtime_model_switching": true,
+  "data": [{"id": "higgs", "name": "Higgs TTS 3", "is_default": true}]
+}
+```
+
+Supported registry IDs are `higgs`, `voxcpm2`, `qwen3`, `chatterbox`, `indextts`, `moss`, and `fish`; discovery includes only those whose files, storage and compatible runtime are ready. Unavailable models return **422** on new submission with `make setup MODEL=<id>` guidance. The queue API has no model process, so its `active_model` is null. The generator reports the backend actually loading or holding weights separately from the saved default.
 
 ### Add a job
 
@@ -384,20 +395,21 @@ curl --fail-with-body http://localhost:55205/api/queue \
 | Field | Required? | Meaning |
 | --- | --- | --- |
 | `payload` | Yes | One generation request. Keep the retry key and priority outside it. |
-| `model` | No | Defaults to Higgs, independently of the running generator. Explicit `null` is invalid. |
+| `model` | No | Omitted/null uses the shared saved default, initially Higgs. The resolved model is immutable on that job. |
 | `generate_immediately` | No | Default `false`; `true` runs ahead of ordinary waiting jobs. |
 | `idempotency_key` | No | Retry key, 1–200 characters. |
 
 **Returns:** HTTP **202** with the saved entry and resolved `model`. The queue checks the request structure; the generator checks speech settings when it picks up the job. An invalid speech request becomes an `error` without blocking later jobs.
 
-Start `make serve MODEL=higgs` to process Higgs jobs. Other models' jobs keep waiting; the service does not switch models automatically. For 1–5-option batches or LLM design planning, use the generator's `/api/candidates` instead.
+Start `make serve` to process the shared queue across ready models. `MODEL=higgs` changes the saved default; it does not restrict processing to Higgs. If an admitted model becomes unavailable, its entries stay queued with `blocked_reason` until ready again; they are never rerouted. For 1–5-option batches or LLM design planning, use the generator's `/api/candidates` instead.
 
 ### List, change, and remove entries
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Check the queue service and database. |
-| GET | `/api/queue` | List jobs. |
+| GET | `/api/queue` | List jobs across models. |
+| POST | `/api/queue/pause` / `/api/queue/resume` | Pause/resume normal waiting work. |
 | GET | `/api/queue/{id}` | Get an entry's payload, status, result, or error. |
 | PATCH | `/api/queue/{id}` | Change a waiting entry's `payload` and/or `generate_immediately`. |
 | POST | `/api/queue/{id}/move` | Reorder a waiting entry. |
@@ -405,7 +417,7 @@ Start `make serve MODEL=higgs` to process Higgs jobs. Other models' jobs keep wa
 | DELETE | `/api/queue/{id}` | Remove a waiting entry. |
 | DELETE | `/api/queue` | Clear waiting entries. |
 
-Listing uses the same status/pagination fields as the generator, with **`model` instead of `backend`** for filtering. Clear can also use `?model=higgs`.
+Listing uses the same status/pagination fields as the generator, including optional **`model`** filtering with global positions. Clear can also use `?model=higgs`.
 
 Entries include `id`, `sequence`, `queue_order`, `model`, `payload`, `generate_immediately`, `status`, `stage`, timestamps, `attempts`, `result`, `error`, and `prepared`. `prepared: true` means the generator has checked and saved the generation settings. Lists also include totals, counts, and pagination.
 
@@ -420,7 +432,7 @@ The same key, model, payload, and priority recover the original entry, including
 
 ## Model settings
 
-Select the model when starting the generator, for example `make serve MODEL=fish`. Do not send a `model` field to `/api/generate`; that field belongs to the standalone queue request.
+Choose the model per generator request, for example `"model":"fish"`. `make serve MODEL=fish` saves the default for requests that omit it. Model-specific settings go under that same model ID; validation, defaults and prompt-expansion profiles follow the request’s model.
 
 Capabilities describe the active model's `modes`, `languages`, `controls`, and `limits`. New settings specific to a model use its named JSON object. [VOICE_QUALITY.md](VOICE_QUALITY.md) explains the recommended starting choices and their limitations.
 
@@ -556,7 +568,7 @@ Structured tags become `[tag]` prefixes; the original `text` is retained. Manual
 
 ## Sentence and comma pauses
 
-Fish, IndexTTS, Chatterbox, and Qwen recorded/preset voices default to additional pauses at punctuation. Put controls under the running model's ID:
+Fish, IndexTTS, Chatterbox, and Qwen recorded/preset voices default to additional pauses at punctuation. Put controls under the request model's ID:
 
 ```json
 {
@@ -717,6 +729,8 @@ History uses `limit` 1–100 (default 24) and nonnegative `offset`, with totals 
 ## Health and errors
 
 ### Health and available controls
+
+Generator health uses `service:"voicegen-service"`, `mode:"generator"`, `api_version:"4.0.0"`, `queue_scope:"shared"` and `runtime_model_switching:true`. Identify the service by these fields plus `project` and `queue_database`; do not identify it by the selected or active model. `default_model` is the saved admission default, `active_model` is the actual loading/resident speech backend (or null), and `queue_paused` reports the shared normal-queue switch. `blocked_models` contains latest readiness errors. Switching model does not require restarting the generator.
 
 | Method | Endpoint | Service | Purpose |
 | --- | --- | --- | --- |

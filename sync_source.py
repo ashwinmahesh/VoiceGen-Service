@@ -15,6 +15,7 @@ SHARED += ['queue_config.py','queue_server.py','queue_manage.py','queue_service.
 SHARED += ['queue_status.py','queue_schemas.py','docs/api-behavior.md','tests/__init__.py','tests/test_api.py','tests/test_queue_order.py']
 SHARED += ['bootstrap_uv.sh','bootstrap_python.sh','python_runtime.py','tests/test_python_runtime.py']
 SHARED += ['setup_lifecycle.py','tests/test_setup_lifecycle.py']
+SHARED += ['backend_protocol.py','backend_worker.py','runtime_engine.py','model_readiness.py','tests/test_runtime_models.py']
 SHARED += ['resource_probe.py','resource_schemas.py','observability.py','tests/test_observability.py','ui/observability.html','ui/observability.css','ui/observability.js','docs/observability.md']
 SHARED += [str(path.relative_to(PROJECT_ROOT)) for folder in ('backends','third_party')
            for path in sorted((PROJECT_ROOT/folder).rglob('*')) if path.is_file()]

@@ -77,7 +77,7 @@ verify:
 serve:
 	@$(BOOTSTRAP) run startup_select.py serve $(if $(MODEL),--model "$(MODEL)",) $(if $(filter 1,$(NONINTERACTIVE)),--non-interactive,) $(if $(filter 1,$(VENV_EXPLICIT)),--keep-venv,) $(if $(filter 1,$(PORT_EXPLICIT)),--keep-port,) $(LLM_FLAG)
 serve-selected:
-	"$(PYTHON)" server.py --port $(PORT) --queue-port $(QUEUE_PORT) $(LLM_FLAG)
+	"$(PYTHON)" server.py --model $(ACTIVE_MODEL) --port $(PORT) --queue-port $(QUEUE_PORT) $(LLM_FLAG)
 queue:
 	"$(QUEUE_PYTHON)" queue_manage.py serve --port $(QUEUE_PORT)
 stop-queue:
@@ -85,13 +85,13 @@ stop-queue:
 queue-status:
 	"$(QUEUE_PYTHON)" queue_manage.py status --port $(QUEUE_PORT)
 start:
-	"$(PYTHON)" manage.py start --port $(PORT) --queue-port $(QUEUE_PORT) $(LLM_FLAG)
+	$(BOOTSTRAP) run manage.py start --port $(PORT) --queue-port $(QUEUE_PORT) $(if $(MODEL),--model "$(MODEL)",) $(LLM_FLAG)
 stop:
-	"$(PYTHON)" manage.py stop --port $(PORT)
+	$(BOOTSTRAP) run manage.py stop --port $(PORT)
 status:
-	"$(PYTHON)" manage.py status --port $(PORT)
+	$(BOOTSTRAP) run manage.py status --port $(PORT)
 health:
-	"$(PYTHON)" manage.py health --port $(PORT)
+	$(BOOTSTRAP) run manage.py health --port $(PORT)
 open:
 	open http://127.0.0.1:$(PORT)/
 test:

@@ -1,18 +1,19 @@
 """Shared Voice Studio v2 API. Service-specific behavior is in service.json."""
 import argparse
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 import json
 import sqlite3
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
-from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage
+from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage,model_context
 from queue_config import QUEUE_DB, DEFAULT_QUEUE_PORT
 from queue_schemas import QueueMove
 from resource_schemas import ResourceOverview, ResourceJobPage, ResourceJobHistory
 from queue_status import api_status, storage_error_response, STORAGE_ERROR
-from engine import create_engine
+from model_readiness import ReadyModels,ModelUnavailable
+from runtime_engine import RuntimeEngine
 from assets import all_errors
 from runtime_checks import runtime_errors
 from capabilities import capabilities, validate_controls
@@ -28,7 +29,7 @@ from body_limit import BodyLimit
 import voice_catalog
 from voice_catalog import SaveVoice, VoiceUpdate, Voice, VoicePage
 
-engine = create_engine()
+engine = RuntimeEngine(ReadyModels())
 manager = JobManager(engine, db_path=QUEUE_DB)
 
 
@@ -48,8 +49,18 @@ async def lifespan(app):
     from data_owner import own_data_directory
     with own_data_directory(ROOT,manager.store.path.with_suffix('.data.lock')) as owner:
         manager.data_owner = owner
+        if manager.runtime is True:
+            manager._ready()
+            ready=manager.catalog.models(force=True)
+            if not ready:raise RuntimeError('No fully set-up voice models are ready. Run make setup or reconnect model storage.')
+            preferred=app.state.requested_default or manager.store.default_model()
+            if app.state.requested_default:manager.catalog.require(preferred)
+            if preferred not in {row['id'] for row in ready}:preferred=ready[0]['id']
+            manager.store.set_setting('default_model',preferred)
+            app.state.default_model_snapshot=preferred
         from observability import ResourceMonitor
-        manager.resources=ResourceMonitor(manager.store.path,PROFILE['backend'],PROFILE['id'],lambda:manager.stage)
+        manager.resources=ResourceMonitor(manager.store.path,PROFILE['backend'],PROFILE['id'],lambda:manager.stage,
+            selection=(lambda:{'backend':engine.backend or app.state.default_model_snapshot,'model':engine.variant or engine.backend or app.state.default_model_snapshot}) if manager.runtime is True else None)
         manager.recover()
         try:
             yield
@@ -58,9 +69,10 @@ async def lifespan(app):
             manager.data_owner = None
 
 
-app = FastAPI(title='Local Voice Studio API',version='2.1.0',lifespan=lifespan)
+app = FastAPI(title='Local Voice Studio API',version='4.0.0',lifespan=lifespan)
 app.state.llm_enabled=True
 app.state.queue_port=DEFAULT_QUEUE_PORT
+app.state.requested_default=None
 app.add_exception_handler(sqlite3.Error,storage_error_response)
 app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
 app.add_middleware(BodyLimit)
@@ -152,17 +164,49 @@ def resource_job(identity: str, run_id: str | None=Query(None,pattern='^[a-f0-9]
             'scopes':SCOPES,'collector':monitor.status()}
 
 
+def requested_model(model=None):
+    if manager.runtime is not True:return PROFILE['backend']
+    manager._ready()
+    target=model or manager.store.default_model()
+    try:return manager.catalog.require(target,force=True)
+    except ModelUnavailable as error:raise HTTPException(422,str(error)) from None
+
+
+def request_context(model=None):
+    target=requested_model(model)
+    return model_context(target) if manager.runtime is True else nullcontext()
+
+
+@app.get('/v1/models')
+def model_discovery():
+    if manager.runtime is not True:
+        rows=[{'id':PROFILE['backend'],'name':PROFILE['name']}];default=PROFILE['backend']
+    else:
+        manager._ready();rows=manager.catalog.models();default=manager.store.default_model()
+    return {'data':[{**row,'is_default':row['id']==default} for row in rows],
+            'default_model':default,'active_model':engine.active_model if manager.runtime is True else None,
+            'runtime_model_switching':manager.runtime}
+
+
 @app.get('/api/capabilities',response_model=Capabilities)
-def get_capabilities():
+def get_capabilities(model: str | None=Query(None,max_length=80)):
+    with request_context(model):return capabilities_for_model()
+
+
+def capabilities_for_model():
     from prompt_expansion import capability
     from prompt_profiles import load_profile
     caps=capabilities();caps.limits['prompt_expansion']=capability(app.state.llm_enabled)
+    if manager.runtime is True:
+        ready={row['id'] for row in manager.catalog.models()}
+        design=caps.modes['design'];design['ready_models']=[row for row in design['supported_models'] if row['id'] in ready]
     caps.models[PROFILE['backend']]={**caps.models.get(PROFILE['backend'],{}),'prompt_expansion':load_profile(PROFILE['backend'])}
     return caps
 
 
 @app.get('/health',response_model=Health)
 def health():
+    if manager.runtime is True:return runtime_health()
     errors = all_errors()
     runtime = runtime_errors()
     status = manager.stage
@@ -188,15 +232,14 @@ def health():
 async def expand_voice_guidance(payload: ExpandVoiceGuidance):
     if not app.state.llm_enabled:raise HTTPException(422,'Local prompt expansion is disabled. Start with make serve without NO_LLM=1.')
     try:
-        effective,reference,transcript,info=prepare_generation(payload.generation)
-        # A disconnected preview must not cancel a queued executor task and strand its lease.
-        return await asyncio.shield(asyncio.wrap_future(manager.preview_expansion(payload.generation,effective,payload.guidance,transcript)))
+        with request_context(payload.generation.model):
+            effective,reference,transcript,info=prepare_generation(payload.generation)
+            future=manager.preview_expansion(payload.generation,effective,payload.guidance,transcript)
+        return await asyncio.shield(asyncio.wrap_future(future))
     except BusyError as exc:raise HTTPException(409,str(exc)) from None
     except (ValueError,OSError,RuntimeError) as exc:raise HTTPException(422,str(exc)) from None
 
 
-@app.post('/api/jobs',status_code=202,response_model=Job)
-@app.post('/api/queue',status_code=202,response_model=Job)
 @app.post('/api/generate',status_code=202,response_model=Job)
 def generate(request: Generation):
     return admit_generation(request)
@@ -214,7 +257,13 @@ def candidate_status(identity: str):
 
 
 def prepare_generation(request):
-    effective = validate_controls(request)
+    try:effective = validate_controls(request)
+    except ValueError:
+        if manager.runtime is True and not (request.voice_id or request.reference_id or request.preset_voice):
+            caps=capabilities_for_model()
+            if not caps.modes['design']['available']:
+                raise ValueError(f'{caps.name} requires a saved voice or reference recording. '+caps.modes['design']['unavailable_reason']) from None
+        raise
     reference = None
     reference_info = None
     transcript = request.ref_text or ''
@@ -240,10 +289,14 @@ def prepare_generation(request):
 def prepare_queued_request(payload):
     """Only the generator understands the opaque CRUD service's payloads."""
     request = Generation.model_validate(payload)
+    if manager.runtime is True:
+        if request.model is not None and request.model!=PROFILE['backend']:
+            raise ValueError('The payload model must match the immutable queue model')
+        request=request.model_copy(update={'model':PROFILE['backend']})
     if request.idempotency_key:
         raise ValueError('Use the queue envelope idempotency_key, not a key inside its payload')
     effective,reference,transcript,info = prepare_generation(request)
-    errors = all_errors()+runtime_errors()
+    errors = [] if manager.runtime is True else all_errors()+runtime_errors()
     if errors:
         raise ValueError('Incomplete generator setup: '+'; '.join(errors))
     return request,effective,reference,transcript,storage.output_folder(request.output_dir),info
@@ -253,16 +306,47 @@ def admit_generation(request, candidates=False):
     try:
         existing = manager.existing_candidates(request) if candidates else manager.existing(request)
         if existing: return existing
-        effective,reference,transcript,reference_info=prepare_generation(request)
-        errors = all_errors()+runtime_errors()
-        if errors: raise HTTPException(503,'Incomplete setup. Run make setup for the selected MODEL. '+ '; '.join(errors))
-        destination = storage.output_folder(request.output_dir)
-        if candidates:return manager.submit_candidates(request,effective,reference,transcript,destination,reference_info,llm_enabled=app.state.llm_enabled)
-        return manager.submit(request,effective,reference,transcript,destination,reference_info)
+        with request_context(request.model):
+            effective,reference,transcript,reference_info=prepare_generation(request)
+            errors = [] if manager.runtime is True else all_errors()+runtime_errors()
+            if errors: raise HTTPException(503,'Incomplete setup. Run make setup for the selected MODEL. '+ '; '.join(errors))
+            destination = storage.output_folder(request.output_dir)
+            if candidates:return manager.submit_candidates(request,effective,reference,transcript,destination,reference_info,llm_enabled=app.state.llm_enabled)
+            return manager.submit(request,effective,reference,transcript,destination,reference_info)
     except BusyError as exc:
         raise HTTPException(409,str(exc)) from None
     except (ValueError,OSError,RuntimeError) as exc:
         raise HTTPException(422,str(exc)) from None
+
+
+def runtime_health():
+    manager._ready()
+    ready,blocked=manager.catalog.snapshot()
+    default=app.state.default_model_snapshot;paused=False
+    queue_storage={'status':'ready','message':None}
+    try:
+        counts=manager.store.listing(limit=1,timeout=.25)['counts']
+        default=manager.store.default_model(timeout=.25)
+        paused=manager.store.setting('paused',False,timeout=.25)
+        app.state.default_model_snapshot=default
+    except sqlite3.Error:counts={};queue_storage={'status':'unavailable','message':STORAGE_ERROR}
+    return Health(service='voicegen-service',name='VoiceGen Service',project=str(PROJECT_ROOT),storage=str(ROOT),
+        runtime_model_switching=True,default_model=default,active_model=engine.active_model,
+        queue_scope='shared',api_version='4.0.0',mode='generator',queue_paused=paused,blocked_models=blocked,
+        status='error' if engine.fatal_error else manager.stage if manager.active or manager.unloading or manager.expanding else 'ready' if ready else 'error',
+        downloaded=bool(ready),asset_errors=[] if ready else ['No ready voice models. Run make setup.'],runtime_errors=[engine.fatal_error] if engine.fatal_error else [],
+        model_loaded=engine.model is not None,loaded_variant=engine.variant,busy=bool(manager.active or manager.unloading or manager.expanding or engine.switching),
+        active_job=manager.active,last_error=manager.last_error,queue_database=str(manager.store.path),queue_counts=counts,queue_storage=queue_storage,
+        queue_service=api_status(app.state.queue_port,manager.store.path),prompt_expansion=__import__('prompt_expansion').capability(app.state.llm_enabled))
+
+
+@app.post('/api/queue/pause')
+def queue_pause():return manager.store.pause(True)
+
+
+@app.post('/api/queue/resume')
+def queue_resume():
+    result=manager.store.pause(False);manager._wake.set();return result
 
 
 @app.get('/api/jobs/{identity}',response_model=Job)
@@ -271,27 +355,19 @@ def job_status(identity: str):
     except (OSError,ValueError): raise HTTPException(404,'Job not found') from None
 
 
-@app.get('/api/jobs',response_model=QueuePage)
 @app.get('/api/queue',response_model=QueuePage)
 def queue_list(status: Literal['pending','all','queued','running','done','error','deleted']='pending',
-               backend: str | None=Query(default=None,max_length=80),
+               model: str | None=Query(default=None,max_length=80),
                limit: int=Query(default=24,ge=1,le=100),offset: int=Query(default=0,ge=0)):
     statuses = ('queued','running') if status=='pending' else () if status=='all' else (status,)
-    return manager.listing(statuses=statuses,backend=backend,limit=limit,offset=offset)
+    return manager.listing(statuses=statuses,backend=model,limit=limit,offset=offset)
 
 
-@app.get('/api/queue/{identity}',response_model=Job)
-def queue_detail(identity: str):
-    return job_status(identity)
-
-
-@app.delete('/api/jobs',response_model=QueueRemoval)
 @app.delete('/api/queue',response_model=QueueRemoval)
-def queue_clear(backend: str | None=Query(default=None,max_length=80)):
-    return manager.remove(backend=backend)
+def queue_clear(model: str | None=Query(default=None,max_length=80)):
+    return manager.remove(backend=model)
 
 
-@app.delete('/api/jobs/{identity}',response_model=QueueRemoval)
 @app.delete('/api/queue/{identity}',response_model=QueueRemoval)
 def queue_delete(identity: str):
     try: return manager.remove(identity)
@@ -300,14 +376,12 @@ def queue_delete(identity: str):
 
 
 @app.post('/api/jobs/{identity}/retry',status_code=202,response_model=Job)
-@app.post('/api/queue/{identity}/retry',status_code=202,response_model=Job)
 def queue_retry(identity: str):
     try: return manager.retry(identity)
     except FileNotFoundError: raise HTTPException(404,'Queue entry not found') from None
     except BusyError as exc: raise HTTPException(409,str(exc)) from None
 
 
-@app.post('/api/jobs/{identity}/move',response_model=Job)
 @app.post('/api/queue/{identity}/move',response_model=Job)
 def queue_move(identity: str, request: QueueMove):
     try:return manager.move(identity,**request.model_dump(exclude_none=True))
@@ -316,7 +390,6 @@ def queue_move(identity: str, request: QueueMove):
     except ValueError as exc:raise HTTPException(422,str(exc)) from None
 
 
-@app.post('/api/jobs/{identity}/run-now',response_model=Job)
 @app.post('/api/queue/{identity}/run-now',response_model=Job)
 def queue_run_now(identity: str):
     try:return manager.run_now(identity)
@@ -515,7 +588,7 @@ def run_server(port=DEFAULT_PORT, queue_port=DEFAULT_QUEUE_PORT):
         except OSError:raise SystemExit(f'Port {port} is occupied; select another port or inspect the existing service.') from None
     # Queue process has its own session and survives this generator's Ctrl-C.
     from queue_manage import ensure_queue
-    manager.migrate_legacy()
+    manager._ready()
     ensure_queue(queue_port)
     uvicorn.run(app,host='127.0.0.1',port=port,workers=1)
 
@@ -524,8 +597,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--port',type=int,default=DEFAULT_PORT)
     parser.add_argument('--no-llm',action='store_true',help='Disable the local prompt LLM (enabled by default)')
-    parser.add_argument('--backend',choices=__import__('backend_selection').BACKENDS)
+    parser.add_argument('--model',choices=__import__('backend_selection').BACKENDS,help='Saved default for omitted model; all ready models remain available')
     parser.add_argument('--queue-port',type=int,default=DEFAULT_QUEUE_PORT,help='Independent SQLite CRUD API port')
     args = parser.parse_args()
     app.state.llm_enabled=not args.no_llm
+    app.state.requested_default=args.model
     run_server(args.port,args.queue_port)

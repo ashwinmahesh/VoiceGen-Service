@@ -40,7 +40,7 @@ From the project folder:
 make serve
 ```
 
-Choose an installed model from the numbered list, in the same order as setup: Higgs first, then VoxCPM2 and the remaining models. Enter chooses Higgs when it is ready. Models still needing setup appear separately with installation instructions; only ready models receive selection numbers.
+Choose the default from the numbered list: Higgs first, then VoxCPM2 and the remaining models. Enter uses your saved default, initially Higgs, when ready. This saves the default for both APIs; every set-up model remains available in the studio. Models still needing setup appear separately with installation instructions; only ready models receive selection numbers.
 
 Startup asks whether to enable the local LLM. **Enter keeps it on.** Open **[http://localhost:5743](http://localhost:5743/)** and keep the terminal open while using the studio.
 
@@ -50,7 +50,7 @@ To choose explicitly or disable the LLM for this session:
 make serve MODEL=higgs NO_LLM=1
 ```
 
-To add another speech model, stop the current generator first, then run:
+To add another speech model, run setup and then select it from the studio’s Voice model menu:
 
 ```sh
 make setup MODEL=voxcpm2
@@ -61,7 +61,7 @@ Other model IDs are `qwen3`, `chatterbox`, `indextts`, `moss`, and `fish`. Start
 
 ## 3. Generate your first dialogue in the UI
 
-To create a new voice from a description, start VoxCPM2, Qwen3-TTS, or MOSS and choose **Design a voice**. With Higgs or another model that requires a recording, the tab remains visible but disabled. Hover, focus it with the keyboard, or tap it to see which models support voice generation. [See the Higgs example](docs/images/voice-design-unavailable.jpg).
+To create a new voice from a description, choose a set-up VoxCPM2, Qwen3-TTS, or MOSS in **Voice model**, then choose **Design a voice**. With Higgs selected, the tab opens with no model chosen if a capable model is set up. Choose one from the filtered model menu; your draft remains intact. If none is set up, the tab stays disabled. Hover, keyboard focus, or tap shows the supported alternatives. [See the model-choice screen](docs/images/voice-design-model-choice.jpg) or the [disabled state](docs/images/voice-design-unavailable.jpg).
 
 1. **Choose a voice.** For Higgs, upload a reference recording or select a saved voice. Uploads must be 1–30 seconds and at most 25 MiB. A clear 5–15 second sample is a useful starting point.
 2. **Enter the exact reference transcript.** These are the words already spoken in the recording, separate from your new dialogue. Higgs and Fish require it.
@@ -75,7 +75,7 @@ Prompt expansion uses the separate local Qwen3.5-2B LLM, with rules tailored to 
 
 Open **Collection** for generated History and the saved voice library. Name, describe, tag, and search your voices there. **Upload voice** imports a recording directly into the library.
 
-Open **Queue** in the header to monitor progress. Drag a left-side handle to reorder waiting jobs, or focus it and use the up/down arrow keys. **Run Now** moves a waiting job first, ahead of other immediate jobs; the current generation finishes before it starts. **Generate immediately**, checked by default in the UI, runs your request next after the active take, ahead of ordinary waiting jobs. It does not interrupt work already running. Pending jobs survive restarts and wait until their chosen model is running.
+Open **Queue** in the header to monitor progress. Drag a left-side handle to reorder waiting jobs, or focus it and use the up/down arrow keys. **Run Now** moves a waiting job first, ahead of other immediate jobs; the current batch finishes before it starts. **Generate immediately**, checked by default in the UI, runs your request next after the active batch, ahead of ordinary waiting jobs. It does not interrupt work already running. Pending jobs survive restarts. The generator switches models automatically; a missing model stays blocked with a setup hint while other work continues. **Pause queue** holds normal waiting work; immediate jobs can still run.
 
 ### Check resource use
 
@@ -83,11 +83,12 @@ To check resource use, open **Observability** in the header. **Over time** chart
 
 ## 4. Generate through the API
 
-Keep Higgs running and use another terminal. Check the service and available controls:
+Keep the generator running and use another terminal. Omitted `model` uses the saved default on either API; send `"model":"voxcpm2"` to choose another ready model for a request. Check the service and available controls:
 
 ```sh
 curl --fail-with-body http://localhost:5743/health
-curl --fail-with-body http://localhost:5743/api/capabilities
+curl --fail-with-body http://localhost:5743/v1/models
+curl --fail-with-body "http://localhost:5743/api/capabilities?model=higgs"
 ```
 
 ### Upload a reusable voice
@@ -179,10 +180,10 @@ The separate queue API can accept requests without loading a speech model. It no
 make queue
 ```
 
-List supported models and the default:
+List set-up models and the saved default:
 
 ```sh
-curl --fail-with-body http://localhost:55205/api/models
+curl --fail-with-body http://localhost:55205/v1/models
 ```
 
 Add a single take using the saved voice from above:
@@ -200,9 +201,9 @@ curl --fail-with-body http://localhost:55205/api/queue \
   }'
 ```
 
-Omitting `model` selects the project default, **Higgs**, regardless of which model ran last. Add a top-level `"model": "voxcpm2"`, for example, to choose a different one, with a payload suited to that model. Keep the retry key and priority outside `payload`.
+Omitting `model` selects the shared saved default, initially **Higgs**, regardless of which model ran last. Add a top-level `"model": "voxcpm2"`, for example, to choose a different one, with a payload suited to that model. Keep the retry key and priority outside `payload`.
 
-List work with `GET http://localhost:55205/api/queue`; inspect an entry with `/api/queue/JOB_ID_HERE`. Requests are saved immediately and validated for speech when the matching generator starts. Run `make serve MODEL=higgs` to process the Higgs jobs. The queue does not switch models automatically.
+List work with `GET http://localhost:55205/api/queue`; inspect an entry with `/api/queue/JOB_ID_HERE`. Requests require a ready model at admission, then are saved and validated for speech when the generator consumes them. Run `make serve` to process ready models automatically; `MODEL=higgs` changes the saved default.
 
 Both services use the **same SQLite database**. The UI calls the generator's APIs, which read and write SQLite directly, so a separate queue API outage does not prevent the studio from working. See [the API guide](API.md) for listing, removing, clearing, and retrying work.
 
@@ -233,8 +234,8 @@ Pass settings after the Make target, for example `make serve MODEL=higgs PORT=57
 | Prompt expansion | UI switch and preview/apply; API preview through `/api/prompts/expand`. `candidate_use_llm: false` disables automatic LLM planning for a design batch. |
 | Seed | Selects a take's random variation; does not guarantee the same voice across different dialogue. |
 | Sentence/comma pauses | Advanced settings for supported models. API fields include `sentence_pause_ms` and `comma_pause_ms` under the model ID. MOSS timing is approximate; Higgs and Vox do not offer these fields. |
-| Run next | New requests: **Generate immediately** or `generate_immediately: true` (API default false). Existing jobs: Queue **Run Now** or `POST /api/jobs/{id}/run-now`. |
-| Queue order | Drag a handle, use its arrow keys, or call `POST /api/jobs/{id}/move`. Only waiting jobs move. |
+| Run next | New requests: **Generate immediately** or `generate_immediately: true` (API default false). Existing jobs: Queue **Run Now** or `POST /api/queue/{id}/run-now`. |
+| Queue order | Drag a handle, use its arrow keys, or call `POST /api/queue/{id}/move`. Only waiting jobs move. |
 
 Use **Adjust pauses** on a completed take to extend quiet gaps while keeping the original. For all model-specific ranges and restrictions, see [API.md](API.md).
 

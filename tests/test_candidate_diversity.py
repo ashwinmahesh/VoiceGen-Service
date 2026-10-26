@@ -72,7 +72,7 @@ class DiversityTests(unittest.TestCase):
             self.f.engine.fail=False;self.f.manager.llm_enabled=False
             with patch.object(server.app.state,'llm_enabled',False):
                 for row in batch['jobs']:
-                    self.assertEqual(self.f.client.post('/api/queue/'+row['id']+'/retry').status_code,202)
+                    self.assertEqual(self.f.client.post('/api/jobs/'+row['id']+'/retry').status_code,202)
                     self.assertEqual(self.f.finish(row)['status'],'done')
             self.assertEqual(len(calls),1)
             self.assertEqual(self.submit(idempotency_key='frozen-plan').json()['id'],batch['id'])
@@ -91,7 +91,7 @@ class DiversityTests(unittest.TestCase):
             self.assertEqual(len({row['description'] for row in variants}),5)
             for invalid in [['same']*4,['x'*301]*4,['[laugh]']*4,['one'],['word '*46]*4]:
                 with self.assertRaises(ValueError):validate_additions(plan,invalid)
-        old=r.model_dump_json(exclude={'idempotency_key','prompt_expansion_id','candidate_variation','candidate_use_llm'})
+        old=r.model_dump_json(exclude={'model','idempotency_key','prompt_expansion_id','candidate_variation','candidate_use_llm'})
         self.assertEqual(JobManager.candidate_fingerprint(r),hashlib.sha256(old.encode()).hexdigest())
         self.assertNotEqual(JobManager.candidate_fingerprint(r),JobManager.candidate_fingerprint(r.model_copy(update={'candidate_variation':'seed_only'})))
 

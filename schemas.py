@@ -79,6 +79,7 @@ LEGACY_BACKEND_FIELDS=(set(ChatterboxOptions.model_fields)|set(IndexTTSOptions.m
 
 class Generation(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    model: str | None = Field(default=None,min_length=1,max_length=80,description='Ready speech backend ID; omitted uses the saved shared default, frozen at admission.')
     text: str = Field(min_length=1, max_length=3000)
     description: str = Field(default='', max_length=1500)
     emotion: str = Field(default='', max_length=1000)
@@ -168,7 +169,7 @@ class PromptExpansion(BaseModel):
 
 
 class Capabilities(BaseModel):
-    api_version: str = '2.1.0'
+    api_version: str = '4.0.0'
     service: str
     name: str
     backend: str
@@ -197,6 +198,13 @@ class QueueStorageStatus(BaseModel):
 
 
 class Health(BaseModel):
+    api_version: str = '4.0.0'
+    queue_scope: Literal['shared'] = 'shared'
+    runtime_model_switching: bool = False
+    default_model: str | None = None
+    active_model: str | None = None
+    queue_paused: bool = False
+    blocked_models: dict[str,list[str]] = Field(default_factory=dict)
     queue_database: str | None = None
     queue_service: QueueServiceStatus | None = None
     queue_storage: QueueStorageStatus | None = None
@@ -234,6 +242,9 @@ class Artifact(BaseModel):
 
 
 class Job(BaseModel):
+    position: int | None = None
+    blocked_reason: str | None = None
+    model_variant: str | None = None
     id: str
     status: Literal['queued','running','done','error','deleted']
     stage: str

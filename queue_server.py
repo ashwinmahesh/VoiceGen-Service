@@ -13,14 +13,15 @@ from body_limit import BodyLimit
 from queue_status import storage_error_response
 from queue_schemas import QueueMove
 from durable_queue import QueueStore, QueueConflict
-from queue_config import PROJECT_ROOT, QUEUE_DB, DEFAULT_QUEUE_PORT, DEFAULT_MODEL, MODELS, check_legacy_queue
+from queue_config import PROJECT_ROOT, QUEUE_DB, DEFAULT_QUEUE_PORT, DEFAULT_MODEL, MODELS
+from model_readiness import ReadyModels,ModelUnavailable
 
 store = QueueStore(PROJECT_ROOT, QUEUE_DB)
+catalog=ReadyModels()
 
 
 @asynccontextmanager
 async def lifespan(app):
-    check_legacy_queue()
     store.path.parent.mkdir(parents=True,exist_ok=True)
     # Separate from consumer ownership: API restarts must never recover live work.
     with store.path.with_suffix('.api.lock').open('a+') as owner:
@@ -32,7 +33,7 @@ async def lifespan(app):
         yield
 
 
-app = FastAPI(title='VoiceGen Queue CRUD API',version='1.1.0',lifespan=lifespan)
+app = FastAPI(title='VoiceGen Queue CRUD API',version='4.0.0',lifespan=lifespan)
 app.add_exception_handler(sqlite3.Error,storage_error_response)
 app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
 app.add_middleware(BodyLimit)
@@ -52,7 +53,7 @@ async def local_writes(request: Request, call_next):
 
 class Submission(BaseModel):
     model_config = ConfigDict(extra='forbid',allow_inf_nan=False)
-    model: str = Field(default=DEFAULT_MODEL,min_length=1,max_length=80,pattern=r'^[a-zA-Z0-9_.-]+$')
+    model: str | None = Field(default=None,min_length=1,max_length=80,pattern=r'^[a-zA-Z0-9_.-]+$')
     payload: dict
     generate_immediately: StrictBool = False
     idempotency_key: str | None = Field(default=None,min_length=1,max_length=200)
@@ -65,6 +66,8 @@ class Edit(BaseModel):
 
 
 class Entry(BaseModel):
+    position: int | None = None
+    blocked_reason: str | None = None
     id: str
     sequence: int
     queue_order: int
@@ -98,6 +101,9 @@ class Removal(BaseModel):
 
 
 class QueueHealth(BaseModel):
+    api_version: str = '4.0.0'
+    queue_scope: Literal['shared'] = 'shared'
+    paused: bool = False
     service: Literal['voicegen-queue']
     role: Literal['queue-crud']
     project: str
@@ -107,6 +113,7 @@ class QueueHealth(BaseModel):
 
 
 class ModelDescriptor(BaseModel):
+    modes: list[str]
     id: str
     name: str
     is_default: bool
@@ -114,13 +121,20 @@ class ModelDescriptor(BaseModel):
 
 class ModelList(BaseModel):
     default_model: str
-    models: list[ModelDescriptor]
+    active_model: str | None = None
+    data: list[ModelDescriptor]
+    runtime_model_switching: bool = True
 
 
 def public(row):
+    reason=None
+    if row['status']=='queued':
+        errors=catalog.errors(row['backend'])
+        if errors:reason=f"{row['backend']} is not ready: {errors[0]} Run make setup MODEL={row['backend']}."
     return {key:row[key] for key in ('id','sequence','queue_order','status','stage','created_at','updated_at',
             'started_at','completed_at','attempts','generate_immediately','error','result')} | {
         'model':row['backend'],
+        'blocked_reason':reason,'position':row.get('position'),
         'payload':row['payload'].get('queue_request',row['payload'].get('queue_submission',row['payload'])),
         'prepared':row['payload'].get('queue_format') != 'opaque-v1'}
 
@@ -144,24 +158,40 @@ async def missing(request, exc):
 @app.get('/health',response_model=QueueHealth)
 def health():
     return {'service':'voicegen-queue','role':'queue-crud','project':str(PROJECT_ROOT),
-            'queue_database':str(store.path),'status':'ready','default_model':DEFAULT_MODEL}
+            'queue_database':str(store.path),'status':'ready','default_model':store.default_model(),'paused':store.setting('paused',False)}
 
 
-@app.get('/api/models',response_model=ModelList,
-         description='List supported model IDs and names from static metadata. Does not check installation or worker readiness.')
+@app.get('/v1/models',response_model=ModelList,
+         description='List only models passing read-only setup checks. Never loads model weights.')
 def list_models():
-    return {'default_model':DEFAULT_MODEL,
-            'models':[{**model,'is_default':model['id']==DEFAULT_MODEL} for model in MODELS]}
+    default=store.default_model()
+    return {'default_model':default,'data':[{**model,'is_default':model['id']==default} for model in catalog.models()]}
 
 
 @app.post('/api/queue',status_code=202,response_model=Entry)
 def submit(request: Submission):
     try:
-        return public(store.admit_opaque(request.model,request.payload,
+        old=store.existing_opaque(request.payload,request.generate_immediately,request.idempotency_key,request.model)
+        if old:return public(old)
+        model=request.model or store.default_model()
+        catalog.require(model,force=True)
+        return public(store.admit_opaque(model,request.payload,
                                         request.generate_immediately,request.idempotency_key))
+    except ModelUnavailable as error:raise HTTPException(422,str(error)) from None
     except (TypeError,ValueError) as exc:
-        if isinstance(exc,QueueConflict):raise
+        if isinstance(exc,QueueConflict):
+            old=store.existing_opaque(request.payload,request.generate_immediately,request.idempotency_key,request.model)
+            if old:return public(old)
+            raise
         raise HTTPException(422,'Payload must be finite JSON') from None
+
+
+@app.post('/api/queue/pause')
+def pause():return store.pause(True)
+
+
+@app.post('/api/queue/resume')
+def resume():return store.pause(False)
 
 
 @app.get('/api/queue',response_model=Page)

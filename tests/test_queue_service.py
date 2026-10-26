@@ -45,6 +45,24 @@ def free_port():
         return sock.getsockname()[1]
 
 
+def launch_fixture_queue(environment):
+    # Exercise the real queue process with a test-only read-only readiness probe.
+    # Production has no environment bypass for setup checks.
+    import queue_manage
+    port=int(environment['QUEUE_PORT'])
+    if queue_manage.matching(queue_manage.health(port)):return int(queue_manage.pidfile(port).read_text())
+    script=str(PROJECT/'queue_server.py')
+    code=("import sys,runpy,model_readiness; Real=model_readiness.ReadyModels; "
+          "model_readiness.ReadyModels=lambda:Real(probe=lambda *args:[]); "
+          +"sys.argv=["+repr(script)+",'--port',"+repr(str(port))+"];runpy.run_path("+repr(script)+",run_name='__main__')")
+    with (Path(environment['QUEUE_DB']).parent/'fixture-queue.log').open('a') as log:
+        child=subprocess.Popen([sys.executable,'-c',code],cwd=PROJECT,env=environment,
+            stdout=log,stderr=log,start_new_session=True)
+    queue_manage.pidfile(port).write_text(str(child.pid))
+    wait_for(lambda:request(port)[1].get('role')=='queue-crud')
+    return child.pid
+
+
 def fake_generator():
     """Test harness injects a fake adapter into the real generator/lifecycle."""
     import math
@@ -80,6 +98,7 @@ def fake_generator():
     server.runtime_errors=lambda:[]
     server.prepare_storage=lambda:None
     server.app.state.llm_enabled=False
+    launch_fixture_queue(dict(os.environ))
     server.run_server(int(os.environ['TEST_GENERATOR_PORT']),int(os.environ['QUEUE_PORT']))
 
 
@@ -114,10 +133,10 @@ class QueueServiceTests(unittest.TestCase):
                                  stdout=stream,stderr=stream,start_new_session=True)
         self.processes.append(process);return process
     def start_queue(self):
-        result=subprocess.run([sys.executable,'queue_manage.py','start','--port',str(self.queue_port)],
-                              cwd=PROJECT,env=self.env,capture_output=True,text=True,timeout=15)
-        self.assertEqual(result.returncode,0,result.stderr+result.stdout)
-        return int((self.root/f'queue-{self.queue_port}.pid').read_text())
+        from unittest.mock import patch
+        import queue_manage
+        with patch('queue_manage.QUEUE_DB',self.root/'queue.sqlite3'):
+            return launch_fixture_queue(self.env)
     def start_generator(self):
         process=self.spawn('-m','tests.test_queue_service','--fake-generator')
         wait_for(lambda:request(self.gen_port)[1].get('service'))
@@ -132,21 +151,25 @@ class QueueServiceTests(unittest.TestCase):
         code='''import sys, importlib.abc
 class NoInference(importlib.abc.MetaPathFinder):
  def find_spec(self, fullname, path=None, target=None):
-  if fullname.split('.')[0] in {'config','server','engine','jobs','schemas','backend_selection','torch','mlx','numpy','soundfile','transformers'}:raise RuntimeError('Queue imported '+fullname)
+  if fullname.split('.')[0] in {'config','server','engine','jobs','schemas','torch','mlx','numpy','soundfile','transformers'}:raise RuntimeError('Queue imported '+fullname)
 sys.meta_path.insert(0,NoInference())
 import queue_server
 assert not any(n in sys.modules for n in ('config','engine','jobs','torch','mlx','numpy'))
+queue_server.store.initialize()
 assert queue_server.list_models()['default_model']=='higgs'
-assert len(queue_server.list_models()['models'])==7
+assert queue_server.list_models()['data']==[]
 '''
         env={**self.env,'DATA_DIR':'/Volumes/voicegen-unmounted-test/absent','MODEL_BACKEND':'not-a-model'}
         probe=subprocess.run([sys.executable,'-c',code],cwd=PROJECT,env=env,capture_output=True,text=True)
         self.assertEqual(probe.returncode,0,probe.stderr)
         process=self.spawn('queue_server.py','--port',str(self.queue_port),env=env)
         wait_for(lambda:request(self.queue_port)[1].get('role')=='queue-crud')
-        # Routing and payload are opaque; unsupported model-like strings are accepted.
-        status,row=request(self.queue_port,'/api/queue','POST',{'model':'anything','payload':{'arbitrary':['json',1]}})
-        self.assertEqual(status,202);self.assertEqual(row['status'],'queued')
+        # New requests require readiness, while existing work stays manageable offline.
+        status,error=request(self.queue_port,'/api/queue','POST',{'model':'anything','payload':{'arbitrary':['json',1]}})
+        self.assertEqual(status,422);self.assertIn('make setup',error['detail'])
+        from durable_queue import QueueStore
+        store=QueueStore(self.media,Path(self.env['QUEUE_DB']));store.initialize()
+        row=store.admit_opaque('voxcpm2',{'arbitrary':['json',1]},False)
         status,changed=request(self.queue_port,'/api/queue/'+row['id'],'PATCH',{'payload':{'new':True},'generate_immediately':True})
         self.assertEqual(status,200);self.assertEqual(changed['payload'],{'new':True})
         status,page=request(self.queue_port,'/api/queue?limit=1')
@@ -158,23 +181,19 @@ assert len(queue_server.list_models()['models'])==7
         self.assertEqual(request(self.queue_port,'/')[0],404)
         schema=request(self.queue_port,'/openapi.json')[1]['paths']
         self.assertNotIn('/api/generate',schema);self.assertNotIn('/api/capabilities',schema)
-        self.assertIn('/api/models',schema)
-        status,models=request(self.queue_port,'/api/models')
+        self.assertIn('/v1/models',schema)
+        status,models=request(self.queue_port,'/v1/models')
         self.assertEqual(status,200)
         self.assertEqual(models['default_model'],'higgs')
-        expected={'voxcpm2':'VoxCPM2','qwen3':'Qwen3-TTS','chatterbox':'Chatterbox Original',
-                  'indextts':'IndexTTS 2.5','moss':'MOSS VoiceGenerator','fish':'Fish Audio S2 Pro','higgs':'Higgs TTS 3'}
-        self.assertEqual({row['id']:row['name'] for row in models['models']},expected)
-        self.assertEqual([row['id'] for row in models['models'] if row['is_default']],['higgs'])
-        self.assertEqual(len(models['models']),len(expected))
+        self.assertEqual(models['data'],[])
         # Listing is static metadata: it must not create media directories or queue work.
         self.assertEqual(request(self.queue_port,'/api/queue')[1]['total'],0)
         status,defaulted=request(self.queue_port,'/api/queue','POST',{'payload':{'arbitrary':True}})
-        self.assertEqual((status,defaulted['model']),(202,'higgs'))
+        self.assertEqual(status,422);self.assertIn('make setup MODEL=higgs',defaulted['detail'])
         self.assertEqual(request(self.queue_port)[1]['default_model'],'higgs')
         submission_schema=request(self.queue_port,'/openapi.json')[1]['components']['schemas']['Submission']
         self.assertNotIn('model',submission_schema['required'])
-        self.assertEqual(submission_schema['properties']['model']['default'],'higgs')
+        self.assertIsNone(submission_schema['properties']['model'].get('default'))
         self.assertFalse(self.media.exists());self.assertIsNone(process.poll())
     def test_idempotency_priority_waiting_only_and_bad_json(self):
         self.start_queue()
@@ -280,7 +299,7 @@ assert len(queue_server.list_models()['models'])==7
         self.start_queue()
         status,bad=request(self.queue_port,'/api/queue','POST',{'model':'voxcpm2','payload':{'nonsense':True}})
         self.assertEqual(status,202)
-        other=request(self.queue_port,'/api/queue','POST',{'model':'unknown-routing','payload':{}})[1]
+        other=request(self.queue_port,'/api/queue','POST',{'model':'qwen3','payload':{}})[1]
         good=self.submit()
         self.start_generator()
         self.assertEqual(self.done(bad['id'])['status'],'error')
@@ -342,7 +361,7 @@ class QueueFailureTests(unittest.TestCase):
                ('read','GET','/api/queue/example',None),('edit_pending','PATCH','/api/queue/example',{'payload':{}}),
                ('remove','DELETE','/api/queue/example',None),('remove','DELETE','/api/queue',None)]
         for method,verb,path,body in cases:
-            with self.subTest(method=method),patch.object(queue_server.store,method,side_effect=sqlite3.OperationalError('private raw database error')):
+            with self.subTest(method=method),patch.object(queue_server.catalog,'require',side_effect=lambda model,**kwargs:model),patch.object(queue_server.store,method,side_effect=sqlite3.OperationalError('private raw database error')):
                 response=client.request(verb,path,json=body)
                 self.assertEqual(response.status_code,503,response.text)
                 self.assertEqual(response.headers['Retry-After'],'2')

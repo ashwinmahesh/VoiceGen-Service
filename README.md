@@ -8,9 +8,11 @@ The studio supports **seven speech models**, with **Higgs TTS 3 as the default**
 
 ## Inside the studio
 
+Screenshots use benign demonstration records and fake inference; displayed timings are not model benchmarks.
+
 **Generate:** choose or design a voice, enter dialogue, direct the performance, and audition the results.
 
-**Design a voice** stays visible when the current model needs a recording, such as Higgs. The disabled tab explains which models can create a voice from a description: VoxCPM2, Qwen3-TTS, and MOSS VoiceGenerator.
+**Design a voice** stays visible when the current model needs a recording, such as Higgs. Open it and choose a set-up VoxCPM2, Qwen3-TTS, or MOSS VoiceGenerator from the model menu. If none is set up, the tab stays disabled and its tooltip lists those alternatives.
 
 ![Full Generate page with voice controls and multiple listening options](docs/images/studio-page.jpg)
 
@@ -64,7 +66,7 @@ Expansion follows different rules for each supported model and mode. The studio 
 | MOSS VoiceGenerator | Voice design from descriptions. |
 | Fish Audio S2 Pro | Recorded voices with exact transcripts and delivery tags. |
 
-Choose an installed model at startup. Your Collection and queue are shared across models. Some features vary by model, and Chatterbox and IndexTTS are experimental on 24 GB Macs. See [model requirements and licenses](BACKENDS.md) before choosing one; the studio also displays relevant license notices.
+Startup chooses the saved default. The studio’s Voice model selector can use any set-up model for new requests. One generator switches models between jobs, and your Collection and queue are shared. Some features vary by model, and Chatterbox and IndexTTS are experimental on 24 GB Macs. See [model requirements and licenses](BACKENDS.md) before choosing one; the studio also displays relevant license notices.
 
 ## API overview
 
@@ -78,7 +80,8 @@ Here are the available endpoints. See [API.md](API.md) for request formats, exam
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Check the generator and queue status. |
-| GET | `/api/capabilities` | See the selected model's features and controls. |
+| GET | `/v1/models` | List set-up models and the saved default. |
+| GET | `/api/capabilities?model=higgs` | See a model's features and controls. |
 | GET | `/api/observability` | Chart resource history by time window and model. |
 | GET | `/api/observability/jobs` | List recorded job attempts and their resource peaks. |
 | GET | `/api/observability/jobs/{id}` | Inspect resource charts for one job or attempt. |
@@ -86,13 +89,13 @@ Here are the available endpoints. See [API.md](API.md) for request formats, exam
 | POST | `/api/candidates` | Generate 1–5 voice options. |
 | GET | `/api/candidates/{id}` | Check a batch and its results. |
 | POST | `/api/prompts/expand` | Preview expanded voice or delivery directions. |
-| GET | `/api/jobs` | List jobs. |
+| GET | `/api/queue` | List jobs across models. |
 | GET | `/api/jobs/{id}` | Check a job and its result. |
-| DELETE | `/api/jobs/{id}` | Remove a waiting job. |
-| DELETE | `/api/jobs` | Clear waiting jobs. |
+| DELETE | `/api/queue/{id}` | Remove a waiting job. |
+| DELETE | `/api/queue` | Clear waiting jobs. |
 | POST | `/api/jobs/{id}/retry` | Retry a failed job. |
-| POST | `/api/jobs/{id}/move` | Move a waiting job up/down or beside another. |
-| POST | `/api/jobs/{id}/run-now` | Put a waiting job first. |
+| POST | `/api/queue/{id}/move` | Move a waiting job up/down or beside another. |
+| POST | `/api/queue/{id}/run-now` | Put a waiting job first. |
 | GET | `/api/history` | Browse generated takes. |
 | GET | `/api/artifacts/{id}` | Get a take's details. |
 | GET | `/api/metadata/{id}` | Download a take's saved metadata. |
@@ -108,7 +111,7 @@ Here are the available endpoints. See [API.md](API.md) for request formats, exam
 | GET | `/api/references/{id}/original` | Download the original reference file. |
 | POST | `/api/model/unload` | Release the model's memory. |
 
-On the generator, `/api/queue` is an alias for the `/api/jobs` routes above. `POST /api/jobs` and `POST /api/queue` are also aliases for `/api/generate`.
+Both APIs also provide `POST /api/queue/pause` and `/api/queue/resume`. Run Now waits for the active batch, then runs ahead of normal work.
 
 ### Queue service — localhost:55205
 
@@ -117,7 +120,7 @@ This service can accept jobs while the generator is off. Its queue endpoints use
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Check the queue service. |
-| GET | `/api/models` | List supported models and the default. |
+| GET | `/v1/models` | List set-up models and the saved default. |
 | POST | `/api/queue` | Add a job. |
 | GET | `/api/queue` | List jobs. |
 | GET | `/api/queue/{id}` | Get a job's details and result. |

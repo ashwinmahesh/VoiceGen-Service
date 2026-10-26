@@ -1,16 +1,18 @@
-# Startup backends
+# Voice models
 
-Description-based voice design is supported by VoxCPM2, Qwen3-TTS, and MOSS. The studio keeps its design tab visible but disabled for other backends, with a tooltip listing these alternatives. Generator admission rejects unsupported design requests with 422; standalone queue admission retains its deferred validation behavior. Supported-model hints come from the model registry and backend mode declarations.
+Description-based voice design is supported by VoxCPM2, Qwen3-TTS, and MOSS. The studio keeps its design tab visible but disabled for other backends, with a tooltip listing these alternatives when none is ready. If a capable model is set up, the tab opens with an empty model selection instead. Generator admission rejects unsupported design requests with 422; standalone queue admission retains its deferred validation behavior. Supported-model hints come from the model registry and backend mode declarations.
 
 All backends share generator-owned [resource history](docs/observability.md). Process-tree sampling includes native speech and LLM children, so CPU/RSS are captured for Higgs and MOSS as well as in-process MLX/MPS models. Device-wide macOS GPU counters are labeled separately. Samples identify the speech backend, actual model/LLM phase, session, and job attempt. This needs no additional runtime package or model download.
 
-Local Voice Studio uses one UI, API 2.1 job protocol, storage/catalog implementation, and single reserved inference worker. Every backend defaults to `http://localhost:5743/`; `PORT=<number>` is an explicit override. Select one backend at process startup. Qwen uses this same checkout (`make start MODEL=qwen3`) and shared MLX environment, catalog and queue; no separate Qwen project is needed. Stop the active backend before switching; shared storage/queue ownership rejects a second simultaneous worker. Selection never loads every model. Read `/api/capabilities` before forming a request: unsupported fields are rejected, not silently discarded.
+Local Voice Studio uses one UI, API v4, catalog, shared SQLite queue and serial inference worker. All ready backends are available without restarting the generator. Startup (`make serve MODEL=higgs`) chooses the saved default for both APIs. The studio model selector or per-request `model` chooses each new job. `/v1/models` lists ready IDs and their modes; `/api/capabilities?model=higgs` supplies the selected model’s controls and defaults.
+
+Only one speech backend is resident at a time. Consecutive jobs reuse its adapter; switching stops/reaps it before loading another. Candidate batches finish together. Higgs/MOSS still use per-output native children to release speech weights after each take. Missing assets/runtimes reject new work with a setup hint; already admitted work stays blocked until its model returns, while other models proceed. All models use localhost:5743 unless `PORT` is overridden.
 
 ```sh
 make setup MODEL=chatterbox
 make serve MODEL=chatterbox PORT=8017
 # Or use the selected environment directly:
-DATA_DIR=/absolute/data .venv-chatterbox/bin/python server.py --backend chatterbox --port 8017
+DATA_DIR=/absolute/data .venv-chatterbox/bin/python server.py --model chatterbox --port 8017
 ```
 
 Omitting MODEL selects **Higgs TTS 3** from `service_defaults.json`; it uses `.venv-native`. The same default applies to queue submissions that omit `model`. The legacy `service.json` continues to identify the original Vox storage/environment layout and is not changed by choosing a different default. Explicit MODEL uses `backends/MODEL/{service,model_specs,extension_specs}.json`. Selecting the original service.json backend preserves its existing DATA_DIR/weights and .venv. Other backends use DATA_DIR/weights/MODEL and the environment below. `WEIGHTS_DIR=/absolute/existing/weights` overrides only model files, allowing reuse without copying/downloading them. Otherwise ignored storage.json may provide backend_weights keyed by backend ID. Extension files similarly use EXTENSIONS_DIR, then backend_extensions, then DATA_DIR/extensions. Environment overrides take priority over saved mappings; setup retries preserve mappings. The selected mapped paths receive the same missing-volume checks as other data paths.

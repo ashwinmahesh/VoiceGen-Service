@@ -107,7 +107,7 @@ class PerformanceArtifactTests(unittest.TestCase):
             job=fixture.generate(**body).json();fixture.finish(job)
             r=Generation(text='Welcome home.',description='A calm baritone.',**body)
             key=hashlib.sha256(b'pre-quality').hexdigest()
-            old_hash=hashlib.sha256(r.model_dump_json(exclude={'idempotency_key','fish','higgs','qwen3','moss','prompt_expansion_id'}).encode()).hexdigest()
+            old_hash=hashlib.sha256(r.model_dump_json(exclude={'model','idempotency_key','fish','higgs','qwen3','moss','prompt_expansion_id'}).encode()).hexdigest()
             with fixture.manager.store.transaction() as db:
                 payload=json.loads(db.execute('SELECT payload FROM entries WHERE key_hash=?',(key,)).fetchone()[0])
                 payload['requested'].pop('fish');payload['requested'].pop('higgs')

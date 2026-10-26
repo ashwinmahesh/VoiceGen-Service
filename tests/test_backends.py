@@ -214,7 +214,7 @@ class BackendTests(unittest.TestCase):
     def test_serve_selection_fails_cleanly_before_launch_when_setup_is_missing(self):
         import io,sys,startup_select
         with patch.object(sys,'argv',['startup_select.py','serve','--non-interactive']),patch('startup_select.setup_errors',return_value=['incomplete model']),patch('startup_select.os.execvpe') as launch:
-            with self.assertRaisesRegex(SystemExit,'make setup MODEL='):
+            with self.assertRaisesRegex(SystemExit,'make setup'):
                 startup_select.main()
             launch.assert_not_called()
         with patch.object(sys,'argv',['startup_select.py','serve']),patch('startup_select.sys.stdin.isatty',return_value=True),patch('startup_select.ready_models',return_value=([],{'voxcpm2':['volume is not mounted']})),patch('startup_select.os.execvpe') as launch:
@@ -261,7 +261,7 @@ class BackendTests(unittest.TestCase):
             for _ in range(2):
                 async with server.lifespan(server.app):pass
         for backend in BACKENDS:
-            with self.subTest(backend=backend),patch('server.PROFILE',self.profile(backend)),patch('server.prepare_storage'),patch('server.manager',Mock()) as manager,patch('data_owner.own_data_directory',side_effect=lambda *args:nullcontext(object())):
+            with self.subTest(backend=backend),patch('server.PROFILE',self.profile(backend)),patch('server.prepare_storage'),patch.object(server.app.state,'llm_enabled',False),patch('server.manager',Mock()) as manager,patch('data_owner.own_data_directory',side_effect=lambda *args:nullcontext(object())):
                 notice=notice_for(backend)
                 if notice:
                     with self.assertLogs(level=logging.WARNING) as output:asyncio.run(start_twice())
@@ -280,9 +280,11 @@ class BackendTests(unittest.TestCase):
         from contextlib import redirect_stdout
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);(root/'logs').mkdir()
-            state={'service':'fish','project':str(PROJECT_ROOT),'storage':str(root)}
+            state={'service':'voicegen-service','mode':'generator','api_version':'4.0.0','queue_scope':'shared','runtime_model_switching':True,'project':str(PROJECT_ROOT),'storage':str(root),'queue_database':str(root/'state/queue.sqlite3')}
             process=Mock(pid=12345);process.poll.return_value=None
-            with patch.object(sys,'argv',['manage.py','start','--port','8113']),patch('manage.PROFILE',self.profile('fish')),patch('manage.ROOT',root),patch('manage.QUEUE_DB',root/'state/queue.sqlite3'),patch('manage.prepare_storage'),patch('prompt_assets.check_assets'),patch('prompt_assets.check_runtime'),patch('manage.health',side_effect=[None,state]),patch('manage.socket.socket'),patch('manage.subprocess.Popen',return_value=process) as launch,redirect_stdout(io.StringIO()):
+            with patch.object(sys,'argv',['manage.py','start','--model','fish','--port','8113']),patch('manage.PROFILE',self.profile('fish')),patch('manage.ROOT',root),patch('manage.QUEUE_DB',root/'state/queue.sqlite3'),patch('manage.prepare_storage'),patch('manage.ReadyModels') as catalog,patch('prompt_assets.check_assets'),patch('prompt_assets.check_runtime'),patch('manage.health',side_effect=[None,state]),patch('manage.socket.socket'),patch('manage.subprocess.Popen',return_value=process) as launch,redirect_stdout(io.StringIO()):
+                catalog.return_value.models.return_value=[{'id':'fish'}]
+                catalog.return_value.python.return_value=Path(sys.executable)
                 with self.assertLogs(level='WARNING') as output:manage.main()
                 self.assertIn('MODEL LICENSE WARNING',output.output[0])
                 self.assertIn('Fish S2 Pro',output.output[0])
@@ -295,10 +297,10 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(selected_backend([]),'higgs')
         with patch.dict(os.environ,{'MODEL_BACKEND':'fish'}):
             self.assertEqual(selected_backend([]),'fish')
-            self.assertEqual(selected_backend(['--backend','higgs']),'higgs')
+            self.assertEqual(selected_backend(['--model','higgs']),'higgs')
         with patch.dict(os.environ,{'MODEL_BACKEND':'typo'}):
             with self.assertRaises(ValueError):selected_backend([])
-        for backend in BACKENDS:self.assertEqual(selected_backend(['--backend',backend]),backend)
+        for backend in BACKENDS:self.assertEqual(selected_backend(['--model',backend]),backend)
 
     def test_explicit_original_backend_reuses_existing_weights(self):
         root=Path('/absolute/existing/data')
@@ -383,7 +385,7 @@ class BackendTests(unittest.TestCase):
     def test_runtime_mismatch_is_not_advertised_as_ready(self):
         from fastapi.testclient import TestClient
         import server
-        with patch('server.manager.store.listing',return_value={'counts':{}}),patch('server.all_errors',return_value=[]),patch('server.runtime_errors',return_value=['missing pinned runtime']):
+        with patch('server.manager.runtime',False),patch('server.manager.store.listing',return_value={'counts':{}}),patch('server.all_errors',return_value=[]),patch('server.runtime_errors',return_value=['missing pinned runtime']):
             response=TestClient(server.app).get('/health').json()
             self.assertEqual(response['status'],'error')
             self.assertTrue(response['downloaded'])

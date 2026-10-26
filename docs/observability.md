@@ -2,7 +2,7 @@
 
 Open **Observability** in the studio header, or visit `http://localhost:5743/observability` while the generator is running. Recording starts automatically when the generator starts. You do not need to keep the page open.
 
-**Over time** offers 5m, 30m, 1h, 6h, 24h, 3 days, and 7 days. Filter by the speech model selected at startup. Model colors and hover details identify the model recorded with each point. **By job** lists recorded attempts with their status, duration, and resource peaks. Select **View charts** to see a whole attempt on a shorter elapsed-time axis. Choose another attempt to compare a retry. A Queue entry's **Resources** link opens the same view.
+**Over time** offers 5m, 30m, 1h, 6h, 24h, 3 days, and 7 days. Filter by the speech model used by each job. Model colors and hover details identify the model recorded with each point. **By job** lists recorded attempts with their status, duration, and resource peaks. Select **View charts** to see a whole attempt on a shorter elapsed-time axis. Choose another attempt to compare a retry. A Queue entry's **Resources** link opens the same view.
 
 ![Full job resource page with demonstration data](images/observability-job.jpg)
 
@@ -20,7 +20,7 @@ This screenshot uses demonstration data, not measured model performance.
 
 CPU and RSS come from `/bin/ps` using numeric process IDs, parent IDs, CPU time, RSS, and start time. Command lines and other processes' names are not saved. GPU counters come from `PerformanceStatistics` in `/usr/sbin/ioreg -a -r -d 1 -c IOAccelerator`. No administrator permissions, external service, or network access are needed. These driver fields can vary between macOS versions. If counters disappear or time out, their values remain unavailable rather than becoming zero.
 
-The selected speech backend and concrete model are recorded with each sample and attempt. During a prompt-expansion phase, the sample's model identifies `mlx-community/Qwen3.5-2B-4bit`, while its backend still identifies the selected speech model. Each point also records its phase. Job charts cover validation, expansion, model loading, generation, and final saving while the worker owns that attempt. Idle residency and standalone prompt previews are included in the overall timeline. A model that runs in a child process is included automatically through its parent relationship.
+The job’s speech backend and concrete model are recorded with each sample and attempt. During a prompt-expansion phase, the sample's model identifies `mlx-community/Qwen3.5-2B-4bit`, while its backend still identifies the selected speech model. Each point also records its phase. Job charts cover validation, expansion, model loading, generation, and final saving while the worker owns that attempt. Idle residency and standalone prompt previews are included in the overall timeline. A model that runs in a child process is included automatically through its parent relationship.
 
 ## Recording and storage
 

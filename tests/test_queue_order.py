@@ -120,7 +120,7 @@ class QueueOrderApiTests(unittest.TestCase):
         self.queue=TestClient(queue_server.app);self.addCleanup(self.queue.close)
 
     def test_both_generator_aliases_and_standalone_routes(self):
-        for client,prefix in ((self.f.client,'/api/jobs'),(self.f.client,'/api/queue'),(self.queue,'/api/queue')):
+        for client,prefix in ((self.f.client,'/api/queue'),(self.queue,'/api/queue')):
             with self.subTest(prefix=prefix,client=client):
                 moved=client.post(prefix+'/'+self.b['id']+'/move',json={'before_id':self.a['id']})
                 self.assertEqual(moved.status_code,200,moved.text);self.assertIsInstance(moved.json()['queue_order'],int)
@@ -156,7 +156,7 @@ class QueueOrderProcessTests(unittest.TestCase):
         self.assertEqual(test_queue_service.request(f.queue_port,'/api/queue/'+a['id']+'/move','POST',{'before_id':b['id']})[0],200)
         stopped=subprocess.run([sys.executable,'queue_manage.py','stop','--port',str(f.queue_port)],cwd=PROJECT_ROOT,env=f.env,capture_output=True,text=True)
         self.assertEqual(stopped.returncode,0,stopped.stdout+stopped.stderr)
-        self.assertEqual(test_queue_service.request(f.gen_port,'/api/jobs/'+b['id']+'/run-now','POST')[0],200)
+        self.assertEqual(test_queue_service.request(f.gen_port,'/api/queue/'+b['id']+'/run-now','POST')[0],200)
         self.assertEqual(order(f.gen_port),[active['id'],b['id'],c['id'],a['id']])
         f.start_queue();self.assertEqual(order(f.queue_port),[active['id'],b['id'],c['id'],a['id']])
         self.assertEqual(len((f.media/'calls.jsonl').read_text().splitlines()),1)

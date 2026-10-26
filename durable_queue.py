@@ -99,6 +99,71 @@ class QueueStore:
             db.execute('''CREATE TABLE IF NOT EXISTS candidate_batches (
                 id TEXT PRIMARY KEY, backend TEXT NOT NULL, created_at TEXT NOT NULL,
                 key_hash TEXT UNIQUE, fingerprint TEXT NOT NULL, job_ids TEXT NOT NULL)''')
+            if 'blocked_reason' not in {row['name'] for row in db.execute('PRAGMA table_info(entries)')}:
+                db.execute('ALTER TABLE entries ADD COLUMN blocked_reason TEXT')
+            db.execute('CREATE TABLE IF NOT EXISTS queue_settings (key TEXT PRIMARY KEY,value TEXT NOT NULL)')
+
+    def setting(self,key,default=None,timeout=10):
+        with closing(sqlite3.connect(self.path,timeout=timeout)) as db:
+            row=db.execute('SELECT value FROM queue_settings WHERE key=?',(key,)).fetchone()
+            return json.loads(row[0]) if row else default
+
+    def set_setting(self,key,value):
+        with self.transaction() as db:
+            db.execute('INSERT INTO queue_settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                       (key,json.dumps(value,allow_nan=False)))
+        return value
+
+    def default_model(self,timeout=10):
+        from queue_config import DEFAULT_MODEL
+        return self.setting('default_model',DEFAULT_MODEL,timeout=timeout)
+
+    def pause(self,paused):
+        self.set_setting('paused',bool(paused))
+        return {'paused':bool(paused)}
+
+    def pending_models(self):
+        with self.transaction() as db:
+            return [row[0] for row in db.execute("SELECT DISTINCT backend FROM entries WHERE status='queued'")]
+
+    def mark_blocked(self,reasons):
+        with self.transaction() as db:
+            for model,reason in reasons.items():
+                db.execute("UPDATE entries SET blocked_reason=?,stage=? WHERE status='queued' AND backend=? AND COALESCE(blocked_reason,'')<>?",
+                           (reason,'Blocked: '+reason if reason else 'Waiting for execution slot',model,reason or ''))
+
+    def defer_blocked(self,identity,reason):
+        with self.transaction() as db:
+            db.execute("UPDATE entries SET status='queued',attempts=MAX(0,attempts-1),started_at=NULL,blocked_reason=?,stage=?,updated_at=? WHERE id=? AND status='running'",
+                       (reason,'Blocked: '+reason,now(),identity))
+
+    def claim_global(self,ready,allow_llm=True):
+        """One global order/consumer; finish a candidate batch before switching."""
+        with self.transaction() as db:
+            saved={row['key']:json.loads(row['value']) for row in db.execute('SELECT * FROM queue_settings')}
+            rows=list(db.execute("SELECT * FROM entries WHERE status='queued' ORDER BY generate_immediately DESC,queue_order,sequence"))
+            batch=saved.get('active_batch')
+            if batch:
+                members=[row for row in rows if json.loads(row['payload']).get('candidate_batch_id')==batch]
+                if members and any(row['backend'] in ready and (not saved.get('paused') or row['generate_immediately']) and
+                                   (allow_llm or json.loads(row['payload']).get('candidate_plan',{}).get('method')!='llm' or
+                                    json.loads(row['payload']).get('candidate_plan',{}).get('ready')) for row in members):
+                    rows=members
+                else:
+                    db.execute("DELETE FROM queue_settings WHERE key='active_batch'")
+            chosen=None
+            for row in rows:
+                if row['backend'] not in ready:continue
+                if saved.get('paused') and not row['generate_immediately']:continue
+                plan=json.loads(row['payload']).get('candidate_plan',{})
+                if plan.get('method')=='llm' and not plan.get('ready') and not allow_llm:continue
+                chosen=row;break
+            if chosen is None:return None
+            group=json.loads(chosen['payload']).get('candidate_batch_id')
+            if group:
+                db.execute("INSERT INTO queue_settings VALUES('active_batch',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(json.dumps(group),))
+            db.execute("UPDATE entries SET status='running',attempts=attempts+1,started_at=?,completed_at=NULL,updated_at=?,stage='Starting',error=NULL,blocked_reason=NULL WHERE id=?",(now(),now(),chosen['id']))
+            return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(chosen['id'],)).fetchone())
 
     @staticmethod
     def decode(row):
@@ -170,6 +235,16 @@ class QueueStore:
                  json.dumps(wrapped,allow_nan=False),key,fingerprint,'Waiting for consumer validation'))
             db.execute('UPDATE entries SET queue_order=sequence WHERE id=?',(identity,))
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
+
+    def existing_opaque(self,payload,immediate=False,idempotency_key=None,model=None):
+        if not idempotency_key:return None
+        key=hashlib.sha256(('queue:'+idempotency_key).encode()).hexdigest()
+        with self.transaction() as db:
+            old=db.execute('SELECT * FROM entries WHERE key_hash=?',(key,)).fetchone()
+            if old is None:return None
+            fingerprint=hashlib.sha256(json.dumps([model or old['backend'],payload,immediate],sort_keys=True,allow_nan=False).encode()).hexdigest()
+            if old['fingerprint']!=fingerprint:raise QueueConflict('This idempotency key was used with different settings')
+            return self.decode(old)
 
     def edit_pending(self, identity, payload=None, immediate=None):
         with self.transaction() as db:
@@ -267,7 +342,7 @@ class QueueStore:
             row = db.execute('SELECT * FROM candidate_batches WHERE key_hash=?',(key_hash,)).fetchone()
             if row is None:
                 return None
-            if row['backend'] != backend or row['fingerprint'] != fingerprint:
+            if (backend is not None and row['backend'] != backend) or row['fingerprint'] != fingerprint:
                 raise QueueConflict('This candidate idempotency key was used with another backend or different settings')
             return self._candidate_batch(db, row)
 
@@ -310,9 +385,10 @@ class QueueStore:
                        (*changes.values(),identity))
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
 
-    def has_pending(self, backend):
+    def has_pending(self, backend=None):
         with self.transaction() as db:
-            return db.execute("SELECT 1 FROM entries WHERE status='queued' AND backend=? LIMIT 1",(backend,)).fetchone() is not None
+            return db.execute("SELECT 1 FROM entries WHERE status='queued'"+(' AND backend=?' if backend else '')+' LIMIT 1',
+                              (backend,) if backend else ()).fetchone() is not None
 
     def claim(self, backend, allow_llm=True):
         with self.transaction() as db:
@@ -373,10 +449,10 @@ class QueueStore:
             return db.execute("UPDATE entries SET status='deleted',stage='Removed from queue',updated_at=? WHERE status='queued'"+clause,
                               (now(),*args)).rowcount
 
-    def retry(self, identity, backend):
+    def retry(self, identity, backend=None):
         with self.transaction() as db:
             row = self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
-            if row['backend'] != backend:
+            if backend and row['backend'] != backend:
                 raise QueueConflict('Select this entry\'s backend at startup before retrying')
             if row['status'] != 'error':
                 raise QueueConflict('Only failed entries can be retried')
@@ -396,5 +472,6 @@ class QueueStore:
             total = db.execute('SELECT count(*) FROM entries'+where,args).fetchone()[0]
             rows = db.execute("SELECT * FROM entries"+where+" ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,generate_immediately DESC,queue_order,sequence LIMIT ? OFFSET ?",(*args,limit,offset))
             more = offset+limit < total
-            return dict(data=[self.decode(row) for row in rows],total=total,counts=counts,
+            positions={row['id']:i for i,row in enumerate(db.execute("SELECT id FROM entries WHERE status='queued' ORDER BY generate_immediately DESC,queue_order,sequence"),1)}
+            return dict(data=[{**self.decode(row),'position':positions.get(row['id'])} for row in rows],total=total,counts=counts,
                         limit=limit,offset=offset,has_more=more,next_offset=offset+limit if more else None)

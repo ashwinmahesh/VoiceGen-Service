@@ -342,29 +342,30 @@ class QueueAPITests(QueueFixture):
         import server
         manager=self.manager();manager.engine.gate=threading.Event()
         with ExitStack() as stack:
+            stack.enter_context(patch.object(server.app.state,'llm_enabled',False))
             for key,value in [('manager',manager),('engine',manager.engine),('all_errors',lambda:[]),('runtime_errors',lambda:[]),('prepare_storage',lambda:None),('ROOT',self.root)]:
                 stack.enter_context(patch('server.'+key,value))
             with TestClient(server.app) as client:
                 body={'text':'API fixture.','description':'A calm voice.'}
                 first=client.post('/api/generate',json=body);self.assertEqual(first.status_code,202)
                 self.assertTrue(manager.engine.started.wait(2));self.assertFalse(first.json()['generate_immediately'])
-                row=client.post('/api/jobs',json={**body,'generate_immediately':True,'idempotency_key':'api'}).json()
+                row=client.post('/api/generate',json={**body,'generate_immediately':True,'idempotency_key':'api'}).json()
                 self.assertTrue(row['generate_immediately']);self.assertEqual(row['status'],'queued')
-                self.assertEqual(client.get('/api/jobs?limit=1').json()['total'],2)
-                self.assertEqual(client.get('/api/queue/'+row['id']).status_code,200)
-                self.assertEqual(client.delete('/api/jobs/'+first.json()['id']).status_code,409)
+                self.assertEqual(client.get('/api/queue?limit=1').json()['total'],2)
+                self.assertEqual(client.get('/api/jobs/'+row['id']).status_code,200)
+                self.assertEqual(client.delete('/api/queue/'+first.json()['id']).status_code,409)
                 self.assertEqual(client.delete('/api/queue/'+row['id']).json()['deleted'],1)
                 self.assertEqual(client.get('/api/jobs/'+row['id']).json()['status'],'deleted')
-                client.post('/api/queue',json=body)
+                client.post('/api/generate',json=body)
                 self.assertEqual(client.delete('/api/queue').json()['deleted'],1)
                 self.assertIn('queue_counts',client.get('/health').json())
                 for url in ['/api/queue?limit=0','/api/queue?offset=-1','/api/queue?status=bad']:
                     self.assertEqual(client.get(url).status_code,422)
                 for fields in [{'unknown':1},{'text':' '},{'steps':99},{'temperature':float('inf')}]:
-                    response=client.post('/api/queue',content=json.dumps({**body,**fields}),headers={'Content-Type':'application/json'})
+                    response=client.post('/api/generate',content=json.dumps({**body,**fields}),headers={'Content-Type':'application/json'})
                     self.assertEqual(response.status_code,422,response.text)
                 self.assertEqual(client.delete('/api/queue/bad').status_code,404)
-                self.assertEqual(client.post('/api/queue/'+row['id']+'/retry',json={}).status_code,409)
+                self.assertEqual(client.post('/api/jobs/'+row['id']+'/retry',json={}).status_code,409)
                 manager.engine.gate.set()
 
 

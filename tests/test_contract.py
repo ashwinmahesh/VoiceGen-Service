@@ -133,7 +133,7 @@ class ContractTests(unittest.TestCase):
         batch=self.client.get('/api/candidates/'+response.json()['id']).json()
         self.assertEqual((batch['status'],batch['done_count']),('partial',2))
         self.assertEqual([row['status'] for row in batch['jobs']],['done','error','done'])
-        retried=self.client.post('/api/queue/'+batch['jobs'][1]['id']+'/retry',json={})
+        retried=self.client.post('/api/jobs/'+batch['jobs'][1]['id']+'/retry',json={})
         self.assertEqual(retried.status_code,202);self.assertEqual(self.finish(retried.json())['status'],'done')
         self.assertEqual(self.client.get('/api/candidates/'+batch['id']).json()['status'],'done')
     def test_direct_voice_upload_enters_collection_preserves_original_and_is_reusable(self):
@@ -210,7 +210,7 @@ class ContractTests(unittest.TestCase):
         request=Generation(text='Welcome home.',description='A calm baritone.',idempotency_key='old-api')
         legacy={'prompt_expansion_id','preset_voice','accent','clone_mode','steering_emotion','steering_strength','qwen3','moss'}
         import hashlib
-        fingerprint=hashlib.sha256(request.model_dump_json(exclude={'idempotency_key','generate_immediately',*legacy}).encode()).hexdigest()
+        fingerprint=hashlib.sha256(request.model_dump_json(exclude={'model','idempotency_key','generate_immediately',*legacy}).encode()).hexdigest()
         key=hashlib.sha256(b'old-api').hexdigest()
         atomic_json(self.root/'jobs'/f'{identity}.json',{'id':identity,'status':'error','stage':'Old completion','created_at':now(),'updated_at':now()})
         atomic_json(self.root/'idempotency'/f'{key}.json',{'job':identity,'fingerprint':fingerprint})
@@ -247,7 +247,7 @@ class ContractTests(unittest.TestCase):
         request=Generation(text='Welcome home.',description='A calm baritone.',voice_id='a'*32,
             clone_mode='combined',idempotency_key='prior-combined')
         added={'prompt_expansion_id','exaggeration','cfg_weight','emotion_reference_id','emotion_vector','emotion_alpha','duration_factor','interval_silence','chatterbox','indextts','fish','higgs','qwen3','moss'}
-        fingerprint=hashlib.sha256(request.model_dump_json(exclude={'idempotency_key',*added}).encode()).hexdigest()
+        fingerprint=hashlib.sha256(request.model_dump_json(exclude={'model','idempotency_key',*added}).encode()).hexdigest()
         identity='c'*32
         from voice_catalog import atomic_json,now
         atomic_json(self.root/'jobs'/f'{identity}.json',{'id':identity,'status':'error','stage':'Prior completion','created_at':now(),'updated_at':now()})
@@ -342,7 +342,7 @@ class ContractTests(unittest.TestCase):
         profile=json.loads((PROJECT_ROOT/'backends/higgs/service.json').read_text())
         payload={'text':'Welcome home.','description':'A cultured baritone.'}
         with patch('capabilities.PROFILE',profile),patch('server.PROFILE',profile):
-            for endpoint in ['/api/generate','/api/jobs','/api/queue','/api/candidates']:
+            for endpoint in ['/api/generate','/api/candidates']:
                 response=self.client.post(endpoint,json=payload)
                 self.assertEqual(response.status_code,422,response.text)
                 self.assertIn('Higgs TTS 3 requires a saved voice or reference recording',response.json()['detail'])

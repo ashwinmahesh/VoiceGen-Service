@@ -128,9 +128,9 @@ class ExpansionTests(unittest.TestCase):
     def test_previous_single_and_candidate_fingerprints_ignore_new_omitted_field(self):
         from jobs import JobManager
         for request in [Generation(text='Hello.',description='A voice.'),CandidateGeneration(text='Hello.',description='A voice.')]:
-            dumped=request.model_dump_json(exclude={'idempotency_key','prompt_expansion_id','qwen3','moss'})
+            dumped=request.model_dump_json(exclude={'model','idempotency_key','prompt_expansion_id','qwen3','moss'})
             if isinstance(request,CandidateGeneration):
-                dumped=request.model_dump_json(exclude={'idempotency_key','prompt_expansion_id','candidate_variation','candidate_use_llm'})
+                dumped=request.model_dump_json(exclude={'model','idempotency_key','prompt_expansion_id','candidate_variation','candidate_use_llm'})
                 actual=JobManager.candidate_fingerprint(request)
             else:actual=JobManager.fingerprint(request)
             self.assertEqual(actual,hashlib.sha256(dumped.encode()).hexdigest())

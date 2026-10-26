@@ -28,7 +28,7 @@ def choose_model(default, explicit=None, interactive=False, input_fn=input, stre
     if not choices:raise ValueError('No set-up voice models are available. Run make setup first.')
     default=default if default in choices else choices[0]
     if not interactive:return default
-    print('Choose a set-up voice model to serve:' if serving else 'Choose a voice model to set up:',file=stream)
+    print('Choose the default voice model (all set-up models can run):' if serving else 'Choose a voice model to set up:',file=stream)
     for number,backend in enumerate(choices,1):
         badge=' [SETUP COMPLETE]' if not serving and backend in setup_complete else ''
         print(f'  {number}. {model_name(backend)} [{backend}]'+badge+(' (default)' if backend==default else ''),file=stream)
@@ -68,6 +68,9 @@ def setup_errors(root, backend, original_backend, venv_override=None):
     python=runtime_python(root,backend,original_backend,venv_override)
     if not python.is_file():return [f'Python environment missing: {python.parent.parent}']
     environment={**os.environ,'MODEL_BACKEND':backend}
+    owner=os.environ.get('VOICEGEN_OVERRIDE_BACKEND',os.environ.get('MODEL_BACKEND'))
+    if owner and backend!=owner:
+        for key in ('WEIGHTS_DIR','EXTENSIONS_DIR'):environment.pop(key,None)
     probe='''import json,platform,sys,sysconfig
 try:
     from config import ROOT,MODEL_DIR,EXTENSION_DIR,PROFILE,validate_mount
@@ -113,6 +116,15 @@ def main():
     root=Path(__file__).resolve().parent
     original=json.loads((root/'service.json').read_text())['backend']
     default=default_backend()
+    if args.action=='serve':
+        from queue_config import QUEUE_DB
+        import sqlite3
+        if QUEUE_DB.is_file():
+            try:
+                with sqlite3.connect('file:'+str(QUEUE_DB)+'?mode=ro',uri=True) as db:
+                    row=db.execute("SELECT value FROM queue_settings WHERE key='default_model'").fetchone()
+                    if row:default=json.loads(row[0])
+            except sqlite3.OperationalError:pass
     interactive=sys.stdin.isatty() and not args.non_interactive
     override=os.environ.get('VENV') if args.keep_venv else None
     choices=None
@@ -120,7 +132,7 @@ def main():
     setup_complete=[]
     if args.action=='setup' and not args.model and interactive:
         setup_complete,_=ready_models(root,original,override)
-    if args.action=='serve' and not args.model and interactive:
+    if args.action=='serve' and not args.model and (interactive or not args.dry_run):
         choices,unavailable=ready_models(root,original,override)
         if not choices:
             show_unavailable(unavailable)

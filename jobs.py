@@ -7,11 +7,12 @@ import logging
 from pathlib import Path
 import threading
 import wave
-from config import ROOT, GPU_LOCK_FILE, PROFILE, MODEL_SPECS, PROJECT_ROOT, validate_mount
+from config import ROOT, GPU_LOCK_FILE, PROFILE, MODEL_SPECS, PROJECT_ROOT, validate_mount,model_context
 from durable_queue import QueueStore, QueueConflict
 from voice_catalog import now, atomic_json, IDENTITY
 from schemas import Generation, generation_metadata, MODEL_OPTIONS, PACING_FIELDS, LEGACY_BACKEND_FIELDS
 from inference_locks import inherit_reservations
+from model_readiness import ModelUnavailable
 
 
 class BusyError(QueueConflict):
@@ -22,6 +23,8 @@ class JobManager:
     def __init__(self, engine, root=ROOT, lock_file=GPU_LOCK_FILE, profile=None, db_path=None):
         self.engine, self.root, self.lock_file = engine, Path(root), Path(lock_file)
         self.profile = dict(profile or PROFILE)
+        self.runtime=getattr(engine,'runtime_model_switching',False) is True
+        self.catalog=engine.catalog if self.runtime else None
         self.store = QueueStore(self.root, db_path)
         self.executor = ThreadPoolExecutor(max_workers=1,thread_name_prefix='voice-inference')
         self.guard = threading.RLock()
@@ -39,6 +42,9 @@ class JobManager:
         self._wake = threading.Event()
         self.prepare_opaque = None  # Installed by the generator; never by the CRUD service.
         self.resources = None  # Generator-only optional resource monitoring; never blocks admission.
+
+    @property
+    def current_profile(self):return dict(PROFILE) if self.runtime else self.profile
 
     def _ready(self):
         with self.guard:
@@ -64,7 +70,7 @@ class JobManager:
         with self.guard:
             if self._owner:
                 return
-            self.migrate_legacy()
+            if not self.runtime:self.migrate_legacy()
             validate_mount(self.root/'jobs')
             (self.root/'jobs').mkdir(parents=True,exist_ok=True)
             validate_mount(self.store.path)
@@ -76,8 +82,9 @@ class JobManager:
                 handle.close()
                 raise BusyError('Another queue worker owns this SQLite database') from None
             self._owner = handle
+            if self.runtime:self.engine.consumer_owner=handle
             try:
-                self.store.migrate()
+                if not self.runtime:self.store.migrate()
                 self._ready()
                 for row in self.store.interrupted():
                     # The owner lock proves no live worker still owns these records.
@@ -87,7 +94,7 @@ class JobManager:
                     except Exception as exc:
                         self.store.change(row['id'],status='error',stage='Recovery needs review',error=str(exc))
                 # Pre-queue JSON lacks the inputs needed to safely replay. Preserve IDs/keys.
-                for path in (self.root/'jobs').glob('*.json'):
+                for path in (() if self.runtime else (self.root/'jobs').glob('*.json')):
                     if not IDENTITY.fullmatch(path.stem):
                         continue
                     try:
@@ -111,6 +118,7 @@ class JobManager:
         if self._thread:
             self._thread.join()
         self.executor.shutdown(wait=True)
+        if self.runtime:self.engine.unload()
         self.observe('close')
         if self._owner:
             self._owner.close(); self._owner = None
@@ -123,9 +131,13 @@ class JobManager:
     def public(self, row):
         result = {k:row[k] for k in ['id','status','stage','created_at','updated_at','error','result',
                   'sequence','queue_order','backend','model','mode','generate_immediately','attempts','started_at','completed_at']}
-        result['paused'] = row['status']=='queued' and row['backend'] != self.profile['backend']
+        result['blocked_reason']=row.get('blocked_reason')
+        result['position']=row.get('position')
+        if self.runtime:
+            result['model_variant']=row['model'];result['model']=row['backend']
+        result['paused'] = row['status']=='queued' and (bool(row.get('blocked_reason')) if self.runtime else row['backend'] != self.current_profile['backend'])
         if result['paused']:
-            result['stage'] = 'Paused: select '+row['backend']+' at startup'
+            result['stage'] = 'Blocked: '+row['blocked_reason'] if self.runtime else 'Paused: select '+row['backend']+' at startup'
         plan=row['payload'].get('candidate_plan',{})
         if row['status']=='queued' and plan.get('method')=='llm' and not plan.get('ready') and not self.llm_enabled:
             result['paused']=True;result['stage']='Paused: start without NO_LLM=1 to plan distinct voices'
@@ -153,6 +165,7 @@ class JobManager:
     def fingerprint(request, exclude=()):
         # New omitted pacing controls must hash exactly like pre-pacing submissions.
         exclusions={key:True for key in {'idempotency_key',*exclude}}
+        if request.model is None:exclusions['model']=True
         if request.prompt_expansion_id is None:exclusions['prompt_expansion_id']=True
         for backend in ('qwen3','moss'):
             if getattr(request,backend) is None:exclusions[backend]=True
@@ -168,9 +181,9 @@ class JobManager:
         self._ready()
         key = hashlib.sha256(request.idempotency_key.encode()).hexdigest()
         try:
-            compatible = [self.fingerprint(request,{'fish','higgs'})] if request.fish is None and request.higgs is None else []
+            compatible = [self.fingerprint(request,{'fish','higgs'})] if not self.runtime and request.fish is None and request.higgs is None else []
             legacy=[]
-            if request.clone_mode=='auto' and request.fish is None and request.higgs is None:
+            if not self.runtime and request.clone_mode=='auto' and request.fish is None and request.higgs is None:
                 prior=request.model_copy(update={'clone_mode':'reference'})
                 legacy=[self.fingerprint(prior)]
                 if request.fish is None and request.higgs is None:
@@ -179,9 +192,10 @@ class JobManager:
         except QueueConflict as exc:
             raise BusyError(str(exc)) from None
         if row:
-            if row['backend'] != self.profile['backend']:
+            if row['backend'] != (request.model if self.runtime else self.current_profile['backend']) and (not self.runtime or request.model is not None):
                 raise BusyError('This idempotency key belongs to another backend')
             return self.public(row)
+        if self.runtime:return None
         path = self.root/'idempotency'/f'{key}.json'
         if path.is_file():
             saved = json.loads(path.read_text())
@@ -195,11 +209,11 @@ class JobManager:
                     model=result.get('model','').lower()
                     previous_backend='qwen3' if 'qwen3-tts' in model else 'voxcpm2' if 'voxcpm2' in model else None
                 if previous_backend is None:
-                    previous_backend=original_backend if prior['status']=='done' else self.profile['backend']
-            if previous_backend != self.profile['backend']:
+                    previous_backend=original_backend if prior['status']=='done' else self.current_profile['backend']
+            if previous_backend != self.current_profile['backend']:
                 raise BusyError('This idempotency key belongs to another backend. Recover that job before choosing a new key.')
             candidates=[request]
-            if request.clone_mode=='auto' and request.fish is None and request.higgs is None:candidates.append(request.model_copy(update={'clone_mode':'reference'}))
+            if not self.runtime and request.clone_mode=='auto' and request.fish is None and request.higgs is None:candidates.append(request.model_copy(update={'clone_mode':'reference'}))
             fingerprints=set()
             for candidate in candidates:
                 added={'preset_voice':None,'accent':'','clone_mode':'reference','steering_emotion':None,'steering_strength':None}
@@ -240,14 +254,16 @@ class JobManager:
             reference=str(reference) if reference else None,
             reference_sha256=hashlib.sha256(Path(reference).read_bytes()).hexdigest() if reference else None,transcript=transcript,
             destination=str(destination),reference_info=reference_info)
+        if self.runtime:
+            payload['requested']['model']=self.current_profile['backend'];payload['effective']['model']=self.current_profile['backend']
         mode = 'reference' if reference else 'preset' if request.preset_voice else 'design'
-        model = self.profile.get('modes',{}).get(mode,self.profile['id'])
+        model = self.current_profile.get('modes',{}).get(mode,self.current_profile['id'])
         spec = MODEL_SPECS.get(model,{})
         payload['model_identity'] = {k:spec.get(k) for k in ['repo','revision']}
         payload['aux_references'] = {}
         if request.prompt_expansion_id:
             from prompt_expansion import applied_record
-            payload['prompt_expansion']=applied_record(request,effective,self.profile['backend'],self.root)
+            payload['prompt_expansion']=applied_record(request,effective,self.current_profile['backend'],self.root)
         if effective.emotion_reference_id:
             path = validate_mount(self.root/'references'/f'{effective.emotion_reference_id}.wav')
             payload['aux_references']['emotion'] = {'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
@@ -262,7 +278,7 @@ class JobManager:
             payload, mode, model = self._payload(request,effective,reference,transcript,destination,reference_info)
             key = hashlib.sha256(request.idempotency_key.encode()).hexdigest() if request.idempotency_key else None
             try:
-                row = self.store.admit(self.profile['backend'],model,mode,request.generate_immediately,
+                row = self.store.admit(self.current_profile['backend'],model,mode,request.generate_immediately,
                     payload,key,self.fingerprint(request))
             except QueueConflict as exc:
                 raise BusyError(str(exc)) from None
@@ -272,6 +288,7 @@ class JobManager:
     @staticmethod
     def candidate_fingerprint(request):
         excluded={'idempotency_key'}|({'prompt_expansion_id'} if request.prompt_expansion_id is None else set())
+        if request.model is None:excluded.add('model')
         if request.candidate_variation=='auto':excluded.add('candidate_variation')
         if request.candidate_use_llm:excluded.add('candidate_use_llm')
         return hashlib.sha256(request.model_dump_json(exclude=excluded).encode()).hexdigest()
@@ -298,7 +315,7 @@ class JobManager:
         self._ready()
         key = hashlib.sha256(request.idempotency_key.encode()).hexdigest()
         try:
-            row = self.store.existing_candidates(self.profile['backend'],key,self.candidate_fingerprint(request))
+            row = self.store.existing_candidates(request.model if self.runtime else self.current_profile['backend'],key,self.candidate_fingerprint(request))
         except QueueConflict as exc:
             raise BusyError(str(exc)) from None
         return self.public_candidates(row) if row else None
@@ -306,7 +323,7 @@ class JobManager:
     def submit_candidates(self, request, effective, reference, transcript, destination, reference_info=None, llm_enabled=False):
         self._ready()
         from candidate_diversity import definition,built_in
-        plan=definition(request,effective,self.profile['backend'],llm_enabled)
+        plan=definition(request,effective,self.current_profile['backend'],llm_enabled)
         variants=built_in(plan) if plan and plan['method']=='built_in' else None
         with self.guard:
             payload, mode, model = self._payload(request,effective,reference,transcript,destination,reference_info)
@@ -327,7 +344,7 @@ class JobManager:
                 payloads.append(item)
             key = hashlib.sha256(request.idempotency_key.encode()).hexdigest() if request.idempotency_key else None
             try:
-                row = self.store.admit_candidates(self.profile['backend'],model,mode,request.generate_immediately,
+                row = self.store.admit_candidates(self.current_profile['backend'],model,mode,request.generate_immediately,
                                                   payloads,key,self.candidate_fingerprint(request))
             except QueueConflict as exc:
                 raise BusyError(str(exc)) from None
@@ -362,10 +379,18 @@ class JobManager:
             self._wake.clear()
             handle = None
             try:
+                ready=None
+                if self.runtime and self.store.has_pending():
+                    reasons={}
+                    for model in self.store.pending_models():
+                        errors=self.catalog.errors(model,force=True)
+                        reasons[model]='; '.join(errors)+f' Run make setup MODEL={model}.' if errors else None
+                    self.store.mark_blocked(reasons)
+                    ready=[model for model,reason in reasons.items() if not reason]
                 with self.guard:
-                    if not self._stop.is_set() and self.store.has_pending(self.profile['backend']):
+                    if not self._stop.is_set() and self.store.has_pending(None if self.runtime else self.current_profile['backend']):
                         handle = self.reserve()
-                        row = self.store.claim(self.profile['backend'],allow_llm=self.llm_enabled)
+                        row = self.store.claim_global(ready,allow_llm=self.llm_enabled) if self.runtime else self.store.claim(self.current_profile['backend'],allow_llm=self.llm_enabled)
                         if row:
                             self.active = row['id']
                             self.last_error = None
@@ -373,7 +398,7 @@ class JobManager:
                             handle.close(); handle = None
                 if handle:
                     # The dispatcher waits for capacity, not an HTTP connection.
-                    self.executor.submit(self.run,row,handle).result()
+                    self.executor.submit(self._run_bound,row,handle).result()
                     handle = None
                     continue
             except BusyError:
@@ -384,7 +409,18 @@ class JobManager:
             finally:
                 if handle:
                     handle.close()
-            self._wake.wait(.2)
+            self._wake.wait(2 if self.runtime else .2)
+
+    def _run_bound(self,row,handle):
+        if self.runtime:
+            from model_readiness import ModelUnavailable
+            try:self.catalog.require(row['backend'],force=True)
+            except ModelUnavailable as error:
+                self.store.defer_blocked(row['id'],str(error))
+                with self.guard:self.active=None;handle.close()
+                return
+            with model_context(row['backend']):return self.run(row,handle)
+        return self.run(row,handle)
 
     def run(self, queued, handle):
         identity = queued['id']
@@ -411,16 +447,16 @@ class JobManager:
             # Revalidate persisted structure, but never recompute backend defaults.
             request = Generation.model_validate(payload['requested'])
             effective = Generation.model_validate(payload['effective'])
-            options = getattr(effective,self.profile['backend'],None)
-            if self.profile['backend'] in ('chatterbox','indextts') and options is not None:
+            options = getattr(effective,self.current_profile['backend'],None)
+            if self.current_profile['backend'] in ('chatterbox','indextts') and options is not None:
                 effective = effective.model_copy(update={key:value for key,value in options.model_dump().items() if key in LEGACY_BACKEND_FIELDS})
-            current_model = self.profile.get('modes',{}).get(queued['mode'],self.profile['id'])
+            current_model = self.current_profile.get('modes',{}).get(queued['mode'],self.current_profile['id'])
             spec = MODEL_SPECS.get(current_model,{})
             if payload['model_identity'] != {k:spec.get(k) for k in ['repo','revision']}:
                 raise ValueError('Queued model revision changed; inspect this entry before retrying')
             if queued['model'] != current_model:
                 raise ValueError('Queued model mapping changed; inspect this entry before retrying')
-            if queued['backend'] != self.profile['backend']:
+            if queued['backend'] != self.current_profile['backend']:
                 raise ValueError('Queue backend differs from the selected backend')
             validate_mount(destination)
             destination.parent.mkdir(parents=True,exist_ok=True)
@@ -448,7 +484,7 @@ class JobManager:
                 payload=self.store.read(identity)['payload']
                 effective=Generation.model_validate(payload['effective'])
             def stage(value):
-                self.stage = 'loading' if value=='Loading model' else 'generating'
+                self.stage = 'loading' if value in ('Loading model','Switching model') else 'generating'
                 self.update(identity,stage=value)
             with inherit_reservations(self._owner,handle,self.data_owner):
                 metrics = self.engine.generate(effective,reference,destination,stage,transcript=payload['transcript'])
@@ -456,14 +492,14 @@ class JobManager:
             metadata_settings.pop('generate_immediately',None)
             applied = dict(metadata_settings)
             applied['description'] = effective.description if reference is None else ''
-            applied['ref_text'] = (payload['transcript'] or None) if self.profile['backend'] in ('qwen3','fish','higgs') or effective.clone_mode in ['continuation','combined'] else None
+            applied['ref_text'] = (payload['transcript'] or None) if self.current_profile['backend'] in ('qwen3','fish','higgs') or effective.clone_mode in ['continuation','combined'] else None
             applied['output_dir'] = str(destination.parent)
-            backend=self.profile['backend']
+            backend=self.current_profile['backend']
             if isinstance(metrics.get(backend),dict):
                 applied[backend]={**(applied.get(backend) or {}),**metrics[backend]}
             result = {**metadata_settings,**metrics,'id':identity,'backend':queued['backend'],
                 'model':metrics.get('model',queued['model']),'queue_model':queued['model'],
-                'created_at':now(),'api_version':'2.1.0',
+                'created_at':now(),'api_version':'4.0.0',
                 'requested':payload['requested'],'effective':applied,
                 'audio_url':f'/api/audio/outputs/{identity}','path':str(destination),
                 'metadata_path':str(destination.with_suffix('.json')),
@@ -472,7 +508,7 @@ class JobManager:
             if payload.get('prompt_expansion'):result['prompt_expansion']=payload['prompt_expansion']
             if payload.get('candidate_variant'):result['candidate_variant']=payload['candidate_variant']
             result.update({key:payload[key] for key in ('candidate_batch_id','candidate_index','candidate_count','candidate_variation') if key in payload})
-            backend=self.profile['backend']
+            backend=self.current_profile['backend']
             if isinstance(applied.get(backend),dict) and isinstance(metrics.get(backend),dict):
                 result[backend]={**applied[backend],**metrics[backend]}
             atomic_json(destination.with_suffix('.json'),result)
@@ -480,9 +516,13 @@ class JobManager:
             self.update(identity,status='done',stage='Finished',result=result,completed_at=now())
             self.stage = 'ready'
             resource_status='done'
+        except ModelUnavailable as exc:
+            self.store.defer_blocked(identity,str(exc))
+            self.stage='ready'
         except Exception as exc:
             logging.exception('Generation failed')
             self.last_error, self.stage = str(exc),'error'
+            if self.runtime and self.engine.fatal_error:self._stop.set()
             if destination is not None and not destination.with_suffix('.json').is_file():
                 destination.unlink(missing_ok=True)
             self.update(identity,status='error',stage='Generation failed',error=str(exc),completed_at=now())
@@ -523,7 +563,8 @@ class JobManager:
     def retry(self, identity):
         self._ready()
         try:
-            row = self.store.retry(identity,self.profile['backend'])
+            if self.runtime:self.catalog.require(self.store.read(identity)['backend'],force=True)
+            row = self.store.retry(identity,None if self.runtime else self.current_profile['backend'])
         except QueueConflict as exc:
             raise BusyError(str(exc)) from None
         self._wake.set()
@@ -549,14 +590,15 @@ class JobManager:
 
     def preview_expansion(self,request,effective,guidance,transcript=''):
         from prompt_expansion import plan,expand
-        plan(request,effective,self.profile['backend'],guidance)
+        backend=self.current_profile['backend']
+        plan(request,effective,backend,guidance)
         with self.guard:
             handle=self.reserve();self.expanding=True;self.stage='expanding'
         def work():
             try:
-                with inherit_reservations(self._owner,handle,self.data_owner):
+                with model_context(backend),inherit_reservations(self._owner,handle,self.data_owner):
                     self.engine.unload()
-                    return expand(request,effective,self.profile['backend'],guidance,self.root,transcript)
+                    return expand(request,effective,backend,guidance,self.root,transcript)
             finally:
                 handle.close()
                 with self.guard:

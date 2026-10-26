@@ -125,10 +125,11 @@ class MetricsStore:
 
 
 class ResourceMonitor:
-    def __init__(self, path, backend, model, state, probe=None):
+    def __init__(self, path, backend, model, state, probe=None,selection=None):
         self.store = MetricsStore(path)
         self.backend, self.model, self.state = backend, model, state
         self.probe = probe or ResourceProbe()
+        self.selection=selection
         self.session_id = uuid4().hex
         self.context = None
         self.lock = threading.Lock()
@@ -175,12 +176,14 @@ class ResourceMonitor:
             at = time.time()
             context = self.context or {}
             phase=self.state()
-            model=context.get('model',self.model)
+            idle=self.selection() if self.selection and not context else {}
+            backend=context.get('backend',idle.get('backend',self.backend))
+            model=context.get('model',idle.get('model',self.model))
             if phase=='expanding':
                 from prompt_assets import REPOSITORY
                 model=REPOSITORY
             self.store.insert({'ts':at,'session_id':self.session_id,'run_id':context.get('id'),
-                'job_id':context.get('job_id'),'backend':self.backend,'model':model,
+                'job_id':context.get('job_id'),'backend':backend,'model':model,
                 'stage':phase, **metrics})
             self.last_sample_at, self.last_error = at, None
             if at-self.last_prune>=300:
@@ -200,8 +203,8 @@ class ResourceMonitor:
 
     def job_started(self, job):
         with self.lock:
-            self.context={'id':uuid4().hex,'job_id':job['id'],'session_id':self.session_id,'backend':self.backend,
-                          'model':job['model'],'attempt':job['attempts'],'started_at':time.time()}
+            self.context={'id':uuid4().hex,'job_id':job['id'],'session_id':self.session_id,'backend':job.get('backend',self.backend),
+                          'model':job['model'] or job.get('backend',self.backend),'attempt':job['attempts'],'started_at':time.time()}
             self._capture()
         self.wake.set()
 
