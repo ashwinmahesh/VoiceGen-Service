@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 
@@ -242,6 +243,39 @@ assert len(queue_server.list_models()['models'])==7
         self.assertEqual(self.done(active['id'])['status'],'done')
         self.assertEqual(len((self.media/'calls.jsonl').read_text().splitlines()),1)
         self.assertIsNone(generator.poll())
+
+    def test_queue_crash_is_reported_while_generator_keeps_processing_and_recovers(self):
+        pid=self.start_queue();generator=self.start_generator()
+        wait_for(lambda:request(self.gen_port)[1]['queue_service']['status']=='ready')
+        active=self.submit('Held.')
+        wait_for(lambda:(self.media/'calls.jsonl').exists())
+        os.kill(pid,signal.SIGKILL)
+        outage=wait_for(lambda:(state if (state:=request(self.gen_port)[1])['queue_service']['status']=='unavailable' else None))
+        self.assertTrue(outage['busy']);self.assertEqual(outage['active_job'],active['id'])
+        self.assertEqual(outage['queue_storage']['status'],'ready')
+        self.assertIn('make queue',outage['queue_service']['message'])
+        self.assertEqual(outage['queue_service']['url'],f'http://127.0.0.1:{self.queue_port}')
+        body={'text':'Accepted during outage.','description':'A calm baritone.','idempotency_key':'outage-safe'}
+        code,pending=request(self.gen_port,'/api/generate','POST',body)
+        self.assertEqual(code,202,pending)
+        self.assertEqual(request(self.gen_port,'/api/generate','POST',body)[1]['id'],pending['id'])
+        removed=request(self.gen_port,'/api/generate','POST',{**body,'text':'Remove while offline.','idempotency_key':'remove-offline'})[1]
+        self.assertEqual(request(self.gen_port,'/api/queue/'+removed['id'],'DELETE')[1]['deleted'],1)
+        self.assertEqual(request(self.gen_port,'/api/jobs/'+active['id'])[1]['status'],'running')
+        # Health requests diagnose only; they must not silently restart the API.
+        self.assertEqual(int((self.root/f'queue-{self.queue_port}.pid').read_text()),pid)
+        (self.media/'release').touch()
+        completed=wait_for(lambda:(row if (row:=request(self.gen_port,'/api/jobs/'+pending['id'])[1])['status']=='done' else None))
+        self.assertEqual(completed['attempts'],1)
+        self.start_queue()
+        restored=wait_for(lambda:(state if (state:=request(self.gen_port)[1])['queue_service']['status']=='ready' else None))
+        self.assertIsNone(restored['queue_service']['message'])
+        self.assertEqual(self.row(active['id'])['attempts'],1)
+        self.assertEqual(self.row(pending['id'])['status'],'done')
+        self.assertEqual(self.row(removed['id'])['status'],'deleted')
+        self.assertEqual([json.loads(line)['text'] for line in (self.media/'calls.jsonl').read_text().splitlines()],
+                         ['Held.','Accepted during outage.'])
+        self.assertIsNone(generator.poll())
     def test_bad_payload_fails_in_generator_without_blocking_following_work(self):
         self.start_queue()
         status,bad=request(self.queue_port,'/api/queue','POST',{'model':'voxcpm2','payload':{'nonsense':True}})
@@ -277,6 +311,81 @@ assert len(queue_server.list_models()['models'])==7
         self.assertEqual(self.done(pending['id'])['status'],'done')
         calls=[json.loads(line) for line in (self.media/'calls.jsonl').read_text().splitlines()]
         self.assertEqual([row['id'] for row in calls],[active['id'],active['id'],pending['id']])
+
+
+class QueueFailureTests(unittest.TestCase):
+    def test_health_probe_handles_wrong_identity_malformed_json_and_timeout(self):
+        import queue_manage
+        import queue_status
+        database=PROJECT/'state/example.sqlite3'
+        healthy={'service':'voicegen-queue','role':'queue-crud','project':str(PROJECT),
+                 'queue_database':str(database),'status':'ready'}
+        with patch('queue_status.health',return_value=healthy) as probe:
+            self.assertEqual(queue_status.api_status(12345,database)['status'],'ready')
+            probe.assert_called_once_with(12345,timeout=.3)
+        for body in ([1],{'unexpected':True},{**healthy,'queue_database':'/another/project.sqlite3'},
+                     {**healthy,'project':'/another/project'},{**healthy,'role':'another-service'}):
+            with patch('queue_status.health',return_value=body):
+                result=queue_status.api_status(12345,database)
+                self.assertEqual(result['status'],'mismatch');self.assertIn('Inspect',result['message'])
+        self.assertFalse(queue_manage.matching([1]))
+        for error in (TimeoutError('slow listener'),ConnectionResetError('disconnected'),ValueError('malformed JSON')):
+            with patch('queue_manage.urllib.request.urlopen',side_effect=error):
+                self.assertEqual(queue_status.api_status(12345,database)['status'],'unavailable')
+
+    def test_queue_crud_sqlite_failure_returns_retryable_json_without_raw_error(self):
+        import sqlite3
+        import queue_server
+        from fastapi.testclient import TestClient
+        client=TestClient(queue_server.app)
+        cases=[('admit_opaque','POST','/api/queue',{'payload':{}}),('listing','GET','/api/queue',None),
+               ('read','GET','/api/queue/example',None),('edit_pending','PATCH','/api/queue/example',{'payload':{}}),
+               ('remove','DELETE','/api/queue/example',None),('remove','DELETE','/api/queue',None)]
+        for method,verb,path,body in cases:
+            with self.subTest(method=method),patch.object(queue_server.store,method,side_effect=sqlite3.OperationalError('private raw database error')):
+                response=client.request(verb,path,json=body)
+                self.assertEqual(response.status_code,503,response.text)
+                self.assertEqual(response.headers['Retry-After'],'2')
+                self.assertEqual(response.json()['code'],'queue_storage_unavailable')
+                self.assertNotIn('private raw',response.text)
+
+    def test_generator_storage_errors_are_503_and_health_remains_available(self):
+        import sqlite3
+        from test_contract import ContractTests
+        fixture=ContractTests();fixture.setUp()
+        try:
+            with patch.object(fixture.manager,'existing',side_effect=sqlite3.OperationalError('locked')):
+                response=fixture.generate(idempotency_key='storage-retry')
+                self.assertEqual(response.status_code,503,response.text)
+                self.assertEqual(response.json()['code'],'queue_storage_unavailable')
+                self.assertEqual(response.headers['Retry-After'],'2')
+            with patch.object(fixture.manager.store,'listing',side_effect=sqlite3.DatabaseError('not available')):
+                response=fixture.client.get('/health')
+                self.assertEqual(response.status_code,200,response.text)
+                self.assertEqual(response.json()['queue_storage']['status'],'unavailable')
+                self.assertTrue(response.json()['downloaded'])
+            self.assertEqual(fixture.client.get('/health').json()['queue_storage']['status'],'ready')
+            first=fixture.generate(idempotency_key='storage-retry').json()
+            again=fixture.generate(idempotency_key='storage-retry').json()
+            self.assertEqual(first['id'],again['id'])
+            self.assertEqual(fixture.finish(first)['status'],'done')
+            self.assertEqual(len(fixture.engine.calls),1)
+        finally:fixture.tearDown()
+
+    def test_health_does_not_wait_for_full_queue_timeout_when_sqlite_is_locked(self):
+        import sqlite3
+        from test_contract import ContractTests
+        fixture=ContractTests();fixture.setUp()
+        try:
+            with sqlite3.connect(fixture.manager.store.path) as db:
+                db.execute('BEGIN IMMEDIATE')
+                started=time.monotonic();response=fixture.client.get('/health')
+                self.assertLess(time.monotonic()-started,1)
+                self.assertEqual(response.status_code,200)
+                self.assertEqual(response.json()['queue_storage']['status'],'unavailable')
+                db.rollback()
+            self.assertEqual(fixture.client.get('/health').json()['queue_storage']['status'],'ready')
+        finally:fixture.tearDown()
 
 
 if __name__=='__main__':

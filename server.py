@@ -3,11 +3,13 @@ import argparse
 import asyncio
 from contextlib import asynccontextmanager
 import json
+import sqlite3
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage
 from queue_config import QUEUE_DB, DEFAULT_QUEUE_PORT
+from queue_status import api_status, storage_error_response, STORAGE_ERROR
 from engine import create_engine
 from assets import all_errors
 from runtime_checks import runtime_errors
@@ -54,6 +56,8 @@ async def lifespan(app):
 
 app = FastAPI(title='Local Voice Studio API',version='2.1.0',lifespan=lifespan)
 app.state.llm_enabled=True
+app.state.queue_port=DEFAULT_QUEUE_PORT
+app.add_exception_handler(sqlite3.Error,storage_error_response)
 app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
 app.add_middleware(BodyLimit)
 
@@ -112,11 +116,18 @@ def health():
     if errors or runtime: status = 'error'
     elif not manager.active and not manager.unloading and not manager.expanding and not manager.last_error:
         status = 'ready' if engine.model is not None else 'unloaded'
+    queue_storage={'status':'ready','message':None}
+    try:
+        # Diagnostics must not wait on the dispatcher's inference/admission guard.
+        counts=manager.store.listing(limit=1,timeout=.25)['counts']
+    except sqlite3.Error:
+        counts={};queue_storage={'status':'unavailable','message':STORAGE_ERROR}
     return Health(status=status,service=PROFILE['id'],name=PROFILE['name'],project=str(PROJECT_ROOT),
         storage=str(ROOT),downloaded=not errors,asset_errors=errors,runtime_errors=runtime,model_loaded=engine.model is not None,
         loaded_variant=engine.variant,busy=bool(manager.active or manager.unloading or manager.expanding),
         active_job=manager.active,last_error=manager.last_error,
-        queue_database=str(manager.store.path),queue_counts=manager.listing(limit=1)['counts'],
+        queue_database=str(manager.store.path),queue_counts=counts,queue_storage=queue_storage,
+        queue_service=api_status(app.state.queue_port,manager.store.path),
         prompt_expansion=__import__('prompt_expansion').capability(app.state.llm_enabled))
 
 
@@ -422,6 +433,7 @@ def save_voice(request: SaveVoice):
 def run_server(port=DEFAULT_PORT, queue_port=DEFAULT_QUEUE_PORT):
     """Run the generator UI/API; only the CRUD child is detached."""
     import uvicorn
+    app.state.queue_port=queue_port
     if app.state.llm_enabled:
         from prompt_assets import check_assets,check_runtime
         check_assets();check_runtime()

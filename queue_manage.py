@@ -14,16 +14,16 @@ import urllib.request
 from queue_config import PROJECT_ROOT, QUEUE_DB, DEFAULT_QUEUE_PORT
 
 
-def health(port):
+def health(port, timeout=1):
     try:
-        with urllib.request.urlopen(f'http://127.0.0.1:{port}/health',timeout=1) as response:
+        with urllib.request.urlopen(f'http://127.0.0.1:{port}/health',timeout=timeout) as response:
             return json.load(response)
     except (OSError,ValueError):
         return None
 
 
 def matching(state):
-    return bool(state and state.get('service')=='voicegen-queue' and state.get('role')=='queue-crud'
+    return bool(isinstance(state,dict) and state.get('service')=='voicegen-queue' and state.get('role')=='queue-crud'
                 and state.get('project')==str(PROJECT_ROOT) and state.get('queue_database')==str(QUEUE_DB.resolve()))
 
 

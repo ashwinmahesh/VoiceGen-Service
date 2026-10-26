@@ -2,6 +2,7 @@
 import argparse
 from contextlib import asynccontextmanager
 import fcntl
+import sqlite3
 from typing import Literal
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -9,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from body_limit import BodyLimit
+from queue_status import storage_error_response
 from durable_queue import QueueStore, QueueConflict
 from queue_config import PROJECT_ROOT, QUEUE_DB, DEFAULT_QUEUE_PORT, DEFAULT_MODEL, MODELS, check_legacy_queue
 
@@ -30,6 +32,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title='VoiceGen Queue CRUD API',version='1.1.0',lifespan=lifespan)
+app.add_exception_handler(sqlite3.Error,storage_error_response)
 app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
 app.add_middleware(BodyLimit)
 

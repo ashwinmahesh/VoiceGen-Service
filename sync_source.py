@@ -12,6 +12,7 @@ SHARED += ['punctuation_pacing.py','test_punctuation_pacing.py','performance_con
 SHARED += ['prompt_assets.py','prompt_expansion.py','prompt_policy.py','prompt_profiles.py','prompt_worker.py','setup_prompt_llm.py','requirements.enhancer.lock.txt','test_prompt_expansion.py','docs/voice-prompt-expansion.md']
 SHARED += ['candidate_diversity.py','candidate_policy.py','test_candidate_diversity.py']
 SHARED += ['queue_config.py','queue_server.py','queue_manage.py','queue_service.json','service_defaults.json','model_registry.json','requirements-queue.lock.txt','test_queue_service.py']
+SHARED += ['queue_status.py']
 SHARED += [str(path.relative_to(PROJECT_ROOT)) for folder in ('backends','third_party')
            for path in sorted((PROJECT_ROOT/folder).rglob('*')) if path.is_file()]
 

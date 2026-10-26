@@ -293,7 +293,7 @@ class BackendTests(unittest.TestCase):
     def test_runtime_mismatch_is_not_advertised_as_ready(self):
         from fastapi.testclient import TestClient
         import server
-        with patch('server.manager.listing',return_value={'counts':{}}),patch('server.all_errors',return_value=[]),patch('server.runtime_errors',return_value=['missing pinned runtime']):
+        with patch('server.manager.store.listing',return_value={'counts':{}}),patch('server.all_errors',return_value=[]),patch('server.runtime_errors',return_value=['missing pinned runtime']):
             response=TestClient(server.app).get('/health').json()
             self.assertEqual(response['status'],'error')
             self.assertTrue(response['downloaded'])

@@ -185,8 +185,21 @@ class Capabilities(BaseModel):
     output_dir: str
 
 
+class QueueServiceStatus(BaseModel):
+    status: Literal['ready','unavailable','mismatch']
+    url: str
+    message: str | None = None
+
+
+class QueueStorageStatus(BaseModel):
+    status: Literal['ready','unavailable']
+    message: str | None = None
+
+
 class Health(BaseModel):
     queue_database: str | None = None
+    queue_service: QueueServiceStatus | None = None
+    queue_storage: QueueStorageStatus | None = None
     status: Literal['unloaded','loading','ready','generating','expanding','unloading','error']
     service: str
     name: str

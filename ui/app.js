@@ -1,5 +1,5 @@
 
-const $=id=>document.getElementById(id);let mode='design',collection='history',reference=null,latest=null,voiceRows=[],historyRows=[],busy=false,online=false,uploading=false,watching=null,submitting=false;
+const $=id=>document.getElementById(id);let mode='design',collection='history',reference=null,latest=null,voiceRows=[],historyRows=[],busy=false,online=false,uploading=false,watching=null,submitting=false,queueWritable=true;
 const collectionPage=location.pathname.startsWith('/collection');
 if(collectionPage){$('page-title').textContent='Your collection';$('page-description').textContent='Find saved voices, listen to takes, and reuse a performance in the studio.';}
 $(collectionPage?'catalog-link':'studio-link').setAttribute('aria-current','page');
@@ -12,7 +12,7 @@ const presets={natural:'Natural, conversational delivery with relaxed pacing.',j
 async function api(path,options={}){const response=await fetch(path,options);if(!response.ok){let body;try{body=await response.json()}catch{}throw Error(typeof body?.detail==='string'?body.detail:body?.detail?.[0]?.msg||`Request failed (${response.status})`)}return response.json()}
 function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
 function error(message){const target=$($('queue-dialog').open?'queue-error':collectionPage?'page-error':'error');target.textContent=message;target.hidden=false}function announce(text){$('announcement').textContent=text}
-function controls(){ $('generate').disabled=!online||submitting||uploading||enhancing;$('unload').disabled=!online||busy||enhancing;$('new-seed').disabled=busy;updatePromptExpansion() }
+function controls(){ $('generate').disabled=!online||!queueWritable||submitting||uploading||enhancing;$('unload').disabled=!online||busy||enhancing;$('new-seed').disabled=busy;updatePromptExpansion() }
 function clearExpansion(){appliedExpansion=null;pendingExpansion=null;updatePromptExpansion();}
 function updatePromptExpansion(){
  if(!caps)return;
@@ -380,7 +380,36 @@ $('save-reference').onclick = () => {
     name: (reference.name || 'Uploaded voice').replace(/\.[^.]+$/, '').slice(0, 100), description: '', transcript:$('ref-text').value,tags: []});
 };
 $('unload').onclick=async()=>{try{await post('/api/model/unload',{});announce('Model memory released. It reloads on the next take.');await health()}catch(exc){error(exc.message)}};
-async function health(){try{const state=await api('/health');online=state.downloaded&&!state.runtime_errors?.length;$('status').dataset.offline=!online;$('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';busy=state.busy;if(state.active_job&&!watching&&!collectionPage&&!localStorage.getItem(storageKey+'-candidates'))watch(state.active_job);await refreshQueue()}catch{online=false;$('status').textContent='Server offline';$('status').dataset.offline=true}controls()}
+function queueNotices(state){
+ const storageMessage=state?.queue_storage?.status==='unavailable'?state.queue_storage.message:null;
+ const serviceMessage=state?.queue_service&&state.queue_service.status!=='ready'?state.queue_service.message:null;
+ for(const id of ['queue-service-notice','queue-service-dialog-notice']){
+  $(id).textContent=storageMessage||serviceMessage||'';
+  $(id).hidden=!(storageMessage||serviceMessage);
+ }
+}
+let healthInFlight=false;
+async function health(){
+ if(healthInFlight)return;healthInFlight=true;
+ try{
+  const state=await api('/health');
+  online=state.downloaded&&!state.runtime_errors?.length;
+  queueWritable=state.queue_storage?.status!=='unavailable';queueNotices(state);
+  $('status').dataset.offline=!online;
+  $('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';
+  busy=state.busy;
+  if(queueWritable&&state.active_job&&!watching&&!collectionPage&&!localStorage.getItem(storageKey+'-candidates'))watch(state.active_job);
+  if(queueWritable){
+   try{await refreshQueue()}catch(exc){queueWritable=false;queueNotices({queue_storage:{status:'unavailable',message:exc.message}})}
+  }else{
+   $('queue-count').textContent='Queue storage unavailable. Displayed entries may be out of date.';
+   for(const id of ['queue-clear','queue-prev','queue-next'])$(id).disabled=true;
+  }
+ }catch(exc){
+  online=false;$('status').textContent=exc.message==='Failed to fetch'?'Server offline':exc.message;
+  $('status').dataset.offline=true;queueNotices(null);
+ }finally{healthInFlight=false;controls()}
+}
 let queueOffset=0,queuePage=null,queueRequest=0;
 async function refreshQueue(){
  const token=++queueRequest;

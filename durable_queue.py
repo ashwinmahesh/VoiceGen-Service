@@ -64,10 +64,10 @@ class QueueStore:
             raise
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, timeout=10):
         validate_mount(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.path, timeout=10)
+        db = sqlite3.connect(self.path, timeout=timeout)
         db.row_factory = sqlite3.Row
         try:
             db.execute('PRAGMA synchronous=FULL')
@@ -327,12 +327,12 @@ class QueueStore:
             db.execute("UPDATE entries SET status='queued',stage='Retry queued',error=NULL,started_at=NULL,completed_at=NULL,updated_at=? WHERE id=?",(now(),identity))
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(identity,)).fetchone())
 
-    def listing(self, statuses=('queued','running'), backend=None, limit=24, offset=0):
+    def listing(self, statuses=('queued','running'), backend=None, limit=24, offset=0, timeout=10):
         clauses, args = [], []
         if backend:
             clauses.append('backend=?'); args.append(backend)
         base = ' WHERE '+ ' AND '.join(clauses) if clauses else ''
-        with self.transaction() as db:
+        with self.transaction(timeout=timeout) as db:
             counts = {row['status']:row['n'] for row in db.execute('SELECT status,count(*) AS n FROM entries'+base+' GROUP BY status',args)}
             if statuses:
                 clauses.append('status IN ('+','.join('?' for _ in statuses)+')'); args.extend(statuses)
