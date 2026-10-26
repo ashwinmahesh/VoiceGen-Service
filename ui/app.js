@@ -439,12 +439,12 @@ async function refreshQueue(){
   if(row.error)content.append(el('p',row.error,'error'));
   const actions=el('div',null,'card-actions queue-actions');
   if(row.candidate_batch_id){const options=el('button','View all options','secondary');options.type='button';options.onclick=()=>{$('queue-dialog').close();watchCandidates(row.candidate_batch_id)};actions.append(options);}
-  const inspect=el('button',row.status==='done'?'Open take':'Monitor','secondary');inspect.type='button';inspect.onclick=()=>{$('queue-dialog').close();row.result?showResult(row.result):watch(row.id)};actions.append(inspect);
+  const inspect=el('button',row.status==='done'?'Open take':'Monitor','secondary queue-monitor');inspect.type='button';inspect.onclick=()=>{$('queue-dialog').close();row.result?showResult(row.result):watch(row.id)};actions.append(inspect);
   if(row.status==='queued'){
    const run=el('button','Run Now','secondary queue-run-now');run.type='button';run.disabled=!!row.paused;
    run.title=row.paused?row.stage:'Run next, ahead of other waiting jobs. The current take finishes first.';
    run.onclick=()=>changeQueueOrder(row.id,null,true);actions.append(run);
-   const remove=el('button','Remove pending','secondary');remove.type='button';remove.onclick=async()=>{try{await api('/api/queue/'+row.id,{method:'DELETE'});await refreshQueue()}catch(exc){error(exc.message)}};actions.append(remove);
+   const remove=el('button','Remove','secondary queue-remove');remove.type='button';remove.onclick=async()=>{try{await api('/api/queue/'+row.id,{method:'DELETE'});await refreshQueue()}catch(exc){error(exc.message)}};actions.append(remove);
   }
   if(row.status==='error'&&!row.paused&&row.backend===caps?.backend){const retry=el('button','Retry same entry','secondary');retry.type='button';retry.onclick=async()=>{try{const job=await post('/api/queue/'+row.id+'/retry',{});$('queue-dialog').close();watch(job.id);await refreshQueue()}catch(exc){error(exc.message)}};actions.append(retry)}
   card.append(content,actions);$('queue-entries').append(card);
