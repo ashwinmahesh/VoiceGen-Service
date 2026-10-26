@@ -6,20 +6,67 @@ $(collectionPage?'catalog-link':'studio-link').setAttribute('aria-current','page
 let pageSize = 24, caps=null, storageKey='voice-studio', historyPage={data:[],total:0,has_more:false}, pendingKey=null;
 let voicePage = {data: [], total: 0, has_more: false};
 let currentCandidates=null, candidateCards=new Map();
+let appliedExpansion=null,pendingExpansion=null,enhancing=false;
 let catalogOffset = 0, searchTimer = null, catalogRequest = 0, voiceEditor = null, voiceSaving = false;
 const presets={natural:'Natural, conversational delivery with relaxed pacing.',joy:'Excited and joyful, with an audible smile and lively pacing.',sadness:'Quiet sadness and disappointment, speaking slowly with a trembling voice.',anger:'Angry and frustrated, with firm emphasis and a tense, forceful delivery.',fear:'Frightened and anxious, with a trembling voice and urgent, uneven pacing.',relief:'Deeply relieved, softening into warmth with a gentle exhale.',sarcasm:'Dry, understated sarcasm with deliberate pauses and restrained emphasis.',whisper:'A soft, intimate whisper, speaking gently and slowly.',custom:''};
 async function api(path,options={}){const response=await fetch(path,options);if(!response.ok){let body;try{body=await response.json()}catch{}throw Error(typeof body?.detail==='string'?body.detail:body?.detail?.[0]?.msg||`Request failed (${response.status})`)}return response.json()}
 function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
 function error(message){const target=$($('queue-dialog').open?'queue-error':collectionPage?'page-error':'error');target.textContent=message;target.hidden=false}function announce(text){$('announcement').textContent=text}
-function controls(){ $('generate').disabled=!online||submitting||uploading;$('unload').disabled=!online||busy;$('new-seed').disabled=busy }
-function setMode(next){if(caps){if(next==='design'&&caps.modes.design.available===false)next='upload';if((next==='saved'||next==='upload')&&caps.modes.reference.available===false)next='design'}pendingKey=null;mode=next;for(const button of document.querySelectorAll('[data-mode]'))button.setAttribute('aria-selected',button.dataset.mode===mode);for(const name of ['design','saved','upload','preset'])$(name+'-panel').hidden=name!==mode;updateCapabilities();persist()}
+function controls(){ $('generate').disabled=!online||submitting||uploading||enhancing;$('unload').disabled=!online||busy||enhancing;$('new-seed').disabled=busy;updatePromptExpansion() }
+function clearExpansion(){appliedExpansion=null;pendingExpansion=null;updatePromptExpansion();}
+function updatePromptExpansion(){
+ if(!caps)return;
+ const enabled=!!caps.limits.prompt_expansion?.enabled,backend=caps.backend;
+ const supported=(mode==='design'&&['voxcpm2','qwen3','moss'].includes(backend))||(mode==='preset'&&backend==='qwen3')||
+  (['saved','upload'].includes(mode)&&(['fish','higgs'].includes(backend)||(backend==='voxcpm2'&&$('clone-mode').value==='reference')));
+ $('expansion-guidance-field').hidden=!enabled||!supported;
+ $('expand-guidance').disabled=!online||!enabled||!supported||busy||enhancing||uploading||submitting||!!appliedExpansion;
+ $('expand-guidance').textContent=enhancing?'Expanding guidance…':'Preview expanded guidance';
+ $('prompt-expansion-hint').textContent=!enabled?'Disabled. Start with make serve WITH_LLM=1 to enable local guidance previews.':!supported?'This mode follows recorded performance or has no written instruction path. Choose a supported design/preset or flexible Vox reference mode.':'Refine written guidance without sending dialogue, transcripts or reference audio to the LLM. Preview, then apply. Fish/Higgs suggestions use supported controls.';
+ $('expansion-applied').hidden=!appliedExpansion;$('restore-guidance').hidden=!appliedExpansion;
+ if(appliedExpansion)$('expansion-applied').textContent='Expanded guidance applied · '+appliedExpansion.llm.model+' · '+appliedExpansion.llm.seconds+'s. Original retained.';
+}
+function applyGuidanceValues(values){
+ for(const [key,value] of Object.entries(values)){
+  if(key==='fish')$('fish-delivery-tags').value=value.delivery_tags.join('\n');
+  else if(key==='higgs')for(const name of ['emotion','prosody','style'])$('higgs-'+name).value=value[name]||'';
+  else if(['description','emotion'].includes(key))$(key).value=value;
+ }
+ updatePerformancePreview();
+}
+function guidancePreview(values){
+ return Object.entries(values).map(([key,value])=>{
+  if(key==='fish')return 'Delivery tags: '+(value.delivery_tags.join(', ')||'None');
+  if(key==='higgs')return Object.entries(value).filter(([,v])=>v).map(([name,v])=>name+': '+v).join('\n')||'No delivery control';
+  return (key==='description'?'Voice description':'Delivery direction')+'\n'+value;
+ }).join('\n\n');
+}
+$('expand-guidance').onclick=async()=>{
+ if(enhancing)return;enhancing=true;controls();$('error').hidden=true;
+ try{
+  const {candidate_count,...generation}=settings();generation.prompt_expansion_id=null;
+  pendingExpansion=await post('/api/prompts/expand',{generation,guidance:$('expansion-guidance').value});
+  $('expansion-original').textContent=guidancePreview(pendingExpansion.original);
+  $('expansion-updates').textContent=guidancePreview(pendingExpansion.updates);
+  $('expansion-model').textContent=`${pendingExpansion.llm.model} · ${pendingExpansion.llm.seconds}s · ${pendingExpansion.llm.policy_version}`;
+  $('expansion-preview').showModal();
+ }catch(exc){error(exc.message)}finally{enhancing=false;controls()}
+};
+$('cancel-expansion').onclick=()=>{$('expansion-preview').close();pendingExpansion=null};
+$('apply-expansion').onclick=()=>{
+ if(!pendingExpansion)return;
+ applyGuidanceValues(pendingExpansion.updates);appliedExpansion=pendingExpansion;pendingExpansion=null;
+ $('expansion-preview').close();pendingKey=null;updatePromptExpansion();persist();announce('Expanded guidance applied. Dialogue and reference transcript kept.');
+};
+$('restore-guidance').onclick=()=>{if(appliedExpansion)applyGuidanceValues(appliedExpansion.original);clearExpansion();pendingKey=null;persist();};
+function setMode(next){if(caps){if(next==='design'&&caps.modes.design.available===false)next='upload';if((next==='saved'||next==='upload')&&caps.modes.reference.available===false)next='design'}pendingKey=null;clearExpansion();mode=next;for(const button of document.querySelectorAll('[data-mode]'))button.setAttribute('aria-selected',button.dataset.mode===mode);for(const name of ['design','saved','upload','preset'])$(name+'-panel').hidden=name!==mode;updateCapabilities();updatePromptExpansion();persist()}
 document.querySelectorAll('[data-mode]').forEach(button=>button.onclick=()=>setMode(button.dataset.mode));
-$('emotion-preset').onchange=()=>{$('emotion').value=presets[$('emotion-preset').value];persist()};$('emotion').oninput=()=>{$('emotion-preset').value='custom';persist()};
+$('emotion-preset').onchange=()=>{clearExpansion();$('emotion').value=presets[$('emotion-preset').value];persist()};$('emotion').oninput=()=>{$('emotion-preset').value='custom';persist()};
 function count(){$('count').textContent=`${$('text').value.length} / ${caps?.limits.text_characters||3000}`}count();
 function settings(){
  const referenceMode=mode==='saved'||mode==='upload';
  const direction=referenceMode?(caps?.modes.reference.emotion&&$('clone-mode').value==='reference'):mode==='preset'||caps?.modes.design.emotion;
- const result={candidate_count:Number($('candidate-count').value),generate_immediately:$('generate-immediately').checked,text:$('text').value,description:mode==='design'?$('description').value:'',
+ const result={prompt_expansion_id:appliedExpansion?.id||null,candidate_count:Number($('candidate-count').value),generate_immediately:$('generate-immediately').checked,text:$('text').value,description:mode==='design'?$('description').value:'',
    emotion:direction?$('emotion').value:'',accent:direction?$('accent').value:'',
    seed:Number($('seed').value),max_tokens:caps?.limits.max_tokens_fixed?1000:Number($('max-tokens').value),
    preset_voice:mode==='preset'?$('preset-voice').value||null:null,
@@ -45,7 +92,7 @@ function settings(){
  if(Object.keys(options).length)result[caps.backend]=options;
  return result;
 }
-function persist(){if(caps)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(),description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
+function persist(){if(caps)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(),prompt_expansion:appliedExpansion,description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
 function updateCapabilities(){
  if(!caps)return;
  const referenceMode=mode==='saved'||mode==='upload';
@@ -94,9 +141,9 @@ function restore(row){
  for(const key of ['exaggeration','cfg_weight','duration_factor','interval_silence','emotion_alpha'])if($(key))$(key).value=row[caps.backend]?.[key]??row[key]??caps.controls[caps.backend]?.[key]?.default??1;
  $('emotion-reference-id').value=row[caps.backend]?.emotion_reference_id||row.emotion_reference_id||'';$('emotion-vector').value=(row[caps.backend]?.emotion_vector||row.emotion_vector)?.join(',')||'';
  $('emotion-reference-info').textContent=(row[caps.backend]?.emotion_reference_id||row.emotion_reference_id)?'Using the saved emotion recording.':'';
- restorePerformance(row);$('ref-text').value=row.ref_text||'';updateCapabilities();count();persist();
+ restorePerformance(row);$('ref-text').value=row.ref_text||'';appliedExpansion=row.prompt_expansion||null;updateCapabilities();updatePromptExpansion();count();persist();
 }
-$('form').addEventListener('input',()=>{pendingKey=null;count();updatePerformancePreview();persist()});$('form').addEventListener('change',()=>{pendingKey=null;persist()});
+$('form').addEventListener('input',event=>{if(['description','emotion','accent','voice','reference','ref-text','clone-mode','preset-voice','fish-delivery-tags','higgs-emotion','higgs-prosody','higgs-style'].includes(event.target.id))clearExpansion();pendingKey=null;count();updatePerformancePreview();persist()});$('form').addEventListener('change',event=>{if(['voice','reference','clone-mode','preset-voice','higgs-emotion','higgs-prosody','higgs-style'].includes(event.target.id))clearExpansion();pendingKey=null;persist()});
 $('new-seed').onclick=()=>{pendingKey=null;$('seed').value=crypto.getRandomValues(new Uint32Array(1))[0];persist();announce('New seed selected')};
 function voicePreview(){const row=voiceRows.find(v=>v.id===$('voice').value);$('voice-preview').hidden=!row;if(row){$('ref-text').value=row.transcript||'';$('voice-preview').src=row.audio_url;$('voice-hint').textContent=row.description||'Reference identity is reused; emotion is directed separately.'}}$('voice').onchange=voicePreview;
 async function refresh() {
@@ -544,6 +591,7 @@ function updatePerformancePreview(){
 
 $('apply-recommended').onclick=()=>{
  if(!caps)return;
+ clearExpansion();
  for(const key of ['steps','guidance','temperature'])if(caps.controls[key])$(key).value=caps.controls[key].default;
  const scoped=caps.controls[caps.backend]||{};
  for(const key of ['exaggeration','cfg_weight','duration_factor','interval_silence'])if(scoped[key])$(key).value=scoped[key].default;

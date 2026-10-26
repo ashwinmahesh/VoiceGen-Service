@@ -27,6 +27,7 @@ class JobManager:
         self.guard = threading.RLock()
         self.active = None
         self.unloading = False
+        self.expanding = False
         self.last_error = None
         self.stage = 'unloaded'
         self._initialized = False
@@ -105,6 +106,7 @@ class JobManager:
         result['effective'] = {k:v for k,v in row['payload']['effective'].items() if k!='idempotency_key'}
         result.update({key:row['payload'][key] for key in ('candidate_batch_id','candidate_index','candidate_count')
                        if key in row['payload']})
+        if row['payload'].get('prompt_expansion'):result['prompt_expansion']=row['payload']['prompt_expansion']
         return result
 
     def read(self, identity):
@@ -123,6 +125,7 @@ class JobManager:
     def fingerprint(request, exclude=()):
         # New omitted pacing controls must hash exactly like pre-pacing submissions.
         exclusions={key:True for key in {'idempotency_key',*exclude}}
+        if request.prompt_expansion_id is None:exclusions['prompt_expansion_id']=True
         for backend in ('qwen3','moss'):
             if getattr(request,backend) is None:exclusions[backend]=True
         for backend in ('qwen3','chatterbox','indextts','fish'):
@@ -193,7 +196,7 @@ class JobManager:
         return None
 
     def reserve(self):
-        if self.active or self.unloading:
+        if self.active or self.unloading or self.expanding:
             raise BusyError('The model is busy. Wait for the current operation.')
         validate_mount(self.lock_file)
         handle = self.lock_file.open('a+')
@@ -214,6 +217,9 @@ class JobManager:
         spec = MODEL_SPECS.get(model,{})
         payload['model_identity'] = {k:spec.get(k) for k in ['repo','revision']}
         payload['aux_references'] = {}
+        if request.prompt_expansion_id:
+            from prompt_expansion import applied_record
+            payload['prompt_expansion']=applied_record(request,effective,self.profile['backend'],self.root)
         if effective.emotion_reference_id:
             path = validate_mount(self.root/'references'/f'{effective.emotion_reference_id}.wav')
             payload['aux_references']['emotion'] = {'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
@@ -237,7 +243,8 @@ class JobManager:
 
     @staticmethod
     def candidate_fingerprint(request):
-        return hashlib.sha256(request.model_dump_json(exclude={'idempotency_key'}).encode()).hexdigest()
+        excluded={'idempotency_key'}|({'prompt_expansion_id'} if request.prompt_expansion_id is None else set())
+        return hashlib.sha256(request.model_dump_json(exclude=excluded).encode()).hexdigest()
 
     def public_candidates(self, batch):
         jobs = [self.public(row) for row in batch['jobs']]
@@ -396,6 +403,7 @@ class JobManager:
                 'metadata_path':str(destination.with_suffix('.json')),
                 'reference':{'path':str(reference),'transcript':payload['transcript'],**(payload['reference_info'] or {})} if reference else None}
             result['input_references'] = payload.get('aux_references',{})
+            if payload.get('prompt_expansion'):result['prompt_expansion']=payload['prompt_expansion']
             result.update({key:payload[key] for key in ('candidate_batch_id','candidate_index','candidate_count') if key in payload})
             backend=self.profile['backend']
             if isinstance(applied.get(backend),dict) and isinstance(metrics.get(backend),dict):
@@ -454,4 +462,20 @@ class JobManager:
                     self.unloading = False
                     handle.close()
                     self._wake.set()
+        return self.executor.submit(work)
+
+    def preview_expansion(self,request,effective,guidance,transcript=''):
+        from prompt_expansion import plan,expand
+        plan(request,effective,self.profile['backend'],guidance)
+        with self.guard:
+            handle=self.reserve();self.expanding=True;self.stage='expanding'
+        def work():
+            try:
+                with inherit_reservations(self._owner,handle,self.data_owner):
+                    self.engine.unload()
+                    return expand(request,effective,self.profile['backend'],guidance,self.root,transcript)
+            finally:
+                handle.close()
+                with self.guard:
+                    self.expanding=False;self.stage='unloaded';self._wake.set()
         return self.executor.submit(work)

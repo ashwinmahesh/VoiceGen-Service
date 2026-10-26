@@ -239,3 +239,41 @@ MOSS accepts the same optional fields under `moss`, but uses them as **approxima
 Controls are under **Advanced settings** in the UI, and defaults/limits appear under `controls.<model-id>`. Namespaces for inactive models, unknown fields and out-of-range values are rejected. Requested and effective values are frozen at queue admission. Existing queued takes do not gain pacing when their saved settings omitted it, and pre-pacing idempotency keys remain recoverable. `effective.<model-id>.pacing` records actual phrase input text, sample positions and inserted silence, or MOSS's explicitly approximate native guidance. No generated speech samples are trimmed or guessed audio boundaries edited. Existing recordings are never rewritten.
 
 The studio is at `/`; Collection has its own `/collection` page for History and Voice library. Collection actions open the selected voice/take/settings in the studio. The header's Queue button opens a modal on either page, preserving list/remove/clear/retry behavior and the durable API.
+
+
+## Voice guidance preview and application
+
+`GET /health` exposes `prompt_expansion.enabled`; `GET /api/capabilities` exposes the supported mode matrix and policy version under `limits.prompt_expansion`. Enable previews at startup with `make serve WITH_LLM=1`; plain serving disables new previews. A new health stage `expanding` reports `busy:true`. Requests remain local.
+
+`POST /api/prompts/expand` accepts a strict object with `generation` (the existing Generation request) and optional `guidance` (up to1500 characters). Example for Vox design:
+
+```json
+{"generation":{"text":"Welcome home. Sit, please.","description":"A warm, cultured baritone.","accent":"Romanian-accented English.","emotion":"Quietly amused."},"guidance":"Develop restrained phrase emphasis."}
+```
+
+HTTP200 returns `{id,created_at,context,original,updates,request_guidance,llm}`. `id` is32 lowercase hexadecimal characters. `updates` contains only `description` for design, `emotion` for supported reference/preset delivery, `fish.delivery_tags` (maximum two suggested tags), or `higgs` with at most one non-null existing emotion/prosody/style enum. Empty addition/tags/null controls means no suggestion. Original prose is preserved verbatim and an addition is appended with a newline. Added prose is bounded to600 characters/60 whitespace-separated words; final description/emotion bounds remain1500/1000 characters. Full JSON parsing rejects unknown/duplicate output keys, markup, control characters, invalid types and catalog/category mismatches. No substring repair, silent truncation or automatic fallback is performed.
+
+The server resolves the original voice/mode/transcript before previewing. Spoken `text`, exact `ref_text`, audio, paths and voice/reference IDs are excluded from the LLM prompt. Only written guidance/accent/delivery context is included. The LLM cannot choose the backend, speaker, language, clone mode, sampler or pacing. Original words and transcripts are retained by application code. This structural boundary does not guarantee semantic fidelity in the suggested prose: inspect the preview.
+
+A preview creates no speech job. Apply it by merging `updates` into the original generation request and setting common `prompt_expansion_id` to the returned `id`, then submit through `/api/generate`, `/api/queue` or `/api/candidates`. Keep other fields, including dialogue, unchanged. For example, if updates contains a description:
+
+```python
+import requests
+base = "http://127.0.0.1:5743"
+generation = {"text": "Welcome home. Sit, please.", "description": "A warm, cultured baritone."}
+preview = requests.post(base + "/api/prompts/expand", json={"generation": generation})
+preview.raise_for_status()
+record = preview.json()  # Inspect record['updates'] before applying it.
+applied = {**generation, **record["updates"], "prompt_expansion_id": record["id"]}
+response = requests.post(base + "/api/candidates", json={**applied, "candidate_count": 2})
+response.raise_for_status()
+batch = response.json()  # HTTP202; poll GET /api/candidates/{batch['id']}.
+```
+
+The receipt binds backend, concrete clone mode, voice/reference/preset, accent, language and unexpanded delivery context. Applied fields must match its saved updates. Changed context/guidance returns422; remove the ID or preview again. It can be reused for another line with the same voice/guidance. New previews reject an existing expansion ID to prevent repeated expansion. To restore, use the receipt's `original` fields and omit `prompt_expansion_id`. Omitted/null IDs retain old job/candidate idempotency fingerprints.
+
+Private receipts live in `DATA_DIR/prompt-expansions/<id>.json`. Queue admission freezes the receipt in each job payload; jobs/results expose `prompt_expansion`, including original/updates, backend/mode context, model/revision, policy version/profile/source, runtime, time, temperature, thinking flag and overlapping MLX/process memory counters. All candidates use one preview. Queued work and explicit retries reuse frozen guidance with the LLM disabled; no expansion occurs at speech execution or restart. The preview records are retained, not pruned by queue clearing.
+
+HTTP409 means the local operation/shared accelerator is busy; no preview was queued. HTTP422 covers disabled startup mode, unsupported mode, missing guidance, existing/manual tag conflicts, mismatched receipt, invalid output, unavailable runtime/assets or the180-second limit. The preview's bounded native child inherits queue/data/GPU leases; disconnects retain ownership until it exits. A malformed/failed preview leaves original fields unchanged and creates no speech job.
+
+Vox auto is resolved before expansion: auto + transcribed recording + no directions follows combined recorded performance and is ineligible. Choose explicit flexible reference to direct delivery. Qwen Base, Chatterbox Original and current Index prose expansion are ineligible. Fish/Higgs suggestions never rewrite dialogue or exact reference transcripts; the ordinary renderer constructs supported prefixes. See [research and evaluation limits](docs/voice-prompt-expansion.md).

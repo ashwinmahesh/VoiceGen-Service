@@ -112,6 +112,7 @@ class Generation(BaseModel):
     output_dir: str | None = Field(default=None, max_length=4096)
     generate_immediately: bool = False
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+    prompt_expansion_id: str | None = Field(default=None,pattern=r'^[a-f0-9]{32}$')
 
     @model_validator(mode='after')
     def combinations(self):
@@ -148,6 +149,22 @@ class CandidateGeneration(Generation):
     candidate_count: int = Field(default=2, ge=1, le=5, strict=True)
 
 
+class ExpandVoiceGuidance(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    generation: Generation
+    guidance: str = Field(default='',max_length=1500)
+
+
+class PromptExpansion(BaseModel):
+    id: str
+    created_at: str
+    context: dict
+    original: dict
+    updates: dict
+    llm: dict
+    request_guidance: str = ''
+
+
 class Capabilities(BaseModel):
     api_version: str = '2.1.0'
     service: str
@@ -168,7 +185,7 @@ class Capabilities(BaseModel):
 
 class Health(BaseModel):
     queue_database: str | None = None
-    status: Literal['unloaded','loading','ready','generating','unloading','error']
+    status: Literal['unloaded','loading','ready','generating','expanding','unloading','error']
     service: str
     name: str
     project: str
@@ -183,6 +200,7 @@ class Health(BaseModel):
     mode: str = 'local-jobs'
     last_error: str | None
     queue_counts: dict[str,int] = Field(default_factory=dict)
+    prompt_expansion: dict = Field(default_factory=dict)
 
 
 class Artifact(BaseModel):
@@ -222,6 +240,7 @@ class Job(BaseModel):
     candidate_batch_id: str | None = None
     candidate_index: int | None = None
     candidate_count: int | None = None
+    prompt_expansion: dict | None = None
 
 
 class CandidateBatch(BaseModel):

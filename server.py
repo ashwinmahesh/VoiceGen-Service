@@ -17,7 +17,7 @@ import pause_edits
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
-from schemas import Generation, CandidateGeneration, CandidateBatch, Health, Capabilities, Job, Artifact, ArtifactPage, Reference, Unloaded, TagsPage, PauseAdjustment, QueuePage, QueueRemoval
+from schemas import Generation, CandidateGeneration, CandidateBatch, ExpandVoiceGuidance, PromptExpansion, Health, Capabilities, Job, Artifact, ArtifactPage, Reference, Unloaded, TagsPage, PauseAdjustment, QueuePage, QueueRemoval
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from body_limit import BodyLimit
 import voice_catalog
@@ -30,6 +30,9 @@ manager = JobManager(engine, db_path=PROJECT_ROOT/'state/queue.sqlite3')
 @asynccontextmanager
 async def lifespan(app):
     prepare_storage()
+    if app.state.llm_enabled:
+        from prompt_assets import check_assets,check_runtime
+        check_assets();check_runtime()
     from license_notices import warn_at_startup
     warn_at_startup(PROFILE['backend'])
     from data_owner import own_data_directory
@@ -44,6 +47,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title='Local Voice Studio API',version='2.1.0',lifespan=lifespan)
+app.state.llm_enabled=False
 app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
 app.add_middleware(BodyLimit)
 
@@ -86,7 +90,10 @@ def app_script(): return FileResponse(PROJECT_ROOT/'ui/app.js',media_type='text/
 
 
 @app.get('/api/capabilities',response_model=Capabilities)
-def get_capabilities(): return capabilities()
+def get_capabilities():
+    from prompt_expansion import capability
+    caps=capabilities();caps.limits['prompt_expansion']=capability(app.state.llm_enabled)
+    return caps
 
 
 @app.get('/health',response_model=Health)
@@ -95,13 +102,25 @@ def health():
     runtime = runtime_errors()
     status = manager.stage
     if errors or runtime: status = 'error'
-    elif not manager.active and not manager.unloading and not manager.last_error:
+    elif not manager.active and not manager.unloading and not manager.expanding and not manager.last_error:
         status = 'ready' if engine.model is not None else 'unloaded'
     return Health(status=status,service=PROFILE['id'],name=PROFILE['name'],project=str(PROJECT_ROOT),
         storage=str(ROOT),downloaded=not errors,asset_errors=errors,runtime_errors=runtime,model_loaded=engine.model is not None,
-        loaded_variant=engine.variant,busy=bool(manager.active or manager.unloading),
+        loaded_variant=engine.variant,busy=bool(manager.active or manager.unloading or manager.expanding),
         active_job=manager.active,last_error=manager.last_error,
-        queue_database=str(manager.store.path),queue_counts=manager.listing(limit=1)['counts'])
+        queue_database=str(manager.store.path),queue_counts=manager.listing(limit=1)['counts'],
+        prompt_expansion=__import__('prompt_expansion').capability(app.state.llm_enabled))
+
+
+@app.post('/api/prompts/expand',response_model=PromptExpansion)
+async def expand_voice_guidance(payload: ExpandVoiceGuidance):
+    if not app.state.llm_enabled:raise HTTPException(422,'Local prompt expansion is disabled. Start with make serve WITH_LLM=1.')
+    try:
+        effective,reference,transcript,info=prepare_generation(payload.generation)
+        # A disconnected preview must not cancel a queued executor task and strand its lease.
+        return await asyncio.shield(asyncio.wrap_future(manager.preview_expansion(payload.generation,effective,payload.guidance,transcript)))
+    except BusyError as exc:raise HTTPException(409,str(exc)) from None
+    except (ValueError,OSError,RuntimeError) as exc:raise HTTPException(422,str(exc)) from None
 
 
 @app.post('/api/jobs',status_code=202,response_model=Job)
@@ -122,30 +141,35 @@ def candidate_status(identity: str):
     except (OSError,ValueError): raise HTTPException(404,'Candidate batch not found') from None
 
 
+def prepare_generation(request):
+    effective = validate_controls(request)
+    reference = None
+    reference_info = None
+    transcript = request.ref_text or ''
+    if request.voice_id or request.reference_id:
+        reference = asset_path('voices' if request.voice_id else 'references',request.voice_id or request.reference_id)
+        source = json.loads(reference.with_suffix('.json').read_text())
+        transcript = request.ref_text if request.ref_text is not None else source.get('transcript','')
+        reference_info = {key:source[key] for key in ['id','name','duration','original','effective','sample_rate','channels','source_id','source_kind'] if key in source}
+        import hashlib
+        reference_info['sha256']=hashlib.sha256(reference.read_bytes()).hexdigest()
+        effective = effective.model_copy(update={'description':source.get('design_description',source.get('description',''))})
+    from capabilities import resolve_clone_mode
+    effective = resolve_clone_mode(effective,PROFILE['backend'],reference,transcript)
+    if effective.clone_mode in ['continuation','combined'] and not transcript.strip():
+        raise ValueError('Continuation/combined cloning requires the exact transcript of the reference recording')
+    if PROFILE['backend'] in ('fish','higgs') and reference and not transcript.strip():
+        raise ValueError('This backend requires the exact reference transcript')
+    if effective.emotion_reference_id:
+        asset_path('references',effective.emotion_reference_id)
+    return effective,reference,transcript,reference_info
+
+
 def admit_generation(request, candidates=False):
     try:
         existing = manager.existing_candidates(request) if candidates else manager.existing(request)
         if existing: return existing
-        effective = validate_controls(request)
-        reference = None
-        reference_info = None
-        transcript = request.ref_text or ''
-        if request.voice_id or request.reference_id:
-            reference = asset_path('voices' if request.voice_id else 'references',request.voice_id or request.reference_id)
-            source = json.loads(reference.with_suffix('.json').read_text())
-            transcript = request.ref_text if request.ref_text is not None else source.get('transcript','')
-            reference_info = {key:source[key] for key in ['id','name','duration','original','effective','sample_rate','channels','source_id','source_kind'] if key in source}
-            import hashlib
-            reference_info['sha256']=hashlib.sha256(reference.read_bytes()).hexdigest()
-            effective = effective.model_copy(update={'description':source.get('design_description',source.get('description',''))})
-        from capabilities import resolve_clone_mode
-        effective = resolve_clone_mode(effective,PROFILE['backend'],reference,transcript)
-        if effective.clone_mode in ['continuation','combined'] and not transcript.strip():
-            raise ValueError('Continuation/combined cloning requires the exact transcript of the reference recording')
-        if PROFILE['backend'] in ('fish','higgs') and reference and not transcript.strip():
-            raise ValueError('This backend requires the exact reference transcript')
-        if effective.emotion_reference_id:
-            asset_path('references',effective.emotion_reference_id)
+        effective,reference,transcript,reference_info=prepare_generation(request)
         errors = all_errors()+runtime_errors()
         if errors: raise HTTPException(503,'Incomplete setup. Run make setup for the selected MODEL. '+ '; '.join(errors))
         destination = storage.output_folder(request.output_dir)
@@ -379,8 +403,13 @@ if __name__ == '__main__':
     import uvicorn
     parser = argparse.ArgumentParser()
     parser.add_argument('--port',type=int,default=DEFAULT_PORT)
+    parser.add_argument('--with-llm',action='store_true',help='Enable optional local voice guidance previews')
     parser.add_argument('--backend',choices=__import__('backend_selection').BACKENDS)
     args = parser.parse_args()
+    app.state.llm_enabled=args.with_llm
+    if args.with_llm:
+        from prompt_assets import check_assets,check_runtime
+        check_assets();check_runtime()
     # Fail before lifespan recovery when another listener already owns the port.
     import socket
     with socket.socket() as probe:

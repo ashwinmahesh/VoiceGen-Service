@@ -28,3 +28,6 @@ SOFTWARE.
 ## Startup backend additions
 
 See BACKENDS.md and third_party/ for full exact upstream license copies. Chatterbox official code/weights and audio.cpp use MIT; MOSS VoiceGenerator and its separate v1 codec cards declare Apache-2.0. IndexTTS uses the custom Bilibili model-use license (including output and downstream conditions), Fish S2 Pro the Fish Audio Research License, and Higgs TTS 3 the Boson research/noncommercial license with conditional creator grant. These are not interchangeable MIT/Apache licenses. Pinned conversion hashes do not establish an unpublished source-conversion revision. Dependencies retain their own bundled notices. No private voice/media/catalog files are distributed.
+
+
+Optional voice prompt expansion uses [Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B), Apache-2.0, through [mlx-community/Qwen3.5-2B-4bit](https://huggingface.co/mlx-community/Qwen3.5-2B-4bit/tree/674aaa7240b91e8012fcad5d791b7dfe5ba90207). Revision/checksum are pinned in prompt_assets.py. The text-only application uses MLX-LM0.32.2 in a separate environment; see requirements.enhancer.lock.txt for dependencies. Assets are downloaded/reused separately and are not distributed in this source repository. This auxiliary model does not change any speech backend's license.

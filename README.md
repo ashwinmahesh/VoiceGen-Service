@@ -44,7 +44,7 @@ make open
 make health
 ```
 
-In a terminal, plain `make setup` first lists all seven models: VoxCPM2, Qwen3-TTS, Chatterbox Original, IndexTTS 2.5, MOSS VoiceGenerator, Fish S2 Pro and Higgs TTS 3. Enter a listed number or model ID; **blank/Enter selects VoxCPM2**, marked as the default. Setup installs only the selected backend. `make setup MODEL=higgs` selects directly without the menu. `NONINTERACTIVE=1` or non-terminal input uses the explicit model or the default without waiting for input. The model/data-folder prompt is separate and remembers its saved location.
+In a terminal, plain `make setup` first lists all seven models: VoxCPM2, Qwen3-TTS, Chatterbox Original, IndexTTS 2.5, MOSS VoiceGenerator, Fish S2 Pro and Higgs TTS 3. Enter a listed number or model ID; **blank/Enter selects VoxCPM2**, marked as the default. Setup installs the selected speech backend plus the shared optional prompt LLM assets/runtime; serving with the LLM remains opt-in. `make setup MODEL=higgs` selects directly without the menu. `NONINTERACTIVE=1` or non-terminal input uses the explicit model or the default without waiting for input. The model/data-folder prompt is separate and remembers its saved location.
 
 `make setup-env` installs only the runtime. `make download` resumes pinned required files and verifies sizes, JSON, SHA256 for LFS assets and Git blob SHA1 for small files. `model_specs.json` records repository revisions, expected files, byte counts and upstream hashes. A complete checksum manifest is written only after successful verification; corrupted required files are removed on a failed verification so rerunning download repairs them. `make verify` checks all hashes again. Runtime readiness compares the manifest, required file sizes and modification times and parses JSON, without repeatedly hashing gigabytes on every health request. Serving is offline and never downloads weights implicitly.
 
@@ -80,6 +80,20 @@ make health MODEL=qwen3
 make stop MODEL=qwen3
 make start MODEL=voxcpm2
 ```
+
+## Optional local voice prompt expansion
+
+Start with `make serve WITH_LLM=1` (or `make start WITH_LLM=1`) to enable **Preview expanded guidance**. Plain serving keeps it disabled. First setup installs the isolated `.venv-enhancer` and pinned shared Qwen3.5-2B 4-bit assets; existing installations can run `make setup-llm`. This runtime requires Python 3.14 independently of the selected speech backend (`LLM_PYTHON=/path/to/python3.14`). Speech environments are not upgraded by this setup.
+
+Write a description/delivery direction, preview the suggestion, then choose **Apply guidance** or **Keep original**. **Restore original guidance** undoes an applied suggestion. Spoken dialogue and reference transcripts stay verbatim and are excluded from the LLM input. It receives written guidance only and does not listen to recordings. Review suggestions for unwanted nuances, repetition, accent and identity changes; expansion is experimental and does not guarantee better audio.
+
+Supported paths are Vox design or explicitly flexible reference delivery, Qwen VoiceDesign/CustomVoice, MOSS design, Fish short delivery tags and Higgs one existing catalog control. Vox recorded-performance cloning, Qwen Base reference, Chatterbox Original and the installed Index adapter have no compatible prose path and reject previews before loading the LLM. Fish/Higgs require a written direction and empty existing delivery controls. Their native rendered text remains inspectable under Advanced settings. Existing sampler, voice, accent and pause controls remain authoritative.
+
+On this installation, the enhancer reuses `/Volumes/ASH-SSD/models/prompt-enhancer/weights`; ignored `storage.json.prompt_llm_dir` remembers it. `PROMPT_LLM_DIR=/absolute/path` overrides it; a fresh checkout defaults to `DATA_DIR/prompt-enhancer/weights`. Setup verifies the pinned checksum and does not duplicate existing weights. Serving is offline and never downloads. Preview reserves the same GPU slot as speech, unloads resident speech weights, runs one short-lived LLM process and releases it before synthesis. Busy previews return409; queued speech is retained.
+
+Applied preview receipts are private JSON in `DATA_DIR/prompt-expansions`. Queue admission embeds the frozen original/expanded guidance and LLM/profile provenance into every option. Generation/restart/retry never reruns the LLM and can use an already applied receipt with plain serving. Editing guidance/voice/mode invalidates its receipt. Back up these records alongside private media and project-local SQLite state. See [API.md](API.md#voice-guidance-preview-and-application) and [the research, policy and measured limits](docs/voice-prompt-expansion.md).
+
+![Voice guidance preview with original and suggested instructions; synthetic demonstration](docs/images/prompt-expansion.jpg)
 
 ## Use
 

@@ -9,6 +9,7 @@ SHARED = ['VOICE_QUALITY.md','test_inference_locks.py','inference_locks.py','dur
           '.gitignore','clean_env.py','requirements.txt','requirements.lock.txt','smoke_test.py',
           'sync_source.py','storage.json.example','configure_storage.py','test_storage_configuration.py','directions.py','emotion_steering.py','extension_assets.py','test_extensions.py','test_contract.py','ui/index.html','ui/app.js','API.md','EXTENSIONS.md','THIRD_PARTY_NOTICES.md']
 SHARED += ['punctuation_pacing.py','test_punctuation_pacing.py','performance_controls.py','test_performance_controls.py','license_notices.py','startup_select.py','.gitattributes','backend_selection.py','torch_engine.py','native_engine.py','fish_loader.py','runtime_setup.py','runtime_checks.py','data_owner.py','test_backends.py','BACKENDS.md']
+SHARED += ['prompt_assets.py','prompt_expansion.py','prompt_policy.py','prompt_worker.py','setup_prompt_llm.py','requirements.enhancer.lock.txt','test_prompt_expansion.py','docs/voice-prompt-expansion.md']
 SHARED += [str(path.relative_to(PROJECT_ROOT)) for folder in ('backends','third_party')
            for path in sorted((PROJECT_ROOT/folder).rglob('*')) if path.is_file()]
 

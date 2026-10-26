@@ -29,6 +29,7 @@ storage.json
 /jobs
 /artifact-index
 /idempotency
+/prompt-expansions
 /extensions
 /runtime
 /loras
