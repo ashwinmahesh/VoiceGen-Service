@@ -654,6 +654,8 @@ It does not receive dialogue, exact reference transcripts, recordings, file path
 | Higgs | At most one existing emotion, prosody, or style control. |
 | Chatterbox / IndexTTS | Prompt expansion is unsupported. Use their native controls. |
 
+For Vox with `voice_id` or `reference_id`, `clone_mode:"auto"` resolves to flexible `reference` when a new emotion or accent direction is supplied. An expansion preview with a nonempty `emotion` is supported in that case; keep the same Auto setting when applying it. With an exact transcript and empty directions, Auto resolves to `combined`, which follows the recorded performance and does not accept expansion. Explicit `combined` and `continuation` also keep that boundary. The UI uses the same resolution when enabling its preview. The two UI tasks and Voice source menu still submit the existing `voice_id`, `reference_id`, or `preset_voice` fields; no API source field was added.
+
 A suggestion may be empty. Review it: a valid instruction can still sound wrong or weaken an accent.
 
 The response includes `request_guidance` (your written direction), `original` (the fields before expansion), `updates`, and `changed`. Check `changed` before applying: `false` means no settings changed. Higgs also returns `higgs.message` explaining its control/recording boundary. It selects one existing catalog control rather than expanding prose; for example, “more expressive intonation” can select `{"higgs":{"emotion":null,"prosody":"expressive_high","style":null}}`. An accent-only request should keep the original controls because Higgs has no text accent setting. Use a short acting direction or choose the native controls directly when a complex request is rejected.

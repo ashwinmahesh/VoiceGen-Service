@@ -8,14 +8,29 @@ import server
 
 class Page(HTMLParser):
     def __init__(self,markup):
-        super().__init__();self.ids=[];self.scripts=[];self.feed(markup)
+        super().__init__();self.ids=[];self.scripts=[];self.task_tabs=[];self.catalog_links=[];self.feed(markup)
     def handle_starttag(self,tag,attrs):
         attrs=dict(attrs)
         if 'id' in attrs:self.ids.append(attrs['id'])
         if tag=='script' and 'src' in attrs:self.scripts.append(attrs['src'])
+        if attrs.get('data-mode'):self.task_tabs.append(attrs)
+        if attrs.get('id')=='browse-voices':self.catalog_links.append((tag,attrs))
 
 
 class SharedPageTests(unittest.TestCase):
+    def test_studio_has_two_tasks_with_a_record_source_picker_and_new_tab_catalog(self):
+        markup=TestClient(server.app).get('/').text;page=Page(markup)
+        self.assertEqual([tab['data-mode'] for tab in page.task_tabs],['design','record'])
+        for tab in page.task_tabs:
+            self.assertIn(tab['aria-controls'],page.ids)
+        self.assertIn('record-source',page.ids)
+        for identity in ('saved-panel','upload-panel','preset-panel','structured-delivery-subtitle'):
+            self.assertIn(identity,page.ids)
+        self.assertEqual(len(page.catalog_links),1)
+        tag,attrs=page.catalog_links[0]
+        self.assertEqual(tag,'a');self.assertEqual(attrs['target'],'_blank')
+        self.assertEqual(attrs['href'],'/collection?tab=voices');self.assertIn('noopener',attrs['rel'])
+
     def test_every_page_has_the_generator_header_and_queue_controls(self):
         client=TestClient(server.app)
         generator=client.get('/').text

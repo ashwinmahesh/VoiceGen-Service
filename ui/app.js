@@ -6,10 +6,17 @@ document.title=(observabilityPage?'Observability':collectionPage?'Collection':'S
 if(collectionPage){$('page-title').textContent='Your collection';$('page-description').textContent='Find saved voices, listen to takes, and reuse a performance in the studio.';}
 $(observabilityPage?'observability-link':collectionPage?'catalog-link':'studio-link').setAttribute('aria-current','page');
 let availableModels=[],modelChoiceReady=false,changingModel=false,queuePaused=false,awaitingSourceModel=false,lastModelList=null,pendingModelRestore=null;
+let recordSource='saved',uploadTranscriptDraft=null;
+const recordSources=[['saved','Saved voice'],['upload','Upload reference audio'],['preset','Built-in speaker']];
 function sourceMode(source=mode){return ['saved','upload'].includes(source)?'reference':source}
 function acceptsTextDirections(){return ['saved','upload'].includes(mode)?!!caps?.modes.reference.emotion&&!['continuation','combined'].includes($('clone-mode').value):mode==='preset'||!!caps?.modes.design.emotion}
 function readySourceModels(source=mode){return availableModels.filter(row=>row.modes?.includes(sourceMode(source)))}
 function readyDesignModels(){return readySourceModels('design')}
+function resolvedReferenceMode(){
+ const selected=$('clone-mode').value;if(selected!=='auto')return selected;
+ const transcript=$('ref-text').value||(mode==='saved'?voiceRows.find(row=>row.id===$('voice').value)?.transcript:reference?.transcript)||'';
+ return caps?.backend==='voxcpm2'&&transcript.trim()&&!$('emotion').value.trim()&&!$('accent').value.trim()?'combined':'reference';
+}
 let pageSize = 24, caps=null, storageKey='voice-studio', historyPage={data:[],total:0,has_more:false}, pendingKey=null;
 let voicePage = {data: [], total: 0, has_more: false};
 let currentCandidates=null, candidateCards=new Map();
@@ -45,17 +52,20 @@ function updatePromptExpansion(){
  updateCandidateVariation();
  const profile=caps.models[backend]?.prompt_expansion,profileMode=['saved','upload'].includes(mode)?'reference':mode;
  const spec=profile?.modes[profileMode];
- const supported=!!spec?.available&&(!spec.clone_modes||spec.clone_modes.includes($('clone-mode').value));
+ const clone=resolvedReferenceMode(),supported=!!spec?.available&&(!spec.clone_modes||spec.clone_modes.includes(clone));
+ const emptyOriginal=spec?.kind==='prose'&&!$(spec.target).value.trim();
+ const emptyReason=profileMode==='design'?'Enter a voice description above before previewing its expansion.':'Enter an Emotion & delivery direction above to expand it. The accent direction and spoken words stay unchanged.';
+ const unsupportedReason=spec?.clone_modes&&$('clone-mode').value==='auto'?'Auto is following the transcribed recording because no new delivery or accent direction is entered. Enter an Emotion & delivery direction above, or choose Voice reference, to preview new delivery guidance.':'This reference mode follows recorded performance. Choose Auto with a delivery direction, or Voice reference, to use delivery instructions.';
  $('expansion-profile').hidden=!profile||!modelChoiceReady;
  $('expansion-profile-info').textContent=profile?`${profile.name} · ${spec?.label||profileMode} · Profile v${profile.version}`:'';
- $('expansion-profile-rules').textContent=spec?.available?(supported?spec.instructions:'This reference mode follows recorded performance. Choose flexible Voice reference to use delivery instructions.'):spec?.reason||'No expansion specification for this mode.';
+ $('expansion-profile-rules').textContent=spec?.available?(supported?spec.instructions:unsupportedReason):spec?.reason||'No expansion specification for this mode.';
  $('expansion-guidance-field').hidden=!enabled||!supported;
- $('expand-guidance').disabled=!online||!enabled||!supported||busy||enhancing||uploading||submitting||!!appliedExpansion;
+ $('expand-guidance').disabled=!online||!enabled||!supported||emptyOriginal||busy||enhancing||uploading||submitting||!!appliedExpansion;
  const catalog=backend==='higgs';
  $('expand-guidance').textContent=enhancing?'Preparing suggestion…':catalog?'Suggest delivery control':'Preview expanded guidance';
  $('expansion-guidance-label').textContent=['fish','higgs'].includes(backend)?'Delivery direction':'Additional delivery direction (optional)';
  $('expansion-guidance').placeholder=catalog?'For example: Keep the reference voice and accent, but use more expressive intonation.':'Describe the delivery you want to explore. Required for Fish tag suggestions.';
- $('prompt-expansion-hint').textContent=!modelChoiceReady?'Choose a model to see prompt-expansion support.':!available?'LLM disabled at startup. Restart with make serve without NO_LLM=1 to enable.':!enabled?'Off. No LLM previews or per-option planning; distinct designs use built-in directions.':!supported?(spec?.reason||'This mode follows recorded performance. Choose flexible Voice reference to direct a different delivery.'):catalog?'On. Describe the acting below; the LLM suggests one supported Emotion, Prosody, or Style control. Higgs uses these controls, rather than expanded prose. Accent comes from your reference.':'On. Design batches use LLM contrast planning. For a single take or reference delivery, preview and apply guidance below. Dialogue and transcripts stay unchanged.';
+ $('prompt-expansion-hint').textContent=!modelChoiceReady?'Choose a model to see prompt-expansion support.':!available?'LLM disabled at startup. Restart with make serve without NO_LLM=1 to enable.':!enabled?'Off. No LLM previews or per-option planning; distinct designs use built-in directions.':!supported?(spec?.reason||unsupportedReason):emptyOriginal?emptyReason:catalog?'On. Describe the acting below; the LLM suggests one supported Emotion, Prosody, or Style control. Higgs uses these controls, rather than expanded prose. Accent comes from your reference.':'On. Design batches use LLM contrast planning. For a single take or reference delivery, preview and apply guidance below. Dialogue and transcripts stay unchanged.';
  $('expansion-applied').hidden=!appliedExpansion;$('restore-guidance').hidden=!appliedExpansion;
  renderExpansion(appliedExpansion,'applied-expansion-details','Applied to your next generation');
  if(appliedExpansion)$('expansion-applied').textContent='Expanded guidance applied · '+appliedExpansion.llm.model+' · '+appliedExpansion.llm.seconds+'s. Original retained.';
@@ -121,20 +131,26 @@ $('apply-expansion').onclick=()=>{
 $('prompt-expansion-enabled').onchange=()=>{expansionChoice=$('prompt-expansion-enabled').checked;if(!expansionChoice&&appliedExpansion){applyGuidanceValues(appliedExpansion.original);clearExpansion()}pendingKey=null;updatePromptExpansion();persist()};
 $('restore-guidance').onclick=()=>{if(appliedExpansion)applyGuidanceValues(appliedExpansion.original);clearExpansion();pendingKey=null;persist();};
 function setMode(next){
+ if(next==='record')next=readySourceModels(recordSource).length?recordSource:recordSources.find(([source])=>readySourceModels(source).length)?.[0];
+ if(!next)return;
  if(caps){
   if(!readySourceModels(next).length)return;
   awaitingSourceModel=caps.modes[sourceMode(next)]?.available===false;
  }
- pendingKey=null;clearExpansion();mode=next;
+ if(mode!==next)rememberTranscriptDraft();
+ pendingKey=null;clearExpansion();const previous=mode;mode=next;
+ if(mode!=='design')recordSource=mode;
  if(['saved','upload'].includes(mode)&&$('emotion-preset').value==='natural'&&$('emotion').value===presets.natural){$('emotion').value='';$('emotion-preset').value='custom'}
- for(const button of document.querySelectorAll('[data-mode]'))button.setAttribute('aria-selected',button.dataset.mode===mode);
+ for(const button of document.querySelectorAll('[data-mode]'))button.setAttribute('aria-selected',button.dataset.mode===(mode==='design'?'design':'record'));
+ $('record-panel').hidden=mode==='design';
  for(const name of ['design','saved','upload','preset'])$(name+'-panel').hidden=name!==mode;
- if(mode==='saved')voicePreview();else transcriptVoice=null;
+ if(mode==='saved')voicePreview();else{transcriptVoice=null;if(mode==='upload'&&previous!==mode)$('ref-text').value=uploadTranscriptDraft??reference?.transcript??'';}
  renderModelChoices();updateCapabilities();updatePromptExpansion();controls();persist();
 }
 
 document.querySelectorAll('[data-mode]').forEach(button=>button.onclick=()=>{if(button.getAttribute('aria-disabled')==='true'){showControlHelp(button);return}setMode(button.dataset.mode)});
-$('emotion-preset').onchange=()=>{clearExpansion();$('emotion').value=presets[$('emotion-preset').value];persist()};$('emotion').oninput=()=>{$('emotion-preset').value='custom';persist()};
+$('record-source').onchange=()=>setMode($('record-source').value);
+$('emotion-preset').onchange=()=>{$('emotion').value=presets[$('emotion-preset').value];clearExpansion();persist()};$('emotion').oninput=()=>{$('emotion-preset').value='custom';persist()};
 function count(){$('count').textContent=`${$('text').value.length} / ${caps?.limits.text_characters||3000}`}count();
 function updateCandidateVariation(){
  if(!caps)return;
@@ -151,7 +167,7 @@ function candidateExpansion(row){
 }
 function settings(){
  const referenceMode=mode==='saved'||mode==='upload';
- const direction=acceptsTextDirections();
+ const direction=!awaitingSourceModel&&acceptsTextDirections();
  const result={model:caps?.backend,prompt_expansion_id:appliedExpansion?.id||null,candidate_count:Number($('candidate-count').value),candidate_use_llm:!!caps?.limits.prompt_expansion?.enabled&&$('prompt-expansion-enabled').checked,candidate_variation:mode==='design'?$('candidate-variation').value:'auto',generate_immediately:$('generate-immediately').checked,text:$('text').value,description:mode==='design'?$('description').value:'',
    emotion:direction?$('emotion').value:'',accent:direction?$('accent').value:'',
    seed:Number($('seed').value),max_tokens:caps?.limits.max_tokens_fixed?1000:Number($('max-tokens').value),
@@ -185,22 +201,26 @@ function persist(){if(caps&&!awaitingSourceModel)try{localStorage.setItem(storag
 function updateCapabilities(){
  if(!caps)return;
  const referenceMode=mode==='saved'||mode==='upload';
- const direction=acceptsTextDirections();
+ const direction=!awaitingSourceModel&&acceptsTextDirections();
  $('emotion').disabled=$('emotion-preset').disabled=$('accent').disabled=!direction;
- $('emotion-hint').textContent=referenceMode&&caps.backend==='voxcpm2'&&$('clone-mode').value==='auto'?'Leave directions empty to follow the transcribed recording. Enter an emotion or accent to use flexible voice conditioning.':referenceMode&&['continuation','combined'].includes($('clone-mode').value)?'Unavailable with Combined or Continue performance: these follow the recorded delivery. Change Reference conditioning to Auto or Voice reference to enter new emotion or accent directions.':direction?'Direct the performance in words. Voice identity and expression are approximate.':'This model takes its voice from the recording. Use its model-specific controls to direct delivery.';
- $('accent-hint').textContent=direction?'A prompt direction, not a trained accent pack. A recording with the desired accent is usually the stronger cue.':referenceMode&&caps.backend==='voxcpm2'?'Accent direction is unavailable with Combined or Continue performance. Choose Auto or Voice reference to edit it.':`Accent direction is unavailable for ${caps.name} reference cloning; the recording supplies the accent.`;
+ $('emotion-hint').textContent=referenceMode&&caps.backend==='voxcpm2'&&$('clone-mode').value==='auto'?'Leave directions empty to follow the transcribed recording. Enter an emotion or accent to use flexible voice conditioning and preview expanded delivery guidance.':referenceMode&&caps.backend==='voxcpm2'&&['continuation','combined'].includes($('clone-mode').value)?'Disabled because Combined and Continue performance follow the recorded delivery. Choose Auto or Voice reference to enter new delivery directions.':direction?'Direct the performance in words. Voice identity and expression are approximate.':`Disabled because ${caps.name} reference cloning does not accept written delivery instructions. ${caps.backend==='qwen3'?'Choose a built-in speaker or Design a voice to use written directions.':'Use the model-specific performance controls instead.'}`;
+ $('accent-hint').textContent=direction?'A prompt direction, not a trained accent pack. A recording with the desired accent is usually the stronger cue.':referenceMode&&caps.backend==='voxcpm2'?'Disabled because Combined and Continue performance follow the recording. Choose Auto or Voice reference to enter an accent direction.':`Disabled because ${caps.name} reference cloning does not accept written accent directions. The recording supplies the accent.`;
  const structured=referenceMode&&['higgs','fish'].includes(caps.backend);
  $('accent-direction-field').hidden=structured;
  $('emotion-direction-field').hidden=structured;
  $('recorded-accent-hint').hidden=!structured;
  $('recorded-accent-hint').textContent=structured?`${caps.name} uses the recording as its accent cue; the accent can still drift. ${caps.backend==='higgs'?'Use Emotion, Prosody and Style above for delivery. Compare Follow recording before adding acting tags; free-text accent instructions are unsupported.':'Use delivery tags above for expression. Choose VoxCPM2 for editable accent directions.'}`:'';
  for(const key of ['steps','guidance','temperature'])$(key+'-field').hidden=!caps.controls[key];
- document.querySelector('[data-mode="preset"]').hidden=!readySourceModels('preset').length;
+ const sources=recordSources.filter(([source])=>readySourceModels(source).length);
+ $('record-source').replaceChildren(...sources.map(([source,label])=>new Option(label,source)));
+ $('record-source').value=mode==='design'?recordSource:mode;
  const designTab=document.querySelector('[data-mode="design"]'),designDisabled=!readyDesignModels().length;
  designTab.hidden=false;designTab.setAttribute('aria-disabled',String(designDisabled));
  designTab.dataset.helpFor='voice-design-tab';
  if(designDisabled&&mode==='design')modelChoiceReady=false;
- for(const name of ['saved','upload'])document.querySelector('[data-mode="'+name+'"]').hidden=!readySourceModels('upload').length;
+ const recordTab=document.querySelector('[data-mode="record"]');recordTab.setAttribute('aria-disabled',String(!sources.length));recordTab.dataset.helpFor='record-lines-tab';
+ $('structured-delivery-heading').hidden=!structured;
+ $('structured-delivery-subtitle').textContent=caps.backend==='higgs'?'Keep Follow recording for the original delivery, or choose an emotion, prosody, or vocal style for this take.':'Leave delivery tags empty to follow the recording, or add short acting directions for this take.';
  $('language-field').hidden=caps.languages.length<2;
  $('text').maxLength=caps.limits.text_characters;
  $('max-tokens-field').hidden=!!caps.limits.max_tokens_fixed;
@@ -225,7 +245,13 @@ function updateCapabilities(){
  $('performance-guidance').hidden=awaitingSourceModel;$('inline-hint').hidden=awaitingSourceModel||!$('inline-hint').textContent;
  $('performance-controls').hidden=awaitingSourceModel;$('backend-settings').hidden=awaitingSourceModel;
  $('apply-recommended').closest('details').hidden=awaitingSourceModel;
- if(awaitingSourceModel){$('emotion-hint').textContent=$('accent-hint').textContent='Choose a model to see its supported performance controls.';$('performance-guidance').hidden=true;$('inline-hint').hidden=true;$('expansion-profile').hidden=true;$('performance-controls').hidden=true;$('rendered-preview-field').hidden=true;$('backend-settings').hidden=true;$('license-notice').hidden=true;$('model-badge').textContent='Choose a model for this voice source';}
+ if(awaitingSourceModel){$('emotion-hint').textContent=$('accent-hint').textContent='Disabled until you choose a model that supports this voice source.';$('performance-guidance').hidden=true;$('inline-hint').hidden=true;$('expansion-profile').hidden=true;$('performance-controls').hidden=true;$('backend-settings').hidden=true;$('rendered-preview-field').hidden=true;$('license-notice').hidden=true;$('model-badge').textContent='Choose a model for this voice source';}
+ for(const [id,hint] of [['emotion','emotion-hint'],['accent','accent-hint']]){
+  const input=$(id);if(!input.dataset.placeholder)input.dataset.placeholder=input.placeholder;
+  input.placeholder=input.disabled?$(hint).textContent:input.dataset.placeholder;
+  input.title=input.disabled?$(hint).textContent:'';
+ }
+ $('emotion-preset').title=$('emotion-preset').disabled?$('emotion-hint').textContent:'';
  installControlHelp();
  updateTranscriptActions();
 }
@@ -257,7 +283,7 @@ function restore(row){
 $('form').addEventListener('input',event=>{if(['description','emotion','accent','voice','reference','ref-text','clone-mode','preset-voice','fish-delivery-tags','higgs-emotion','higgs-prosody','higgs-style'].includes(event.target.id))clearExpansion();pendingKey=null;count();updatePerformancePreview();persist()});$('form').addEventListener('change',event=>{if(['voice','reference','clone-mode','preset-voice','higgs-emotion','higgs-prosody','higgs-style'].includes(event.target.id))clearExpansion();pendingKey=null;persist()});
 $('new-seed').onclick=()=>{pendingKey=null;$('seed').value=crypto.getRandomValues(new Uint32Array(1))[0];persist();announce('New seed selected')};
 const transcriptDrafts=new Map();let transcriptVoice=null,transcriptSaving=false;
-function rememberTranscriptDraft(){if(mode==='saved'&&transcriptVoice)transcriptDrafts.set(transcriptVoice,$('ref-text').value);updateTranscriptActions()}
+function rememberTranscriptDraft(){if(mode==='saved'&&transcriptVoice)transcriptDrafts.set(transcriptVoice,$('ref-text').value);if(mode==='upload')uploadTranscriptDraft=$('ref-text').value;updateTranscriptActions()}
 function updateTranscriptActions(){
  const row=mode==='saved'?voiceRows.find(v=>v.id===$('voice').value):null;
  $('transcript-actions').hidden=!row;
@@ -275,7 +301,7 @@ async function saveSelectedTranscript(){
 }
 $('ref-text').addEventListener('input',rememberTranscriptDraft);
 $('save-transcript').onclick=async()=>{try{await saveSelectedTranscript();persist()}catch(exc){error('Could not save the transcript: '+exc.message)}};
-function voicePreview(){const row=voiceRows.find(v=>v.id===$('voice').value);$('voice-preview').hidden=!row;if(row){if(mode==='saved'&&transcriptVoice!==row.id){transcriptVoice=row.id;$('ref-text').value=transcriptDrafts.get(row.id)??row.transcript??''}if($('voice-preview').getAttribute('src')!==row.audio_url)$('voice-preview').src=row.audio_url;$('voice-hint').textContent=row.description||'Reference identity is reused; use the supported delivery controls below.'}else transcriptVoice=null;updateTranscriptActions()}
+function voicePreview(){const row=voiceRows.find(v=>v.id===$('voice').value);$('voice-preview').hidden=!row;if(row){if(mode==='saved'&&transcriptVoice!==row.id){transcriptVoice=row.id;$('ref-text').value=transcriptDrafts.get(row.id)??row.transcript??''}if($('voice-preview').getAttribute('src')!==row.audio_url)$('voice-preview').src=row.audio_url;$('voice-hint').textContent=row.description||'Reference identity is reused; use the supported delivery controls below.'}else transcriptVoice=null;updateTranscriptActions();updatePromptExpansion()}
 $('voice').onchange=()=>{voicePreview();persist()};
 async function refresh() {
   const [history, picker, tags] = await Promise.all([
@@ -743,7 +769,6 @@ $('voice-editor-form').onsubmit = async event => {
 $('tag-filter').onchange = $('voice-sort').onchange = () => {catalogOffset = 0; loadVoicePage().catch(exc => error(exc.message));};
 $('voice-prev').onclick = () => {catalogOffset = Math.max(0, catalogOffset - pageSize); loadCollection().catch(exc => error(exc.message));};
 $('voice-next').onclick = () => {catalogOffset += pageSize; loadCollection().catch(exc => error(exc.message));};
-$('browse-voices').onclick=()=>{location.href='/collection?tab=voices'};
 $('page-size').onchange=()=>{pageSize=Number($('page-size').value);catalogOffset=0;loadCollection().catch(exc=>error(exc.message))};
 function renderModelChoices(){
  if(!lastModelList)return;
@@ -783,7 +808,7 @@ async function selectVoiceModel(backend){
   if(notice?.notice){$('license-text').textContent=notice.notice;$('license-link').href=notice.license_url;}
   buildBackendSettings();buildPerformanceControls();updateCapabilities();await refresh();
   const saved=JSON.parse(localStorage.getItem(storageKey+'-form')||'null');
-  if(draftMode)setMode(draftMode);else if(saved)restore(saved);else setMode(caps.modes.design.available===false?'upload':'design');
+  if(draftMode)setMode(draftMode);else if(saved)restore(saved);else setMode(caps.modes.design.available===false?(voiceRows.length?'saved':'upload'):'design');
   await health();
   const pageSelected=await openPageSelection();
   const batch=localStorage.getItem(storageKey+'-candidates'),job=localStorage.getItem(storageKey+'-job');
@@ -866,10 +891,6 @@ function buildPerformanceControls(){
   details.append(fields);
   $('performance-controls').append(details);
  }
- if(caps.backend==='qwen3'){
-  document.querySelector('[data-mode="design"]').textContent='Design a new voice';document.querySelector('[data-mode="preset"]').textContent='Preset speakers';
-  document.querySelector('[data-mode="saved"]').textContent='Clone saved voice';document.querySelector('[data-mode="upload"]').textContent='Clone reference';
- }
  if(caps.controls[caps.backend]?.punctuation_pauses){
   const label=el('label'),input=el('input');input.id='punctuation-pauses';input.type='checkbox';input.checked=true;input.style.width='auto';input.style.marginRight='8px';
   label.append(input,document.createTextNode('Longer punctuation pauses'));$('pacing-settings').append(label);
@@ -877,7 +898,9 @@ function buildPerformanceControls(){
   for(const [key,name] of [['sentence_pause_ms','Extra pause after sentences (ms)'],['comma_pause_ms','Extra pause after commas (ms)']]){
    const spec=caps.controls[caps.backend][key],field=el('div',null,'control-field'),label=el('label',caps.backend==='moss'?name.replace('Extra pause','Pause target'):name),number=el('input');label.htmlFor=key;number.id=key;number.type='number';number.min=spec.min;number.max=spec.max;number.step=50;number.value=spec.default;field.append(label,number);fields.append(field);
   }
-  $('pacing-settings').append(fields,el('p',caps.backend==='moss'?'Targets guide the native model in a single take to preserve voice identity. Exact millisecond pauses are not guaranteed.':'Keeps the same reference voice for each phrase and adds these gaps to its natural pauses. Phrase delivery can differ from a whole-line take. Disable for continuous delivery. Voice design and manual Fish tags use whole-line delivery.','hint'));
+  const disabledHint=el('p',null,'hint');disabledHint.id='pacing-disabled-hint';disabledHint.hidden=true;
+  $('pacing-settings').append(fields,disabledHint,el('p',caps.backend==='moss'?'Targets guide the native model in a single take to preserve voice identity. Exact millisecond pauses are not guaranteed.':'Keeps the same reference voice for each phrase and adds these gaps to its natural pauses. Phrase delivery can differ from a whole-line take. Disable for continuous delivery. Voice design and manual Fish tags use whole-line delivery.','hint'));
+  for(const key of ['sentence_pause_ms','comma_pause_ms'])$(key).setAttribute('aria-describedby','pacing-disabled-hint');
   input.onchange=updatePacingControls;
  }
 }
@@ -885,7 +908,9 @@ function pacingAvailable(){return (caps?.backend==='moss'||mode!=='design')&&!(c
 function updatePacingControls(){
  if(!$('punctuation-pauses'))return;
  const available=pacingAvailable();$('punctuation-pauses').disabled=!available;
- for(const key of ['sentence_pause_ms','comma_pause_ms'])$(key).disabled=!available||!$('punctuation-pauses').checked;
+ const reason=!available?(mode==='design'?'Disabled because this model uses whole-line delivery for voice design. Record lines with a saved voice or recording to configure pauses.':'Disabled because manual Fish tags use whole-line delivery. Remove the manual tags to configure punctuation pauses.'):!$('punctuation-pauses').checked?'Disabled because Longer punctuation pauses is off. Turn it on to edit sentence and comma waits.':'';
+ for(const key of ['sentence_pause_ms','comma_pause_ms']){$(key).disabled=!!reason;$(key).title=reason;}
+ $('pacing-disabled-hint').textContent=reason;$('pacing-disabled-hint').hidden=!reason;
 }
 function restorePerformance(row){
  const options=row[caps.backend]||{};
@@ -958,6 +983,7 @@ async function openPageSelection(){
 }
 
 const controlHelp={
+ 'record-source':'Choose a saved character, upload a reference recording, or use a built-in speaker when available. The same Record lines form handles each source.',
  description:'Describe the voice you want: pitch, age, accent and vocal texture. This designs a voice; save a take to reuse its recording.',
  voice:'Reuse a recording from your voice library for new dialogue. The recording supplies the speaker identity; catalog notes help you find it.',
  reference:'Upload 1–30 seconds of clean speech, up to 25 MB. A sample that already has the intended accent and delivery is a useful starting point.',
@@ -1037,7 +1063,7 @@ function showControlHelp(button){
  clearTimeout(helpHideTimer);
  if(activeHelp!==button)hideControlHelp();
  activeHelp=button;
- const copy=controlHelp[button.dataset.helpFor];helpTooltip.textContent=typeof copy==='function'?copy():copy;
+ const control=$(button.dataset.helpFor),copy=controlHelp[button.dataset.helpFor];helpTooltip.textContent=control?.disabled&&control.title?control.title:typeof copy==='function'?copy():copy;
  const owner=button.closest('dialog[open]')||document.body;
  if(helpTooltip.parentElement!==owner)owner.append(helpTooltip);
  helpTooltip.style.visibility='hidden';helpTooltip.hidden=false;
@@ -1072,7 +1098,9 @@ document.addEventListener('close',hideControlHelp,true);
 window.addEventListener('resize',hideControlHelp);document.addEventListener('scroll',hideControlHelp,true);
 installControlHelp();
 controlHelp['voice-design-tab']=()=>readyDesignModels().length?'':caps?.modes.design.unavailable_reason||'Switch to a model which supports voice generation: VoxCPM2, Qwen3-TTS, MOSS VoiceGenerator';
-const voiceDesignTab=document.querySelector('[data-mode="design"]');
-voiceDesignTab.addEventListener('pointerenter',()=>{if(voiceDesignTab.getAttribute('aria-disabled')==='true')showControlHelp(voiceDesignTab)});
-voiceDesignTab.addEventListener('focus',()=>{if(voiceDesignTab.getAttribute('aria-disabled')==='true')showControlHelp(voiceDesignTab)});
-voiceDesignTab.addEventListener('pointerleave',scheduleHelpHide);voiceDesignTab.addEventListener('blur',scheduleHelpHide);
+controlHelp['record-lines-tab']='Disabled because no set-up model supports recording lines. Run make setup for a reference-capable model such as Higgs TTS 3 or VoxCPM2.';
+for(const tab of document.querySelectorAll('[data-mode]')){
+ tab.addEventListener('pointerenter',()=>{if(tab.getAttribute('aria-disabled')==='true')showControlHelp(tab)});
+ tab.addEventListener('focus',()=>{if(tab.getAttribute('aria-disabled')==='true')showControlHelp(tab)});
+ tab.addEventListener('pointerleave',scheduleHelpHide);tab.addEventListener('blur',scheduleHelpHide);
+}

@@ -31,6 +31,8 @@ After maintenance/tests, finish active test work and stop every agent-started ge
 
 Higgs is the initial default and requires a saved/uploaded recording plus its exact transcript. VoxCPM2, Qwen VoiceDesign and MOSS support description-based design. Capabilities expose `modes.design.supported_models` (static alternatives), `ready_models` and `unavailable_reason`.
 
+Studio offers Design a voice and Record lines. Within Record lines, Voice source chooses Saved voice, Upload reference audio, or a ready built-in speaker. These map to the same voice_id/reference_id/preset_voice API fields. Source switching keeps separate saved/upload transcript drafts, and Browse voice catalog opens Collection in a new tab. Unsupported sources leave the model choice empty until a capable model is selected. Disabled fields show an actionable reason in their helper text and help tooltip.
+
 The Design tab is enabled whenever any capable model is ready. Entering a source unsupported by the current model clears the model selection and offers only capable ready models, preserving the draft. Select a model before generation or LLM preview. If none can design, the tab remains disabled with the supported-model tooltip on hover, keyboard focus and tap. API requests still need an explicitly capable model or a capable saved default; Higgs design returns 422 before creating work. Queue acceptance of opaque speech does not establish compatibility; the generator validates it at consumption.
 
 Upload reference audio with `POST /api/references` (multipart file and optional transcript) or save directly to Collection with `POST /api/voices/upload` (file, name, description, transcript, repeated tags). Limits: 25 MiB, 1–30 seconds, 8–96 kHz, mono/stereo; preserve originals. Saved voice metadata supports names, descriptions, tags and exact transcripts. Search/list with `/api/voices`, get/edit `/api/voices/{id}`, tags `/api/voice-tags`. Save a generated take with `/api/voices` and its output_id. Read the live schema for precise fields.
@@ -38,6 +40,8 @@ Upload reference audio with `POST /api/references` (multipart file and optional 
 The studio preserves transcript edits through refreshes and offers Save transcript to voice; Generate saves a saved voice's edited transcript before admission. API ref_text is only an override: PATCH the voice transcript to persist it. Saving a complete generated take up to 30 actual seconds defaults its transcript to the spoken line without Fish/Higgs tags. Longer or potentially cut-off takes need an exact excerpt transcript rather than the full line. The listening room shows elapsed admission-to-completion time, including waiting, across batches and reloads.
 
 Vox Auto leaves accent/emotion directions editable and resolves to flexible conditioning when they are used; Combined/Continue performance disable them with an explanation. Higgs shows native Emotion/Prosody/Style instead of unsupported free-text direction fields. Its reference supplies the accent cue, with no accent-fidelity guarantee. Disabled fields have a lighter grey fill; never bypass capability checks merely to enable a control.
+
+Vox Auto preview uses that same resolved conditioning mode: a nonempty emotion direction can be expanded without manually selecting Voice reference. With an exact transcript and no new directions, Auto follows combined recorded performance and the UI explains why expansion is unavailable. Keep the existing conditioning and receipt checks when calling the API.
 
 ## Generate and compare
 

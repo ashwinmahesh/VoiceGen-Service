@@ -14,6 +14,8 @@ Screenshots use benign demonstration records and fake inference; displayed timin
 
 **Generate:** choose or design a voice, enter dialogue, direct the performance, and audition the results.
 
+Use **Design a voice** to create a character, or **Record lines** to reuse one. Record lines has a **Voice source** menu for saved voices, uploaded reference audio, and built-in speakers when available. Browse voice catalog opens your Collection in a new tab so your recording form stays open.
+
 An elapsed timer follows each request through waiting and generation. Reference transcripts stay with saved voices; you can save an edit directly or let Generate save it before submitting. Higgs shows its Emotion, Prosody, and Style controls in the delivery section, with accent supplied by the reference recording.
 
 Higgs starts new UI settings with a 2,000-token audio limit. If one option cannot finish within its limit, the others stay available; the failed card can prepare a single replacement with a higher limit. Advanced settings also offer native text chunk size for longer passages.
@@ -59,6 +61,8 @@ The optional prompt expander uses **Qwen3.5-2B, a 4-bit local language model**. 
 `make setup` downloads or reuses the LLM along with your chosen speech model. `make serve` enables it by default. The UI's **Prompt expansion** switch lets you opt out for a request; start with `make serve NO_LLM=1` to disable it for the session.
 
 Expansion follows different rules for each supported model and mode. The studio shows the original and expanded guidance. The LLM receives written voice and delivery directions, while dialogue, reference transcripts, and recordings stay out of its input. Suggestions still need listening checks; extra wording does not always produce a better performance.
+
+With a saved or uploaded voice in **Vox Auto**, enter an Emotion & delivery direction to preview its expansion. Auto then uses flexible voice conditioning. With no new directions and an exact transcript, Auto follows the recorded performance; the preview explains that choice. Disabled fields show why they are unavailable and how to enable a supported alternative.
 
 For **Higgs**, enter a short acting direction and select **Suggest delivery control**. The LLM chooses one supported Emotion, Prosody, or Style setting; it does not write a longer prose prompt. For example, “more expressive intonation” can suggest `expressive_high`. The preview shows what you typed and makes **No change suggested** explicit. Accent comes from the reference recording, and can still drift.
 

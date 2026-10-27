@@ -70,6 +70,26 @@ class ExpansionTests(unittest.TestCase):
         generated=self.f.client.post('/api/generate',json={**request,**record['updates'],'prompt_expansion_id':record['id']})
         self.assertEqual(generated.status_code,202,generated.text);self.f.finish(generated.json())
         self.assertEqual(self.f.engine.calls[-1][2],transcript)
+    def test_vox_saved_voice_auto_can_expand_new_delivery_without_changing_reference(self):
+        transcript='The exact words in the saved recording.'
+        reference=self.f.client.post('/api/references',files={'file':('voice.wav',test_contract.wav(),'audio/wav')},data={'transcript':transcript}).json()
+        voice=self.f.client.post('/api/voices',json={'reference_id':reference['id'],'name':'A demonstration voice'}).json()
+        request={'text':'New dialogue, unchanged.','voice_id':voice['id'],'clone_mode':'auto',
+                 'emotion':'Quietly amused.','accent':'Romanian-accented English.'}
+        response=self.preview(request);self.assertEqual(response.status_code,200,response.text)
+        record=response.json();self.assertEqual(record['context']['clone_mode'],'reference')
+        self.assertNotIn(transcript,json.dumps(self.calls))
+        generated=self.f.client.post('/api/generate',json={**request,**record['updates'],'prompt_expansion_id':record['id']})
+        self.assertEqual(generated.status_code,202,generated.text)
+        done=self.f.finish(generated.json());self.assertEqual(done['status'],'done',done)
+        self.assertEqual(done['result']['requested']['clone_mode'],'auto')
+        self.assertEqual(done['result']['effective']['clone_mode'],'reference')
+        self.assertEqual(self.f.engine.calls[-1][2],transcript)
+        calls=len(self.calls)
+        for clone in ('auto','combined','continuation'):
+            rejected=self.preview({**request,'emotion':'','accent':'','clone_mode':clone})
+            self.assertEqual(rejected.status_code,422,rejected.text)
+        self.assertEqual(len(self.calls),calls)
     def test_unsupported_modes_and_disabled_startup_fail_before_worker(self):
         reference=self.f.upload().json()
         for backend in ('qwen3','chatterbox','indextts'):
