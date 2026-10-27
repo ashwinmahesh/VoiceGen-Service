@@ -1,4 +1,4 @@
-"""Reversible catalog deletion preserves frozen jobs and every recording."""
+"""Collection deletion preserves recordings and frozen jobs during its restore window."""
 import json
 import fcntl
 from unittest import TestCase

@@ -1,5 +1,5 @@
 """Persistent voice descriptions and searchable reference recordings."""
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 from pathlib import Path
 import re
@@ -9,6 +9,7 @@ from uuid import uuid4
 from typing import Annotated
 
 from transcription_schemas import TranscriptionInfo
+from collection_schemas import CollectionDeletion
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 IDENTITY = re.compile(r"[a-f0-9]{32}")
@@ -17,6 +18,7 @@ Description = Annotated[str, StringConstraints(strip_whitespace=True, max_length
 Tag = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
 Tags = Annotated[list[Tag], Field(max_length=20)]
 metadata_lock = threading.RLock()
+DELETED_RETENTION_SECONDS = 24 * 60 * 60
 
 
 def now():
@@ -69,6 +71,7 @@ class Voice(BaseModel):
     tags: list[str] = Field(default_factory=list)
     transcript: str = ""
     transcription: TranscriptionInfo | None = None
+    deletion: CollectionDeletion | None = None
     design_description: str = ""
     created_at: str
     updated_at: str
@@ -106,8 +109,24 @@ def is_deleted(root, kind, identity):
     return collection_marker(root,kind,identity).is_file()
 
 
+def deletion_info(root, kind, identity):
+    marker = collection_marker(root, kind, identity)
+    if not marker.is_file():
+        return None
+    if marker.is_symlink() or marker.parent.is_symlink():
+        raise ValueError('Collection deletion state must not be a symbolic link')
+    row = json.loads(marker.read_text())
+    stamp = datetime.fromisoformat(row['deleted_at'])
+    if stamp.tzinfo is None:
+        raise ValueError('Deletion time must include its timezone')
+    return CollectionDeletion(deleted_at=stamp.isoformat(),
+        purge_after=(stamp + timedelta(seconds=DELETED_RETENTION_SECONDS)).isoformat(),
+        cleanup_started=bool(row.get('cleanup_started')),
+        cleanup_deferred_reason=row.get('cleanup_deferred_reason'))
+
+
 def set_deleted(root, kind, identity, deleted):
-    """Separate markers keep generated metadata, audio and queued references intact."""
+    """Keep recordings restorable for 24 hours before generator-owned cleanup."""
     from config import validate_mount
     validate_mount(Path(root))
     with metadata_lock:
@@ -136,6 +155,8 @@ def read_voice(root, identity, include_deleted=False):
     raw.setdefault("description", "")
     raw.setdefault("design_description", raw["description"])
     raw.setdefault("updated_at", raw.get("created_at", ""))
+    if include_deleted:
+        raw['deletion'] = deletion_info(root, 'voices', identity)
     return Voice.model_validate(raw)
 
 
@@ -146,7 +167,7 @@ def all_voices(root, deleted=False):
             try:
                 if is_deleted(root,'voices',path.stem)==deleted:
                     rows.append(read_voice(root,path.stem,include_deleted=deleted))
-            except (OSError, ValueError, TypeError):
+            except (OSError, ValueError, TypeError, KeyError):
                 continue
     return rows
 

@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager, nullcontext
 import json
 import hashlib
+from functools import wraps
 import sqlite3
 from pathlib import Path
 from typing import Literal
@@ -22,6 +23,7 @@ from jobs import JobManager, BusyError
 import storage
 import pause_edits
 from transcription_schemas import TranscriptionStatus
+from collection_schemas import CollectionCleanupStatus
 from transcription import transcribe_reference,TranscriptionError
 from transcription_assets import status as transcription_status
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -35,6 +37,14 @@ from voice_catalog import SaveVoice, VoiceUpdate, Voice, VoicePage
 
 engine = RuntimeEngine(ReadyModels())
 manager = JobManager(engine, db_path=QUEUE_DB)
+
+
+def collection_locked(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with manager.guard, voice_catalog.metadata_lock:
+            return function(*args, **kwargs)
+    return wrapped
 
 
 @asynccontextmanager
@@ -66,9 +76,15 @@ async def lifespan(app):
         manager.resources=ResourceMonitor(manager.store.path,PROFILE['backend'],PROFILE['id'],lambda:manager.stage,
             selection=(lambda:{'backend':engine.backend or app.state.default_model_snapshot,'model':engine.variant or engine.backend or app.state.default_model_snapshot}) if manager.runtime is True else None)
         manager.recover()
+        from collection_cleanup import CollectionCleaner
+        cleaner = CollectionCleaner(manager, storage.OUTPUT_DIR)
+        app.state.collection_cleaner = cleaner
         try:
+            await asyncio.to_thread(cleaner.start)
             yield
         finally:
+            await asyncio.to_thread(cleaner.close)
+            app.state.collection_cleaner = None
             await asyncio.to_thread(manager.close)
             manager.data_owner = None
 
@@ -77,6 +93,7 @@ app = FastAPI(title='Local Voice Studio API',version='4.0.0',lifespan=lifespan)
 app.state.llm_enabled=True
 app.state.queue_port=DEFAULT_QUEUE_PORT
 app.state.requested_default=None
+app.state.collection_cleaner=None
 app.add_exception_handler(sqlite3.Error,storage_error_response)
 app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
 app.add_middleware(BodyLimit)
@@ -331,7 +348,7 @@ def candidate_status(identity: str):
     except (OSError,ValueError): raise HTTPException(404,'Candidate batch not found') from None
 
 
-def prepare_generation(request):
+def prepare_generation(request, allow_deleted=False):
     try:effective = validate_controls(request)
     except ValueError:
         if manager.runtime is True and not (request.voice_id or request.reference_id or request.preset_voice):
@@ -343,6 +360,8 @@ def prepare_generation(request):
     reference_info = None
     transcript = request.ref_text or ''
     if request.voice_id or request.reference_id:
+        if request.voice_id and not allow_deleted:
+            voice_catalog.read_voice(ROOT,request.voice_id)
         reference = asset_path('voices' if request.voice_id else 'references',request.voice_id or request.reference_id)
         source = json.loads(reference.with_suffix('.json').read_text())
         transcript = request.ref_text if request.ref_text is not None else source.get('transcript','')
@@ -370,13 +389,14 @@ def prepare_queued_request(payload):
         request=request.model_copy(update={'model':PROFILE['backend']})
     if request.idempotency_key:
         raise ValueError('Use the queue envelope idempotency_key, not a key inside its payload')
-    effective,reference,transcript,info = prepare_generation(request)
+    effective,reference,transcript,info = prepare_generation(request,allow_deleted=True)
     errors = [] if manager.runtime is True else all_errors()+runtime_errors()
     if errors:
         raise ValueError('Incomplete generator setup: '+'; '.join(errors))
     return request,effective,reference,transcript,storage.output_folder(request.output_dir),info
 
 
+@collection_locked
 def admit_generation(request, candidates=False):
     try:
         existing = manager.existing_candidates(request) if candidates else manager.existing(request)
@@ -484,9 +504,23 @@ def history(q: str=Query(default='',max_length=300),limit: int=Query(default=24,
                         has_more=more,next_offset=offset+limit if more else None)
 
 
+@app.get('/api/collection/cleanup',response_model=CollectionCleanupStatus,tags=['Collection'],summary='Deleted-audio retention and automatic cleanup status')
+def collection_cleanup_status():
+    from collection_cleanup import INTERVAL_SECONDS
+    cleaner=app.state.collection_cleaner
+    if cleaner:return cleaner.snapshot()
+    return dict(retention_seconds=voice_catalog.DELETED_RETENTION_SECONDS,interval_seconds=INTERVAL_SECONDS,running=False)
+
+
+@collection_locked
 def change_collection(identity,kind,deleted):
     try:
         validate_mount(ROOT)
+        if not deleted:
+            from datetime import datetime, timezone
+            info=voice_catalog.deletion_info(ROOT,kind,identity)
+            if info and (info.cleanup_started or datetime.fromisoformat(info.purge_after)<=datetime.now(timezone.utc)):
+                raise HTTPException(410,'The 24-hour restore window has expired; this recording is awaiting or undergoing permanent cleanup.')
         if kind=='voices':voice_catalog.read_voice(ROOT,identity,include_deleted=True)
         else:storage.read_artifact(identity)
         changed=voice_catalog.set_deleted(ROOT,kind,identity,deleted)
@@ -511,6 +545,7 @@ def get_artifact(identity: str):
 
 
 @app.post('/api/artifacts/{identity}/pauses',status_code=201,response_model=Artifact)
+@collection_locked
 def adjust_artifact_pauses(identity: str, request: PauseAdjustment):
     try:
         return pause_edits.adjust_pauses(identity,request)
@@ -649,6 +684,7 @@ def edit_voice(identity: str, request: VoiceUpdate):
 
 
 @app.post("/api/voices", status_code=201, response_model=Voice)
+@collection_locked
 def save_voice(request: SaveVoice):
     if not request.name.strip():
         raise HTTPException(422, "Give this voice a name")

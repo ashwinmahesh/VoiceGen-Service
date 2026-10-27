@@ -8,7 +8,7 @@ These details support the [API guide](../API.md). Most clients only need the tas
 - Later catalog edits do not change a prepared job. Missing or changed reference bytes cause a visible failure. IndexTTS's separate emotion reference is checked too. Restore the original bytes before retrying.
 - After an interrupted generation, restart preserves its saved queue ordering, including manual moves. A matching complete WAV plus JSON metadata file can be recognized as finished without repeating synthesis. Missing or inconsistent completion records require recovery or review.
 - A crash before complete metadata exists can repeat synthesis under the same job ID. Saved admission and retry keys do not guarantee that generation happens exactly once across arbitrary crashes.
-- Failed work requires explicit retry. Removal retains the job's deleted record and retry-key mapping; it does not remove completed audio or reference media. Nothing is automatically pruned.
+- Failed work requires explicit retry. Removal retains the job's deleted record and retry-key mapping; it does not remove completed audio or reference media. Queue removal itself does not prune media. Collection deletion separately starts a 24-hour retention window, after which the generator removes expired files; see [retention](collection-retention.md).
 
 One generator owns queue processing. The separate queue API does not claim jobs, recover generation, or reset active work. Immediate jobs run ahead of normal work across all ready models; each group is first-in-first-out unless explicitly reordered. Manual moves and Run Now update scheduling order/priority, preserve admission sequence and fingerprints, and serialize with claims. A continuous stream of immediate jobs can delay normal work.
 

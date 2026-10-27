@@ -32,7 +32,7 @@ Higgs starts new UI settings with a 2,000-token audio limit. If one option canno
 
 Uploaded voices are transcribed locally with a small CPU model. Listen, correct the detected words, and save them with the voice; automatic transcription can also be switched off. [Upload transcription](docs/transcription.md) explains setup and API use.
 
-Voice library appears first and opens by default; History holds your generated takes. Both offer **Delete** with a confirmation popup. Use **Show deleted → Restore** to bring an entry back. Deletion removes it from the active collection while retaining its audio for queued jobs and existing recordings; it does not free disk space.
+Voice library appears first and opens by default; History holds your generated takes. Both offer **Delete** with a confirmation popup. Use the **Show deleted** switch and **Restore** within 24 hours to bring an entry back. After 24 hours, the generator automatically removes its audio and metadata from disk. Cleanup waits for unfinished jobs that still need the recording. [Retention and shared copies](docs/collection-retention.md).
 
 [View the deletion confirmation](docs/images/collection-delete-confirmation.jpg).
 
@@ -127,6 +127,7 @@ Here are the available endpoints. See [API.md](API.md) for request formats, exam
 | POST | `/api/jobs/{id}/retry` | Retry a failed job. |
 | POST | `/api/queue/{id}/move` | Move a waiting job up/down or beside another. |
 | POST | `/api/queue/{id}/run-now` | Put a waiting job first. |
+| GET | `/api/collection/cleanup` | Check 24-hour deleted-audio retention and cleanup status. |
 | GET | `/api/history` | Browse generated takes. |
 | GET | `/api/artifacts/{id}` | Get a take's details. |
 | DELETE | `/api/artifacts/{id}` | Move a take to deleted items. |

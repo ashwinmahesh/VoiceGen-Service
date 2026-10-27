@@ -1,6 +1,7 @@
 """The identical API contract used by both local studios."""
 from typing import Literal
 from transcription_schemas import TranscriptionInfo
+from collection_schemas import CollectionDeletion
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -259,6 +260,7 @@ class Artifact(BaseModel):
     audio_url: str
     path: str
     metadata_path: str | None = None
+    deletion: CollectionDeletion | None = None
     requested: dict = Field(default_factory=dict)
     effective: dict = Field(default_factory=dict)
     waveform: list[float] = Field(default_factory=list)

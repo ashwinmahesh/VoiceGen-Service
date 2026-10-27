@@ -261,7 +261,7 @@ class BackendTests(unittest.TestCase):
             for _ in range(2):
                 async with server.lifespan(server.app):pass
         for backend in BACKENDS:
-            with self.subTest(backend=backend),patch('server.PROFILE',self.profile(backend)),patch('server.prepare_storage'),patch.object(server.app.state,'llm_enabled',False),patch('server.manager',Mock()) as manager,patch('data_owner.own_data_directory',side_effect=lambda *args:nullcontext(object())):
+            with self.subTest(backend=backend),patch('server.PROFILE',self.profile(backend)),patch('server.prepare_storage'),patch.object(server.app.state,'llm_enabled',False),patch('server.manager',Mock()) as manager,patch('data_owner.own_data_directory',side_effect=lambda *args:nullcontext(object())),patch('collection_cleanup.CollectionCleaner') as cleaner:
                 notice=notice_for(backend)
                 if notice:
                     with self.assertLogs(level=logging.WARNING) as output:asyncio.run(start_twice())
@@ -274,6 +274,8 @@ class BackendTests(unittest.TestCase):
                     with self.assertNoLogs(level=logging.WARNING):asyncio.run(start_twice())
                 self.assertEqual(manager.recover.call_count,2)
                 self.assertEqual(manager.close.call_count,2)
+                self.assertEqual(cleaner.return_value.start.call_count,2)
+                self.assertEqual(cleaner.return_value.close.call_count,2)
 
     def test_managed_start_surfaces_license_warning_in_launching_terminal(self):
         import io,manage,sys
