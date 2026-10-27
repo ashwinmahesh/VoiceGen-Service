@@ -24,6 +24,7 @@ let appliedExpansion=null,pendingExpansion=null,enhancing=false,expansionChoice=
 let catalogOffset = 0, searchTimer = null, catalogRequest = 0, refreshRequest=0, voiceEditor = null, voiceSaving = false;
 let collectionDeleteTarget=null,collectionChanging=false;
 let selectedTags=new Set(),availableTags=[];
+let collectionCleanup=null;
 let monitoredImmediate=false,higgsSelectedControls={},suspendedHiggsDirections={};
 let recordingStore=null,recordingSelection=null,recordingPoller=null,healthSnapshot=null,studioInitialized=false,studioStarting=false;
 let returnPoller=null,returnSelection=null,returnSummary=null;
@@ -366,8 +367,9 @@ function voicePreview(){const row=voiceRows.find(v=>v.id===$('voice').value);$('
 $('voice').onchange=()=>{voicePreview();persist()};
 async function refresh() {
   const token=++refreshRequest;
-  const [picker, tags] = await Promise.all([
-    api('/api/voices?limit=100'), api('/api/voice-tags?'+new URLSearchParams({deleted:$('show-deleted').checked}))
+  const [picker, tags, cleanup] = await Promise.all([
+    api('/api/voices?limit=100'), api('/api/voice-tags?'+new URLSearchParams({deleted:$('show-deleted').checked})),
+    collectionPage?api('/api/collection/cleanup').catch(()=>({last_error:'Cleanup status is temporarily unavailable.'})):null
   ]);
   if(token!==refreshRequest)return;
   let selected = $('voice').value;
@@ -380,6 +382,7 @@ async function refresh() {
   }
   if(token!==refreshRequest)return;
   voiceRows=rows;
+  collectionCleanup=cleanup;
   $('voice').replaceChildren(new Option('Choose a saved voice…', ''));
   for (const row of voiceRows) $('voice').append(new Option(row.name, row.id));
   $('voice').value = selected;
@@ -456,6 +459,7 @@ function renderCards() {
   $('voice-next').disabled = !page.has_more;
   $('catalog-count').textContent = `${page.total} ${deleted?'deleted ':''}${isVoices?'voice':'take'}${page.total===1?'':'s'}`;
   $('deleted-collection-hint').hidden=!deleted;
+  $('deleted-collection-hint').textContent='Restore deleted recordings within 24 hours. After that, their files are removed automatically while the generator runs; unfinished jobs can delay cleanup.'+(collectionCleanup?.last_error?' Cleanup is delayed: '+collectionCleanup.last_error:'');
   $('voice-page-label').textContent = page.total ?
     `${catalogOffset + 1}–${catalogOffset + rows.length} of ${page.total}` : 'No entries';
   $('collection-empty').hidden = rows.length > 0;
@@ -470,6 +474,11 @@ function renderCards() {
     head.append(el('strong', isVoices ? row.name : new Date(row.created_at).toLocaleString()),
       el('span', `${row.duration.toFixed(1)}s`, 'tiny'));
     card.append(head, el('p', isVoices ? row.description || 'No description yet.' : row.text, 'library-description'));
+    if(deleted&&row.deletion){
+      const info=row.deletion;
+      const message=info.cleanup_started?'Removing files…':info.cleanup_deferred_reason||'Files will be removed after '+new Date(info.purge_after).toLocaleString()+'.';
+      card.append(el('p',message,'notice'));
+    }
     if (isVoices && row.tags.length) {
       const tags = el('div', null, 'tag-list');
       for (const tag of row.tags) {
@@ -482,8 +491,7 @@ function renderCards() {
     }
     if (!isVoices && row.emotion) card.append(el('p', row.emotion));
     if (!isVoices && (row.preset_voice || row.steering_emotion || row.accent)) card.append(el('p',[row.preset_voice?'Preset '+row.preset_voice:'',row.steering_emotion?'Experimental '+row.steering_emotion+' steering':'',row.accent].filter(Boolean).join(' · ')));
-    const player = el('audio'); player.controls = true; player.preload = 'none'; player.src = row.audio_url;
-    card.append(player);
+    if(!row.deletion?.cleanup_started){const player = el('audio'); player.controls = true; player.preload = 'none'; player.src = row.audio_url;card.append(player)}
     const actions = el('div', null, 'card-actions');
     if(!deleted){
     const use = el('button', isVoices ? 'Use this voice' : 'Open take', 'secondary');
@@ -500,10 +508,11 @@ function renderCards() {
       const pauses=el('button','Adjust pauses','secondary');pauses.type='button';pauses.onclick=()=>openPauseEditor(row);actions.append(pauses);
     }
     }
-    const download = el('a', 'Download WAV', 'secondary');
+    if(!row.deletion?.cleanup_started){const download = el('a', 'Download WAV', 'secondary');
     download.href = row.audio_url + '?download=true'; download.download = '';
-    actions.append(download);
+    actions.append(download)}
     const change=el('button',deleted?'Restore':'Delete',deleted?'secondary':'secondary danger');change.type='button';
+    if(deleted&&(row.deletion?.cleanup_started||Date.parse(row.deletion?.purge_after)<=Date.now())){change.disabled=true;change.title='The 24-hour restore window has expired.'}
     change.onclick=()=>deleted?restoreCollectionEntry(row,isVoices,change):openCollectionDelete(row,isVoices);
     actions.append(change);card.append(actions); $('cards').append(card);
   }
@@ -533,7 +542,7 @@ $('collection-delete-confirm').onclick=async()=>{
    if(mode==='saved'){transcriptVoice=null;$('ref-text').value='';clearExpansion();persist()}
   }
   $('collection-delete-dialog').close();
-  collectionNotice(`Deleted “${target.label}”. Use Show deleted to restore it.`);
+  collectionNotice(`Deleted “${target.label}”. Restore it within 24 hours using Show deleted; its files are then removed automatically.`);
   await refresh();
  }catch(exc){
   if(completed)error('Deleted successfully, but Collection could not refresh. Reload the page. '+exc.message);
@@ -943,6 +952,7 @@ function setCollection(next) {
 }
 function syncCollectionLocation(){if(collectionPage){const url=new URL(location.href);url.searchParams.set('tab',collection);if($('show-deleted').checked)url.searchParams.set('deleted','1');else url.searchParams.delete('deleted');history.replaceState(null,'',url)}}
 $('show-deleted').onchange=()=>{catalogOffset=0;catalogRequest++;selectedTags.clear();renderTagChoices();syncCollectionLocation();refresh().catch(exc=>error(exc.message))};
+setInterval(()=>{if(collectionPage&&document.visibilityState==='visible'&&$('show-deleted').checked&&!$('collection-delete-dialog').open&&$('tag-options').hidden)refresh().catch(exc=>error(exc.message))},60000);
 function chooseVoice(row, focus = true) {
   if(browsePage&&focus){location.href='/?voice='+encodeURIComponent(row.id);return;}
   if (!voiceRows.some(item => item.id === row.id)) voiceRows.push(row);
@@ -1363,7 +1373,7 @@ async function openPageSelection(){
 }
 
 const controlHelp={
- 'show-deleted':'Show deleted voices or takes instead of your active collection. Restore returns an entry to its library. Audio stays on disk so queued jobs and saved recordings continue to work.',
+ 'show-deleted':'Show recordings deleted within the last 24 hours. Restore brings them back before that deadline. After 24 hours the generator removes their audio and metadata from disk, waiting for unfinished jobs that still need the files.',
  'record-source':'Choose a saved character, upload a reference recording, or use a built-in speaker when available. The same Record lines form handles each source.',
  description:'Describe the voice you want: pitch, age, accent and vocal texture. This designs a voice; save a take to reuse its recording.',
  voice:'Reuse a recording from your voice library for new dialogue. The recording supplies the speaker identity; catalog notes help you find it.',

@@ -301,9 +301,9 @@ PATCH replaces the supplied fields. Use `"description": ""`, `"transcript": ""`,
 
 ### Delete and restore Collection entries
 
-Voice library is the UI's first/default Collection tab. Both voice and History cards open a confirmation popup before deletion. Cancellation sends no delete request. **Show deleted** lists removed entries and provides Restore.
+Voice library is the UI's first/default Collection tab. Both voice and History cards open a confirmation popup before deletion. Cancellation sends no delete request. The **Show deleted** switch lists retained deleted entries and provides Restore for 24 hours.
 
-Deletion is reversible and affects Collection visibility. The service retains every recording, original metadata file, output index, queue entry, job result, and saved voice copied from a take. Known audio URLs and accepted jobs remain usable; this is not disk cleanup or access revocation. Separate ignored marker files under the configured data folder's `collection-deletions/` directory keep deletion state across restarts and metadata reconciliation.
+Deletion starts a **24-hour retention window**, measured from the first DELETE; repeated DELETE does not extend it. The generator checks once a minute while running and on startup, then removes expired audio, its metadata and output index, plus an uploaded voice’s unshared original/normalized reference. Separate saved voices and other takes are independent copies and stay available. Queued/running jobs defer cleanup of files they still need. Queue records/results stay as history; their expired audio URLs return 404. See [retention details](docs/collection-retention.md).
 
 | Operation | Voice | Take |
 | --- | --- | --- |
@@ -311,7 +311,7 @@ Deletion is reversible and affects Collection visibility. The service retains ev
 | Restore | `POST /api/voices/{id}/restore` | `POST /api/artifacts/{id}/restore` |
 | List deleted only | `GET /api/voices?deleted=true` | `GET /api/history?deleted=true` |
 
-`deleted` defaults to `false`, so normal searches, totals, pagination, the voice picker, and tag counts exclude removed entries. `GET /api/voice-tags?deleted=true` counts tags in deleted voices. Search/tag/sort/pagination still apply to the selected list. Getting or editing a deleted library voice returns 404 until it is restored; direct take/job/audio links continue working.
+`deleted` defaults to `false`, so normal searches, totals, pagination, the voice picker, and tag counts exclude removed entries. `GET /api/voice-tags?deleted=true` counts tags in deleted voices. Search/tag/sort/pagination still apply to the selected list. Getting or editing a deleted library voice returns 404 until it is restored; direct take/audio links work while the files remain. Restore after the 24-hour deadline returns **410** while cleanup is pending, and **404** after removal. New generator submissions cannot select deleted voices; already admitted jobs can finish. Deleted list entries include `deletion` with `deleted_at`, `purge_after`, `cleanup_started`, and optional `cleanup_deferred_reason`. `GET /api/collection/cleanup` reports the retention seconds, sweep interval, running state, last check/error, and last sweep’s removed/deferred counts. This read-only endpoint never triggers deletion.
 
 Delete and Restore return `200` with the same shape:
 
