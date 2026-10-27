@@ -13,7 +13,7 @@ const duration=seconds=>seconds<60?number(seconds)+'s':seconds<3600?number(secon
 const timeLabel=(timestamp,long=false)=>new Date(timestamp*1000).toLocaleString(undefined,long?{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}:{hour:'2-digit',minute:'2-digit',second:'2-digit'});
 function node(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n}
 function svg(tag,attrs,text){const n=document.createElementNS(svgNS,tag);for(const[k,v]of Object.entries(attrs))n.setAttribute(k,String(v));if(text!==undefined)n.textContent=text;return n}
-async function api(path){const r=await fetch(path);if(!r.ok){let body;try{body=await r.json()}catch{}throw Object.assign(Error(typeof body?.detail==='string'?body.detail:`Resource history unavailable (${r.status}). Try again shortly.`),{status:r.status})}return r.json()}
+async function api(path){return VoiceRecording.readJSON(path)}
 function error(message){$('resource-error').textContent=message;$('resource-error').hidden=!message}
 function status(data){const c=data.collector;if(!c)return;$('collector-status').textContent=c.running?'Recording':'Recorder stopped';const stale=c.last_sample_at&&Date.now()/1000-c.last_sample_at>15;$('collector-status').textContent+=(stale?' · waiting for samples':'');const warnings=[c.storage_error,c.lifecycle_error,...(c.counter_notices||[])];if(c.dropped_lifecycle_events)warnings.push(`${c.dropped_lifecycle_events} model event boundaries could not be saved.`);if(c.dropped_samples)warnings.push(`${c.dropped_samples} sample(s) could not be saved in this session.`);error(warnings.filter(Boolean).join(' '))}
 function legend(target,data){const items=new Map(data.models.map(row=>[row.backend,row]));target.replaceChildren(...[...items.keys()].map(backend=>{const n=node('span');const dot=node('i');dot.style.background=colors[backend]||'#aaa';n.append(dot,document.createTextNode(names[backend]||backend));return n}));if(!items.size)target.append(node('span','No recorded samples in this window.'))}
@@ -101,11 +101,26 @@ async function jobLifecycle(token){
  renderLifecycle($('job-lifecycle-history'),events,true);$('job-models-prev').disabled=jobModelOffset===0;$('job-models-next').disabled=!events.has_more;return events;
 }
 async function loadJobResources(token){
+ let currentJob=null;
+ try{currentJob=await api('/api/jobs/'+encodeURIComponent(selectedJob))}catch(exc){if(exc.status!==404&&token===requestNumber)$('job-log-notice').textContent='Recording details temporarily unavailable.'}
+ if(token!==requestNumber)return;
+ $('job-recording').href=VoiceRecording.url(currentJob?.candidate_batch_id?{kind:'candidates',id:currentJob.candidate_batch_id,selected:currentJob.result?.id}:{kind:'job',id:selectedJob});$('job-recording').hidden=false;
  let job;
  try{const suffix=selectedRun?'?run_id='+encodeURIComponent(selectedRun):'';job=await api('/api/observability/jobs/'+encodeURIComponent(selectedJob)+suffix)}
  catch(exc){
   if(token!==requestNumber)return;if(exc.status!==404)throw exc;
-  const events=await jobLifecycle(token);if(token!==requestNumber)return;if(!events?.total)throw exc;
+  const events=await jobLifecycle(token);if(token!==requestNumber)return;
+  if(!events?.total){
+   if(!currentJob)throw exc;
+   const waiting=['queued','running'].includes(currentJob.status);
+   $('job-detail').hidden=false;$('job-title').textContent='Job '+selectedJob.slice(0,10);
+   $('job-caption').textContent=`${names[currentJob.backend]||currentJob.backend} · ${currentJob.stage||currentJob.status}`;
+   $('job-attempt').replaceChildren(new Option('No recorded attempt yet',''));$('job-attempt').disabled=true;$('job-legend').replaceChildren();
+   $('job-charts').replaceChildren(node('p',waiting?'Waiting for resource samples. This page updates automatically when generation starts.':'No retained resource samples for this recording. Audio remains available through Return to recording.','hint'));
+   $('job-stage-list').replaceChildren(node('li',waiting?'Waiting for generation to start.':'No retained stage samples.'));
+   clearJobLog();$('job-log-notice').textContent=waiting?'Logs will appear here if this model records them.':'No generation log recorded for this attempt.';
+   return;
+  }
   $('job-detail').hidden=false;$('job-title').textContent='Job '+selectedJob.slice(0,10);$('job-caption').textContent='Retained model operations · resource curves and sampled stages are kept for seven days.';
   $('job-attempt').replaceChildren(new Option(selectedRun?'Selected attempt':'All retained attempts',selectedRun||''));$('job-attempt').disabled=true;$('job-legend').replaceChildren();
   $('job-charts').replaceChildren(node('p','No retained resource samples for this attempt. Model load/unload history remains available below.','hint'));
@@ -162,7 +177,8 @@ $('job-models-prev').onclick=()=>{jobModelOffset=Math.max(0,jobModelOffset-25);r
 $('refresh-resources').onclick=()=>refresh(true);$('jobs-prev').onclick=()=>{offset=Math.max(0,offset-25);refresh(true)};$('jobs-next').onclick=()=>{offset+=25;refresh(true)};
 $('job-attempt').onchange=()=>loadJob(selectedJob,$('job-attempt').value);
 $('copy-job-log').onclick=async()=>{try{await navigator.clipboard.writeText($('job-log-output').textContent);$('job-log-notice').textContent='Visible log copied.'}catch{$('job-log-notice').textContent='Could not copy automatically. Select the log text and copy it.'}};
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
+function resumeResources(){if(!document.hidden)refresh(true)}
+document.addEventListener('visibilitychange',resumeResources);window.addEventListener('pageshow',resumeResources);window.addEventListener('online',resumeResources);window.addEventListener('focus',resumeResources);
 const params=new URLSearchParams(location.search);if(/^[a-f0-9]{32}$/.test(params.get('job')||'')){selectedJob=params.get('job');selectedRun=/^[a-f0-9]{32}$/.test(params.get('run')||'')?params.get('run'):null;setView('jobs')}else if(params.get('view')==='models')setView('models');else refresh();
 setInterval(()=>{if(!document.hidden)refresh()},5000);
 

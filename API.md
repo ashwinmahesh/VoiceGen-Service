@@ -783,6 +783,8 @@ The source must be PCM16 WAV, mono/stereo, 8–96 kHz, at most 600 seconds and 1
 
 An **output** (also called an artifact in endpoint names) is a generated or edited recording. Its ID is available as `job.result.id`.
 
+Browser links use `/?candidates=BATCH_ID&option=OUTPUT_ID`, `/?job=JOB_ID`, or `/?artifact=OUTPUT_ID`. The option is optional. Monitoring a batch child reopens all its options. Studio remembers its last recording per browser origin and serving project, separately from model-specific form drafts, and reconnects using GET requests only. Explicit links take precedence. Observability uses `/observability?job=JOB_ID`, with a return link to the recording. A queued job has no resource samples yet; its detail API continues to return 404 until an attempt is recorded. Audio/queue APIs are unchanged.
+
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | GET | `/api/history?q=&limit=24&offset=0` | Search generated text, voice descriptions, and acting directions; newest first. |

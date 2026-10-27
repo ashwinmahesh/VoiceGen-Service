@@ -49,6 +49,8 @@ Generate immediately is a default-on switch. Generate stays disabled/loading whi
 
 Vox Auto preview uses that same resolved conditioning mode: a nonempty emotion direction can be expanded without manually selecting Voice reference. With an exact transcript and no new directions, Auto follows combined recorded performance and the UI explains why expansion is unavailable. Keep the existing conditioning and receipt checks when calling the API.
 
+Studio can be left during generation. Returning restores the last batch/job and chosen take per browser origin/project, with the last model and timer, independently of per-model form drafts. Explicit `/?candidates=<batch>&option=<output>`, `/?job=<job>` and `/?artifact=<output>` links win. Child-job monitoring recovers its whole batch. Temporary connection loss reconnects using bounded GETs; do not submit again or change accepted seeds/keys. Resources & logs is available for every option and selected take, with Return to recording from the resource page. Queued jobs show a waiting state until sampling starts; seven-day resource retention still applies.
+
 ## Generate and compare
 
 `POST /api/generate` accepts one flat Generation request. Include `model` to choose a ready backend; omitted/null uses the shared saved default at admission. That choice is immutable for the job. Shared controls are top-level; model-specific settings belong under the exact model ID (`higgs`, `voxcpm2`, `qwen3`, etc.). Use the request model’s capabilities/defaults, asset requirements and prompt profile, never the last active backend’s.

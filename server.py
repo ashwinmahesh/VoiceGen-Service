@@ -111,6 +111,10 @@ def asset_path(kind, identity):
 def index(): return FileResponse(PROJECT_ROOT/'ui/index.html')
 
 
+@app.get('/assets/recording-session.js',include_in_schema=False)
+def recording_session_script(): return FileResponse(PROJECT_ROOT/'ui/recording-session.js',media_type='text/javascript')
+
+
 @app.get('/assets/app.js',include_in_schema=False)
 def app_script(): return FileResponse(PROJECT_ROOT/'ui/app.js',media_type='text/javascript')
 

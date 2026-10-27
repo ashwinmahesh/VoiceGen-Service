@@ -24,6 +24,7 @@ let appliedExpansion=null,pendingExpansion=null,enhancing=false,expansionChoice=
 let catalogOffset = 0, searchTimer = null, catalogRequest = 0, refreshRequest=0, voiceEditor = null, voiceSaving = false;
 let collectionDeleteTarget=null,collectionChanging=false;
 let monitoredImmediate=false,higgsSelectedControls={},suspendedHiggsDirections={};
+let recordingStore=null,recordingSelection=null,recordingPoller=null,healthSnapshot=null,studioInitialized=false,studioStarting=false;
 const enabledPlaceholders=new WeakMap();
 function disabledPlaceholder(input,reason){
  if(input.disabled){
@@ -36,7 +37,7 @@ function disabledPlaceholder(input,reason){
  }
 }
 const presets={natural:'Natural, conversational delivery with relaxed pacing.',joy:'Excited and joyful, with an audible smile and lively pacing.',sadness:'Quiet sadness and disappointment, speaking slowly with a trembling voice.',anger:'Angry and frustrated, with firm emphasis and a tense, forceful delivery.',fear:'Frightened and anxious, with a trembling voice and urgent, uneven pacing.',relief:'Deeply relieved, softening into warmth with a gentle exhale.',sarcasm:'Dry, understated sarcasm with deliberate pauses and restrained emphasis.',whisper:'A soft, intimate whisper, speaking gently and slowly.',custom:''};
-async function api(path,options={}){const response=await fetch(path,options);if(!response.ok){let body;try{body=await response.json()}catch{}throw Error(typeof body?.detail==='string'?body.detail:body?.detail?.[0]?.msg||`Request failed (${response.status})`)}return response.json()}
+async function api(path,options={}){return VoiceRecording.readJSON(path,{timeout:options.method?0:10000,...options})}
 function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
 function error(message){const target=$($('queue-dialog').open?'queue-error':browsePage?'page-error':'error');target.textContent=message;target.hidden=false}function announce(text){$('announcement').textContent=text}
 function immediateInProgress(){return !!watching&&monitoredImmediate&&$('generate-immediately').checked}
@@ -59,7 +60,8 @@ function updateElapsed(){
 }
 function generationTiming(identity,created,label,completed=null){
  const timestamp=Date.parse(created),end=Date.parse(completed);
- generationClock={identity,start:Number.isFinite(timestamp)?timestamp:generationClock?.identity===identity?generationClock.start:Date.now(),end:Number.isFinite(end)?end:null,label};updateElapsed();
+ generationClock={identity,start:Number.isFinite(timestamp)?timestamp:generationClock?.identity===identity?generationClock.start:Date.now(),end:Number.isFinite(end)?end:null,label};
+ if(recordingSelection?.id===identity){recordingSelection.timing=generationClock;recordingStore?.save(recordingSelection)}updateElapsed();
 }
 function batchTiming(batch){
  const running=batch.jobs.find(job=>job.status==='running'),finished=!['queued','running'].includes(batch.status);
@@ -67,7 +69,9 @@ function batchTiming(batch){
  generationTiming(batch.id,batch.created_at,running?`${running.stage} · option ${running.candidate_index} of ${batch.candidate_count}`:finished?`${batch.done_count} of ${batch.candidate_count} ready`:'Waiting in queue',finished?(completed||new Date().toISOString()):null);
 }
 setInterval(updateElapsed,1000);
-document.addEventListener('visibilitychange',updateElapsed);window.addEventListener('focus',updateElapsed);
+function resumeRecording(){updateElapsed();if(document.hidden)return;recordingPoller?.refresh();if(studioInitialized)health();else startStudio()}
+document.addEventListener('visibilitychange',resumeRecording);window.addEventListener('focus',resumeRecording);window.addEventListener('pageshow',resumeRecording);window.addEventListener('online',resumeRecording);
+
 function updatePromptExpansion(){
  if(!caps)return;
  const available=modelChoiceReady&&!!caps.limits.prompt_expansion?.enabled,enabled=available&&$('prompt-expansion-enabled').checked,backend=caps.backend;
@@ -520,7 +524,13 @@ $('search').oninput = () => {
   searchTimer=setTimeout(()=>loadCollection().catch(exc=>error(exc.message)),250);
 };
 function waveform(peaks){const canvas=$('waveform'),ratio=devicePixelRatio||1;canvas.width=canvas.clientWidth*ratio;canvas.height=110*ratio;const c=canvas.getContext('2d');c.clearRect(0,0,canvas.width,canvas.height);c.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent');if(!peaks?.length)return;const step=canvas.width/peaks.length;peaks.forEach((peak,i)=>{const h=Math.max(2*ratio,peak*canvas.height*.9);c.fillRect(i*step,(canvas.height-h)/2,Math.max(1,step*.55),h)})}
-function showResult(row){if(browsePage){location.href='/?artifact='+encodeURIComponent(row.id);return}latest=row;renderExpansion(candidateExpansion(row),'result-expansion-details','Saved with this take');for(const [id,card] of candidateCards)card.element.dataset.selected=String(id===row.id);if(currentCandidates&&row.candidate_batch_id!==currentCandidates.id)$('candidate-results').hidden=true;$('result-title').textContent=row.candidate_index?'Option '+row.candidate_index+' · selected take':'Your latest take';const details=[row.preset_voice?'Preset '+row.preset_voice:'',row.clone_mode==='combined'?'Combined identity and recorded performance':row.clone_mode==='continuation'?'Continued reference performance':'',row.accent?'Accent direction: '+row.accent:'',row.steering_emotion?`Experimental ${row.steering_emotion} steering · ${row.steering_strength}`:''].filter(Boolean);$('direction-summary').textContent=details.join(' · ');$('direction-summary').hidden=!details.length;$('empty').hidden=true;$('working').hidden=true;$('result').hidden=false;$('player').src=row.audio_url;$('download').href=row.audio_url+'?download=true';$('metrics').textContent=`${row.duration.toFixed(1)} seconds · ${row.sample_rate/1000} kHz · ${row.transformation?`Pause edit ${row.transformation.processing_seconds}s · Original ${row.timing_scope?'process total':'synthesis'}`:row.timing_scope?'Total process':'Synthesis'} ${row.generation_seconds}s${row.cold_load&&Number.isFinite(row.load_seconds)?` · Load ${row.load_seconds}s`:``}`;$('result-seed').textContent=`Seed ${row.seed}`;$('path').textContent=row.path;$('truncated').hidden=!row.possibly_truncated;$('save-hint').textContent='Use a clean, natural take as your character reference. Up to the first 30 seconds are saved.';waveform(row.waveform)}
+function showResult(row){if(browsePage){location.href='/?artifact='+encodeURIComponent(row.id);return}const sameAudio=latest?.id===row.id&&$('player').getAttribute('src')===row.audio_url;
+ if(currentCandidates&&row.candidate_batch_id!==currentCandidates.id){recordingPoller?.stop();watching=null;monitoredImmediate=false;currentCandidates=null;candidateCards.clear();$('candidate-results').hidden=true;controls()}
+ latest=row;
+ if(currentCandidates&&currentCandidates.id===row.candidate_batch_id)rememberRecording({kind:'candidates',id:currentCandidates.id,selected:row.id,model:row.backend});
+ else rememberRecording({kind:recordingSelection?.kind==='job'&&recordingSelection.id===row.id?'job':'artifact',id:row.id,model:row.backend});
+ $('result-resources').href='/observability?job='+encodeURIComponent(row.id);
+ renderExpansion(candidateExpansion(row),'result-expansion-details','Saved with this take');for(const [id,card] of candidateCards)card.element.dataset.selected=String(id===row.id);$('result-title').textContent=row.candidate_index?'Option '+row.candidate_index+' · selected take':'Your latest take';const details=[row.preset_voice?'Preset '+row.preset_voice:'',row.clone_mode==='combined'?'Combined identity and recorded performance':row.clone_mode==='continuation'?'Continued reference performance':'',row.accent?'Accent direction: '+row.accent:'',row.steering_emotion?`Experimental ${row.steering_emotion} steering · ${row.steering_strength}`:''].filter(Boolean);$('direction-summary').textContent=details.join(' · ');$('direction-summary').hidden=!details.length;$('empty').hidden=true;$('working').hidden=true;$('result').hidden=false;if(!sameAudio)$('player').src=row.audio_url;$('download').href=row.audio_url+'?download=true';$('metrics').textContent=`${row.duration.toFixed(1)} seconds · ${row.sample_rate/1000} kHz · ${row.transformation?`Pause edit ${row.transformation.processing_seconds}s · Original ${row.timing_scope?'process total':'synthesis'}`:row.timing_scope?'Total process':'Synthesis'} ${row.generation_seconds}s${row.cold_load&&Number.isFinite(row.load_seconds)?` · Load ${row.load_seconds}s`:``}`;$('result-seed').textContent=`Seed ${row.seed}`;$('path').textContent=row.path;$('truncated').hidden=!row.possibly_truncated;$('save-hint').textContent='Use a clean, natural take as your character reference. Up to the first 30 seconds are saved.';waveform(row.waveform)}
 let pauseSource=null,pauseSpans=[],pausePreviewEnd=null,pausePreviewTimer=null,pausePendingKey=null,pauseSaving=false;
 function pauseError(message){$('pause-error').textContent=message;$('pause-error').hidden=false}
 function renderPauseSpans(){
@@ -586,39 +596,65 @@ function renderCandidates(batch){
     }
    }
   }
+  const resources=el('a','Resources & logs ↗','plain');resources.href='/observability?job='+encodeURIComponent(job.id);resources.setAttribute('aria-label','Resources & logs for option '+job.candidate_index);card.append(resources);
   if(previous)previous.element.replaceWith(card);else $('candidate-cards').append(card);
   candidateCards.set(job.id,{signature,element:card});
  }
 }
-async function watchCandidates(identity,immediate=null){
- if(browsePage){location.href='/?candidates='+encodeURIComponent(identity);return}
- const token='candidates:'+identity;if(watching===token)return;
- if(latest?.candidate_batch_id!==identity){latest=null;$('result').hidden=true;}
- watching=token;monitoredImmediate=immediate??true;controls();$('error').hidden=true;$('empty').hidden=true;$('working').hidden=true;
- localStorage.setItem(storageKey+'-candidates',identity);localStorage.removeItem(storageKey+'-job');
- try{while(watching===token){
-  const batch=await api('/api/candidates/'+identity);if(watching!==token)return;
-  monitoredImmediate=['queued','running'].includes(batch.status)&&batch.jobs.some(job=>job.generate_immediately);controls();
-  renderCandidates(batch);
-  if(!latest){const first=batch.jobs.find(job=>job.result);if(first)showResult(first.result)}
-  if(!['queued','running'].includes(batch.status)){await refresh();announce(`${batch.done_count} of ${batch.candidate_count} voice options ready.`);break}
-  await new Promise(resolve=>setTimeout(resolve,1500));
- }}catch(exc){if(watching===token)error(exc.message+' Your accepted options remain in Queue; reload to reconnect.')}
- finally{if(watching===token){watching=null;monitoredImmediate=false;controls();refreshQueue().catch(()=>{})}}
+function rememberRecording(selection){
+ if(browsePage)return;
+ const same=recordingSelection?.kind===selection.kind&&recordingSelection?.id===selection.id;
+ recordingSelection={...(same?recordingSelection:{}),...selection,model:selection.model||(same?recordingSelection.model:null)||caps?.backend};
+ if(!same){const clock=selection.timing;generationClock=clock&&clock.identity===selection.id&&Number.isFinite(clock.start)?clock:null;updateElapsed()}
+ recordingStore?.save(recordingSelection);
+ history.replaceState(null,'',VoiceRecording.url(recordingSelection));
 }
-async function watch(identity){
- if(browsePage){location.href='/?job='+encodeURIComponent(identity);return}if(watching===identity)return;localStorage.removeItem(storageKey+'-candidates');$('candidate-results').hidden=true;watching=identity;monitoredImmediate=true;controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
- localStorage.setItem(storageKey+'-job',identity);
- try{while(watching===identity){const job=await api('/api/jobs/'+identity);if(watching!==identity)return;
-  monitoredImmediate=['queued','running'].includes(job.status)&&job.generate_immediately;controls();
-  $('stage').textContent=job.stage;
-  $('working-job-resources').href='/observability?job='+encodeURIComponent(identity);
+function recordingConnection(reconnecting){
+ $('recording-connection').hidden=!reconnecting;
+ $('recording-connection').textContent='Connection interrupted. Your request is saved; reconnecting to check progress…';
+}
+function finishMonitoring(){watching=null;monitoredImmediate=false;controls();refreshQueue().catch(()=>{})}
+function monitorRecording(path,onData){
+ recordingPoller?.stop();
+ recordingPoller=VoiceRecording.createPoller({
+  read:signal=>api(path,{signal}),onConnection:recordingConnection,
+  onData:value=>{const finished=onData(value);if(finished)finishMonitoring();return finished},
+  onMissing:()=>{recordingConnection(false);recordingStore?.clear();recordingSelection=null;generationClock=null;updateElapsed();history.replaceState(null,'','/');$('working').hidden=true;$('candidate-results').hidden=true;$('empty').hidden=!!latest;error('This recording is no longer available. Choose another take from Collection or Queue.');finishMonitoring()},
+  onError:exc=>{recordingConnection(false);error(exc.message);finishMonitoring()}
+ });
+}
+function watchCandidates(identity,immediate=null,selected=null){
+ if(browsePage){location.href=VoiceRecording.url({kind:'candidates',id:identity,selected});return}
+ const token='candidates:'+identity;if(watching===token){recordingPoller?.refresh();return}
+ if(currentCandidates?.id!==identity){currentCandidates=null;candidateCards.clear();$('candidate-cards').replaceChildren();$('candidate-results').hidden=true;latest=null;$('result').hidden=true;}
+ selected=selected||(recordingSelection?.kind==='candidates'&&recordingSelection.id===identity?recordingSelection.selected:null);
+ rememberRecording({kind:'candidates',id:identity,selected});
+ watching=token;monitoredImmediate=immediate??true;controls();$('error').hidden=true;$('empty').hidden=true;$('working').hidden=false;$('stage').textContent='Reconnecting to your recording…';
+ $('working-job-resources').hidden=true;
+ monitorRecording('/api/candidates/'+identity,batch=>{
+  monitoredImmediate=['queued','running'].includes(batch.status)&&batch.jobs.some(job=>job.generate_immediately);controls();$('working').hidden=true;
+  renderCandidates(batch);
+  const preferred=batch.jobs.find(job=>job.result?.id===recordingSelection?.selected);
+  if(preferred&&latest?.id!==preferred.result.id)showResult(preferred.result);
+  else if(!latest){const first=batch.jobs.find(job=>job.result);if(first)showResult(first.result)}
+  if(!['queued','running'].includes(batch.status)){refresh().catch(exc=>error(exc.message));announce(`${batch.done_count} of ${batch.candidate_count} voice options ready.`);return true}
+  return false;
+ });
+}
+function watch(identity){
+ if(browsePage){location.href='/?job='+encodeURIComponent(identity);return}
+ if(watching===identity){recordingPoller?.refresh();return}
+ currentCandidates=null;latest=null;$('candidate-results').hidden=true;watching=identity;monitoredImmediate=true;rememberRecording({kind:'job',id:identity});controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
+ $('stage').textContent='Reconnecting to your recording…';$('working-job-resources').hidden=false;$('working-job-resources').href='/observability?job='+encodeURIComponent(identity);
+ monitorRecording('/api/jobs/'+identity,job=>{
+  // Queue/Observability links often point at one child. Recover its entire listening room.
+  if(job.candidate_batch_id){watchCandidates(job.candidate_batch_id,job.generate_immediately,job.result?.id);return false}
+  monitoredImmediate=['queued','running'].includes(job.status)&&job.generate_immediately;controls();$('stage').textContent=job.stage;
   generationTiming(identity,job.created_at,job.stage,!['queued','running'].includes(job.status)?job.completed_at||new Date().toISOString():null);
-  if(job.status==='done'){localStorage.removeItem(storageKey+'-job');showResult(job.result);await refresh();announce('Speech ready');break}
-  if(job.status==='error'||job.status==='deleted'){localStorage.removeItem(storageKey+'-job');throw Error(job.error||'This pending take was removed.');}
-  await new Promise(resolve=>setTimeout(resolve,1500));
- }}catch(exc){if(watching===identity){error(exc.message);$('working').hidden=true;$('empty').hidden=!latest;if(latest)showResult(latest)}}
- finally{if(watching===identity){watching=null;monitoredImmediate=false;controls();refreshQueue().catch(()=>{})}}
+  if(job.status==='done'){showResult(job.result);refresh().catch(exc=>error(exc.message));announce('Speech ready');return true}
+  if(job.status==='error'||job.status==='deleted'){$('working').hidden=true;error(job.error||'This pending take was removed.');return true}
+  return false;
+ });
 }
 $('form').onsubmit=async event=>{
  event.preventDefault();if(!modelChoiceReady){error('Choose a set-up model that supports this voice source.');return}if(submitting||uploading||immediateInProgress())return;let request;try{request=settings()}catch(exc){error(exc.message);return}
@@ -660,7 +696,8 @@ let healthInFlight=false;
 async function health(){
  if(healthInFlight)return;healthInFlight=true;
  try{
-  const state=await api('/health');
+  const state=await api('/health');healthSnapshot=state;
+  if(!recordingStore)recordingStore=VoiceRecording.createStore(localStorage,state.project||location.origin);
   queuePaused=!!state.queue_paused;queueLabel($('queue-pause'),queuePaused?'play':'pause',queuePaused?'Resume queue':'Pause queue');
   if(!changingModel)await loadModelChoices();
   online=state.downloaded&&!state.runtime_errors?.length;
@@ -668,7 +705,6 @@ async function health(){
   $('status').dataset.offline=!online;
   $('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';
   busy=state.busy;
-  if(queueWritable&&state.active_job&&!watching&&!generationClock&&!browsePage&&!localStorage.getItem(storageKey+'-candidates'))watch(state.active_job);
   if(queueWritable){
    try{await refreshQueue()}catch(exc){queueWritable=false;queueNotices({queue_storage:{status:'unavailable',message:exc.message}})}
   }else{
@@ -935,15 +971,36 @@ async function selectVoiceModel(backend){
   const saved=JSON.parse(localStorage.getItem(storageKey+'-form')||'null');
   if(draftMode)setMode(draftMode);else if(saved)restore(saved);else setMode(caps.modes.design.available===false?(voiceRows.length?'saved':'upload'):'design');
   await health();
-  const pageSelected=await openPageSelection();
-  const batch=localStorage.getItem(storageKey+'-candidates'),job=localStorage.getItem(storageKey+'-job');
-  if(!watching&&!browsePage&&!pageSelected){if(batch)watchCandidates(batch);else if(job)watch(job)}
+  if(!browsePage)recordingStore?.setModel(backend);
   renderModelChoices();
  }finally{changingModel=false;controls();if(pendingModelRestore){const row=pendingModelRestore;pendingModelRestore=null;restore(row)}}
 }
 $('voice-model').onchange=()=>{if($('voice-model').value)selectVoiceModel($('voice-model').value).catch(exc=>error(exc.message))};
 $('queue-pause').onclick=async()=>{try{const state=await post('/api/queue/'+(queuePaused?'resume':'pause'),{});queuePaused=state.paused;queueLabel($('queue-pause'),queuePaused?'play':'pause',queuePaused?'Resume queue':'Pause queue');await health()}catch(exc){error(exc.message)}};
-(async()=>{try{const model=await loadModelChoices();if(model)await selectVoiceModel(model);else error('No set-up voice models are ready. Run make setup or reconnect model storage.')}catch(exc){error(exc.message)}setInterval(health,5000)})();
+async function startStudio(){
+ if(studioInitialized||studioStarting)return;studioStarting=true;
+ try{
+  await health();if(!recordingStore)return;
+  const initial=await loadModelChoices(),savedModel=recordingStore.model()||recordingStore.selection()?.model;
+  const model=availableModels.some(row=>row.id===savedModel)?savedModel:initial;
+  if(!model){error('No set-up voice models are ready. Run make setup or reconnect model storage.');return}
+  await selectVoiceModel(model);
+  if(!await openPageSelection()&&!browsePage){
+   const saved=recordingStore.selection();
+   if(saved)await openRecording(saved);
+   else{
+    // Upgrade a previous browser pointer once; subsequent recovery is project-wide.
+    const batch=localStorage.getItem(storageKey+'-candidates'),job=localStorage.getItem(storageKey+'-job');
+    if(batch&&VoiceRecording.validId(batch))watchCandidates(batch);
+    else if(job&&VoiceRecording.validId(job))watch(job);
+    else if(healthSnapshot?.active_job)watch(healthSnapshot.active_job);
+   }
+   localStorage.removeItem(storageKey+'-candidates');localStorage.removeItem(storageKey+'-job');
+  }
+  studioInitialized=true;
+ }catch(exc){error(exc.message)}finally{studioStarting=false}
+}
+startStudio();setInterval(()=>{if(studioInitialized)health();else startStudio()},5000);
 
 function buildBackendSettings(){
  $('backend-settings').replaceChildren();
@@ -1149,14 +1206,24 @@ $('apply-recommended').onclick=()=>{
 
 $('open-queue').onclick=()=>{$('queue-error').hidden=true;$('queue-dialog').showModal();refreshQueue().catch(exc=>error(exc.message))};
 $('close-queue').onclick=()=>$('queue-dialog').close();
+async function openRecording(selection){
+ selection=VoiceRecording.resolveSelection(selection,recordingStore?.selection());
+ recordingSelection=selection;generationClock=selection.timing||null;updateElapsed();
+ if(selection.kind==='candidates')watchCandidates(selection.id,null,selection.selected);
+ else if(selection.kind==='job')watch(selection.id);
+ else{
+  try{const row=await api('/api/artifacts/'+selection.id);showResult(row)}
+  catch(exc){if(exc.status===404){recordingStore?.clear();recordingSelection=null;history.replaceState(null,'','/');error('This recording is no longer available. Choose another take from Collection.')}else throw exc}
+ }
+}
 async function openPageSelection(){
  if(observabilityPage)return true;
  const params=new URLSearchParams(location.search);
- if(params.get('candidates')&&!collectionPage){watchCandidates(params.get('candidates'));return true}
- if(collectionPage){$('show-deleted').checked=params.get('deleted')==='1';setCollection(params.get('tab')==='history'?'history':'voices');return}
- if(/^[a-f0-9]{32}$/.test(params.get('voice')||'')){const row=await api('/api/voices/'+params.get('voice'));chooseVoice(row,false);return true;}
- else if(/^[a-f0-9]{32}$/.test(params.get('artifact')||params.get('reuse')||'')){const row=await api('/api/artifacts/'+(params.get('artifact')||params.get('reuse')));if(params.has('reuse'))restore(row);showResult(row);return true;}
- else if(/^[a-f0-9]{32}$/.test(params.get('job')||'')){watch(params.get('job'));return true;}
+ if(collectionPage){$('show-deleted').checked=params.get('deleted')==='1';setCollection(params.get('tab')==='history'?'history':'voices');return true}
+ const selection=VoiceRecording.fromURL(location.search);
+ if(selection){await openRecording(selection);return true}
+ if(VoiceRecording.validId(params.get('voice'))){const row=await api('/api/voices/'+params.get('voice'));chooseVoice(row,false);return true}
+ if(VoiceRecording.validId(params.get('reuse'))){const row=await api('/api/artifacts/'+params.get('reuse'));restore(row);showResult(row);return true}
  return false;
 }
 

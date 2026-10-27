@@ -20,6 +20,8 @@ Use **Design a voice** to create a character, or **Record lines** to reuse one. 
 
 An elapsed timer below Generate and in the Listening room updates every second through waiting and generation, then keeps the final duration. Reference transcripts stay with saved voices; you can save an edit directly or let Generate save it before submitting. Higgs has searchable Emotion, Prosody, and Style inputs. Choose an option, or type a custom direction and preview a supported control with the local LLM. Accent comes from the reference recording.
 
+You can leave Studio during generation and come back: it restores the whole batch, your selected option, and elapsed time. Your model choice and form are remembered too. A temporary lost connection reconnects automatically. Each option has **Resources & logs**, and the resource page links back to the recording. [See a restored batch](docs/images/restored-recording.jpg).
+
 Higgs starts new UI settings with a 2,000-token audio limit. If one option cannot finish within its limit, the others stay available; the failed card can prepare a single replacement with a higher limit. Advanced settings also offer native text chunk size for longer passages.
 
 **Design a voice** stays visible when the current model needs a recording, such as Higgs. Open it and choose a set-up VoxCPM2, Qwen3-TTS, or MOSS VoiceGenerator from the model menu. If none is set up, the tab stays disabled and its tooltip lists those alternatives.

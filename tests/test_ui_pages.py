@@ -55,11 +55,22 @@ class SharedPageTests(unittest.TestCase):
             for identity in ('open-queue','status','unload','queue-dialog','queue-pause','queue-entries'):
                 self.assertEqual(page.ids.count(identity),1,(path,identity))
             self.assertIn('/assets/app.js',page.scripts)
+            self.assertLess(page.scripts.index('/assets/recording-session.js'),page.scripts.index('/assets/app.js'))
             self.assertEqual(len(page.home_links),1,path)
             tag,attrs=page.home_links[0]
             self.assertEqual((tag,attrs['href']),('a','/'),path)
             brand=re.search(r'<a [^>]*id="brand-home".*?</a>',markup,re.S).group()
             for element in ('<img','<strong','<small'):self.assertIn(element,brand,path)
+
+    def test_recording_recovery_asset_and_resource_navigation_are_available(self):
+        client=TestClient(server.app)
+        response=client.get('/assets/recording-session.js')
+        self.assertEqual(response.status_code,200)
+        self.assertIn('text/javascript',response.headers['content-type'])
+        studio=Page(client.get('/').text)
+        for identity in ('recording-connection','result-resources'):
+            self.assertIn(identity,studio.ids)
+        self.assertIn('job-recording',Page(client.get('/observability').text).ids)
 
     def test_observability_content_and_script_only_load_on_its_page(self):
         client=TestClient(server.app)
