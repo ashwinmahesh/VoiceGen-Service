@@ -113,6 +113,11 @@ input:disabled::placeholder,textarea:disabled::placeholder{color:#aeb5c0;opacity
 .collection-filters input,.collection-filters select,.tag-select{height:44px;font-size:13px}
 .collection-filters[data-history=true]{grid-template-columns:minmax(0,1fr) 124px}
 .collection-tags{position:relative}
+.card[data-deleted=true]{background:#211e21;border-color:#6c5660;border-style:dashed}
+.card[data-deleted=true] .card-title strong{color:#d4cbd0}
+.card[data-deleted=true] .tag-chip{background:#2c292d;border-color:#58505a;color:#ccc3ce}
+.deleted-badge{display:inline-flex;align-items:center;gap:5px;margin-bottom:10px;padding:3px 8px;border:1px solid #775360;border-radius:5px;background:#3c2b32;color:#f0cdd9;font-size:11px;font-weight:600;line-height:1.4}
+.deleted-badge .queue-icon{width:12px;height:12px;color:currentColor}
 .tag-select{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:1px solid #45454e;border-radius:8px;background:#17181b;color:var(--text);padding:10px 14px 10px 12px;text-align:left}
 .tag-select:hover{border-color:#68756d}.tag-select[aria-expanded=true]{border-color:var(--accent)}
 #tag-filter-summary{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.tag-select svg{flex:none;color:#b6b8c2}

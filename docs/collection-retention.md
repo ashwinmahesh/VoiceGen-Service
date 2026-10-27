@@ -2,6 +2,8 @@
 
 Delete a voice or take from Collection and confirm its name. It is hidden from the active library immediately. Turn on **Show deleted** to listen, download or **Restore** it during the next **24 hours**.
 
+Deleted voices and takes have a **Deleted** badge with a trash icon, a muted background and a dashed border. The removal deadline and Restore action remain readable.
+
 ![Deleted Collection entry with the switch, removal deadline and Restore](images/collection-deleted-retention.jpg)
 
 The screenshot uses disposable demonstration audio and fake speech generation.
