@@ -583,8 +583,9 @@ async def unload():
 @app.get("/api/voices", response_model=VoicePage)
 def voices(q: str = Query(default="", max_length=300), tag: str = Query(default="", max_length=40),
            sort: Literal["newest", "updated", "name"] = "newest",
-           limit: int = Query(default=24, ge=1, le=100), offset: int = Query(default=0, ge=0),deleted: bool=False):
-    return voice_catalog.search(ROOT, q, tag, sort, limit, offset,deleted=deleted)
+           limit: int = Query(default=24, ge=1, le=100), offset: int = Query(default=0, ge=0),deleted: bool=False,
+           tags: list[voice_catalog.Tag] = Query(default=[])):
+    return voice_catalog.search(ROOT, q, tag, sort, limit, offset,deleted=deleted,tags=tags)
 
 
 @app.delete('/api/voices/{identity}',response_model=CollectionChange)

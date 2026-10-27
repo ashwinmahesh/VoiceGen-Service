@@ -295,7 +295,7 @@ The studio preserves transcript drafts when its catalog refreshes. **Save transc
 | POST | `/api/voices/{id}/restore` | Restore the voice. |
 | GET | `/api/voice-tags` | List tags and their counts. |
 
-Search matches all query words across names, notes, original designs, and tags, ignoring case and accents. `tag` is an exact tag filter. Sort choices are `newest`, `updated`, and `name`. Lists include `data`, `total`, `limit`, `offset`, `has_more`, and `next_offset`.
+Search matches all query words across names, notes, original designs, and tags, ignoring case and accents. `tag` is an exact tag filter. For multiple selections, repeat `tags`, for example `/api/voices?tags=romanian&tags=narrator`; a voice matches **any** selected tag. Each tag accepts 1–40 characters. If `tag` and `tags` are both supplied, their selections are combined. Search, sort, pagination, and `deleted` still apply. Sort choices are `newest`, `updated`, and `name`. Lists include `data`, `total`, `limit`, `offset`, `has_more`, and `next_offset`.
 
 PATCH replaces the supplied fields. Use `"description": ""`, `"transcript": ""`, or `"tags": []` to clear them; `null` is rejected. Tags are normalized and duplicates removed. Editing catalog notes does not alter its audio.
 

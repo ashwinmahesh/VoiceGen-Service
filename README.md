@@ -28,7 +28,7 @@ Higgs starts new UI settings with a 2,000-token audio limit. If one option canno
 
 ![Full Generate page with Higgs performance controls and audio playback](docs/images/studio-page.jpg)
 
-**Collection:** browse previous takes or save and upload voices with names, descriptions, and searchable tags.
+**Collection:** browse previous takes or save and upload voices with names, descriptions, and searchable tags. Search, tag selection, sort order, and page size share a compact row; select existing tags to find voices matching any of them.
 
 Uploaded voices are transcribed locally with a small CPU model. Listen, correct the detected words, and save them with the voice; automatic transcription can also be switched off. [Upload transcription](docs/transcription.md) explains setup and API use.
 

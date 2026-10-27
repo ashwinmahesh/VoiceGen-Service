@@ -66,6 +66,24 @@ class ContractTests(unittest.TestCase):
         self.fail('Job did not finish')
     def upload(self,**kw):
         return self.client.post('/api/references',files={'file':('voice.wav',wav(**kw),'audio/wav')})
+    def test_multiple_tag_filters_match_any_and_keep_search_sort_and_pagination(self):
+        reference=self.upload().json()['id']
+        rows=[]
+        for name,tags in [('Alpha',['romanian','villain']),('Bravo',['narrator']),('Charlie',['soft'])]:
+            response=self.client.post('/api/voices',json={'reference_id':reference,'name':name,'description':'Demo voice','tags':tags})
+            self.assertEqual(response.status_code,201,response.text);rows.append(response.json())
+        filters=[('tags','ROMÂNIAN'),('tags','narrator'),('tags','romanian'),('q','demo'),('sort','name'),('limit','1')]
+        first=self.client.get('/api/voices',params=filters).json()
+        self.assertEqual(first['total'],2);self.assertEqual(first['data'][0]['name'],'Alpha');self.assertTrue(first['has_more'])
+        second=self.client.get('/api/voices',params=[*filters,('offset','1')]).json()
+        self.assertEqual(second['data'][0]['name'],'Bravo');self.assertFalse(second['has_more'])
+        combined=self.client.get('/api/voices',params=[('tag','soft'),('tags','villain')]).json()
+        self.assertEqual({row['name'] for row in combined['data']},{'Alpha','Charlie'})
+        self.assertEqual(self.client.get('/api/voices',params={'tags':'x'*41}).status_code,422)
+        self.client.delete('/api/voices/'+rows[0]['id'])
+        self.assertEqual(self.client.get('/api/voices',params=filters).json()['total'],1)
+        deleted=self.client.get('/api/voices',params=[*filters,('deleted','true')]).json()
+        self.assertEqual(deleted['total'],1);self.assertEqual(deleted['data'][0]['name'],'Alpha')
     def test_candidate_defaults_distinct_seeds_and_independent_voice_saves(self):
         response=self.client.post('/api/candidates',json={'text':'Welcome home.','description':'A calm baritone.'})
         self.assertEqual(response.status_code,202,response.text)

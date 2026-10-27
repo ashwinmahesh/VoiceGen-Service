@@ -23,6 +23,7 @@ let currentCandidates=null, candidateCards=new Map();
 let appliedExpansion=null,pendingExpansion=null,enhancing=false,expansionChoice=null;
 let catalogOffset = 0, searchTimer = null, catalogRequest = 0, refreshRequest=0, voiceEditor = null, voiceSaving = false;
 let collectionDeleteTarget=null,collectionChanging=false;
+let selectedTags=new Set(),availableTags=[];
 let monitoredImmediate=false,higgsSelectedControls={},suspendedHiggsDirections={};
 let recordingStore=null,recordingSelection=null,recordingPoller=null,healthSnapshot=null,studioInitialized=false,studioStarting=false;
 let returnPoller=null,returnSelection=null,returnSummary=null;
@@ -383,13 +384,36 @@ async function refresh() {
   for (const row of voiceRows) $('voice').append(new Option(row.name, row.id));
   $('voice').value = selected;
   voicePreview();
-  const filter = $('tag-filter').value;
-  $('tag-filter').replaceChildren(new Option('All tags', ''));
-  for (const tag of tags.data) $('tag-filter').append(new Option(`${tag.name} (${tag.count})`, tag.name));
-  $('tag-filter').value = filter;
+  availableTags=tags.data;
+  selectedTags=new Set([...selectedTags].filter(name=>availableTags.some(tag=>tag.name===name)));
+  renderTagChoices();
   await loadCollection();
 }
 function el(tag,text,cls){const node=document.createElement(tag);if(text!=null)node.textContent=text;if(cls)node.className=cls;return node}
+function updateTagSummary(){
+ const names=[...selectedTags];
+ $('tag-filter-summary').textContent=names.length>2?`${names.length} selected`:names.join(', ')||'All tags';
+ $('tag-filter').setAttribute('aria-label','Tags: '+$('tag-filter-summary').textContent);
+ $('tag-filter').title=names.length?names.join(', '):'All tags';
+ $('tag-clear').disabled=!names.length;
+}
+function renderTagChoices(){
+ const list=$('tag-choices');list.replaceChildren();
+ for(const tag of availableTags){
+  const label=el('label'),input=el('input');input.type='checkbox';input.value=tag.name;input.checked=selectedTags.has(tag.name);
+  input.onchange=()=>{if(input.checked)selectedTags.add(tag.name);else selectedTags.delete(tag.name);updateTagSummary();catalogOffset=0;loadVoicePage().catch(exc=>error(exc.message))};
+  label.append(input,el('span',tag.name),el('small',tag.count));list.append(label);
+ }
+ if(!availableTags.length)list.append(el('p','No tags in this collection yet.','hint'));
+ updateTagSummary();
+}
+function closeTagChoices(restoreFocus=false){$('tag-options').hidden=true;$('tag-filter').setAttribute('aria-expanded','false');if(restoreFocus)$('tag-filter').focus()}
+$('tag-filter').onclick=()=>{const open=$('tag-options').hidden;$('tag-options').hidden=!open;$('tag-filter').setAttribute('aria-expanded',String(open))};
+$('tag-filter').onkeydown=event=>{if(event.key==='ArrowDown'){event.preventDefault();$('tag-options').hidden=false;$('tag-filter').setAttribute('aria-expanded','true');($('tag-choices').querySelector('input')||$('tag-clear')).focus()}};
+$('tag-clear').onclick=()=>{selectedTags.clear();renderTagChoices();closeTagChoices(true);catalogOffset=0;loadVoicePage().catch(exc=>error(exc.message))};
+document.addEventListener('pointerdown',event=>{if(!$('collection-tags').contains(event.target))closeTagChoices()});
+$('collection-tags').addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('tag-options').hidden){event.preventDefault();closeTagChoices(true)}});
+$('collection-tags').addEventListener('focusout',event=>{if(!$('collection-tags').contains(event.relatedTarget))closeTagChoices()});
 const queueIconPaths={
  queue:'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
  monitor:'M4 4h16v12H4zM8 21h8M12 16v5',
@@ -420,6 +444,7 @@ function renderCards() {
   const page=isVoices?voicePage:historyPage;const rows=page.data;
   $('cards').replaceChildren();
   $('voice-filters').hidden = !isVoices;
+  $('collection-filters').dataset.history=String(!isVoices);
   $('catalog-count').hidden = false;
   $('voice-pagination').hidden = page.total <= pageSize;
   $('voice-prev').disabled = catalogOffset === 0;
@@ -429,7 +454,7 @@ function renderCards() {
   $('voice-page-label').textContent = page.total ?
     `${catalogOffset + 1}–${catalogOffset + rows.length} of ${page.total}` : 'No entries';
   $('collection-empty').hidden = rows.length > 0;
-  $('collection-empty').textContent = (query || (isVoices && $('tag-filter').value)) ?
+  $('collection-empty').textContent = (query || (isVoices && selectedTags.size)) ?
     'No matching takes or voices.' : deleted?`No deleted ${isVoices?'voices':'takes'}.`:isVoices ?
     'Save a generated take or upload a reference to create your voice library.' :
     'Your generated takes will appear here.';
@@ -445,7 +470,7 @@ function renderCards() {
       for (const tag of row.tags) {
         const chip = el('button', tag, 'tag-chip');
         chip.type = 'button'; chip.setAttribute('aria-label', 'Filter by tag ' + tag);
-        chip.onclick = () => { $('tag-filter').value = tag; catalogOffset = 0; loadVoicePage().catch(exc => error(exc.message)); };
+        chip.onclick = () => { selectedTags=new Set([tag]);renderTagChoices();catalogOffset = 0; loadVoicePage().catch(exc => error(exc.message)); };
         tags.append(chip);
       }
       card.append(tags);
@@ -896,7 +921,8 @@ async function loadCollection(){
 async function loadVoicePage() {
   const token = ++catalogRequest;
   const params = new URLSearchParams({q: collection === 'voices' ? $('search').value : '',
-    tag: $('tag-filter').value, sort: $('voice-sort').value, limit: pageSize, offset: catalogOffset,deleted:$('show-deleted').checked});
+    sort: $('voice-sort').value, limit: pageSize, offset: catalogOffset,deleted:$('show-deleted').checked});
+  for(const tag of selectedTags)params.append('tags',tag);
   const page = await api('/api/voices?' + params);
   if (token !== catalogRequest) return;
   if (catalogOffset && catalogOffset >= page.total) { catalogOffset=Math.max(0,Math.floor((page.total-1)/pageSize)*pageSize);return loadVoicePage(); }
@@ -905,12 +931,13 @@ async function loadVoicePage() {
 }
 function setCollection(next) {
   clearTimeout(searchTimer); collection = next; catalogOffset = 0;
+  closeTagChoices();$('voice-filters').hidden=next!=='voices';$('collection-filters').dataset.history=String(next!=='voices');
   document.querySelectorAll('[data-collection]').forEach(button => button.setAttribute('aria-selected', button.dataset.collection === collection));
   $('search').placeholder = next === 'voices' ? 'Search voice names, descriptions, or tags…' : 'Search text, voice descriptions, or emotions…';
   syncCollectionLocation();loadCollection().catch(exc=>error(exc.message));
 }
 function syncCollectionLocation(){if(collectionPage){const url=new URL(location.href);url.searchParams.set('tab',collection);if($('show-deleted').checked)url.searchParams.set('deleted','1');else url.searchParams.delete('deleted');history.replaceState(null,'',url)}}
-$('show-deleted').onchange=()=>{catalogOffset=0;catalogRequest++;$('tag-filter').value='';syncCollectionLocation();refresh().catch(exc=>error(exc.message))};
+$('show-deleted').onchange=()=>{catalogOffset=0;catalogRequest++;selectedTags.clear();renderTagChoices();syncCollectionLocation();refresh().catch(exc=>error(exc.message))};
 function chooseVoice(row, focus = true) {
   if(browsePage&&focus){location.href='/?voice='+encodeURIComponent(row.id);return;}
   if (!voiceRows.some(item => item.id === row.id)) voiceRows.push(row);
@@ -1002,7 +1029,7 @@ $('voice-editor-form').onsubmit = async event => {
       {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(details)});
     else row = await post('/api/voices', {...details, output_id: context.output_id || null, reference_id: context.reference_id || null});
     if (!context.edit_id) {
-      $('search').value = ''; $('tag-filter').value = ''; $('voice-sort').value = 'updated';
+      $('search').value = ''; selectedTags.clear();renderTagChoices(); $('voice-sort').value = 'updated';
       $('show-deleted').checked=false;
       collection = 'voices'; catalogOffset = 0;
       syncCollectionLocation();
@@ -1024,7 +1051,7 @@ $('voice-editor-form').onsubmit = async event => {
     voiceUploadControls(); $('voice-editor-cancel').disabled = false;
   }
 };
-$('tag-filter').onchange = $('voice-sort').onchange = () => {catalogOffset = 0; loadVoicePage().catch(exc => error(exc.message));};
+$('voice-sort').onchange = () => {catalogOffset = 0; loadVoicePage().catch(exc => error(exc.message));};
 $('voice-prev').onclick = () => {catalogOffset = Math.max(0, catalogOffset - pageSize); loadCollection().catch(exc => error(exc.message));};
 $('voice-next').onclick = () => {catalogOffset += pageSize; loadCollection().catch(exc => error(exc.message));};
 $('page-size').onchange=()=>{pageSize=Number($('page-size').value);catalogOffset=0;loadCollection().catch(exc=>error(exc.message))};
@@ -1362,7 +1389,7 @@ const controlHelp={
  'generate-immediately':'Run next after the current batch, ahead of ordinary waiting work. It does not interrupt active generation. Turn off to join the normal queue.',
  'voice-name':'A name for this reusable voice in Collection. Saving it lets you select its recording for later lines.',
  search:'Search generated History or saved voices in the current Collection tab. Voice search includes names, descriptions and tags.',
- 'tag-filter':'Show saved voices with this exact tag. Tags organize the library; they do not change the generated accent or performance.',
+ 'tag-filter':'Select existing tags to show voices matching any selected tag. Clear the selection to show all voices. Tags organize the library; they do not change the generated accent or performance.',
  'voice-sort':'Choose how saved voices are ordered: newest, recently updated, or name.',
  'page-size':'How many entries to show on each Collection page.',
  'queue-status':'Filter the saved jobs by status. Pending includes waiting and running jobs; other models’ jobs wait until that model is served.',
