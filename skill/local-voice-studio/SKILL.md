@@ -97,6 +97,12 @@ One global order spans models; filtered lists retain global `position`. Immediat
 
 The studio talks directly to generator APIs/SQLite. Queue HTTP outage leaves generator jobs/CRUD working and shows a recoverable notice. Keep queue_service diagnostics separate from queue_storage. SQLite failures return503, code queue_storage_unavailable, Retry-After:2; preserve IDs/keys and retry after storage recovers. Never create a fallback database or replay work from health checks. A complete matching WAV/sidecar reconciles after restart; crashes before completion may repeat synthesis, so do not promise exactly-once effects.
 
+## Upload transcription
+
+New setup includes a small local CPU transcriber; use `make setup-transcriber` for an existing installation. Check generator `GET /api/transcription` for availability and language codes. No downloads happen while serving. Multipart `POST /api/voices/upload` automatically recognizes an empty transcript by default; supplied words skip recognition, and `transcribe=false` opts out. `transcription_language=auto` detects the language; `en` can help English character speech. Review names and accented words. Recognition runs once in a short-lived CPU process and does not switch the speech model or enter its queue. It returns a saved voice plus optional recognition metadata, or an actionable error without creating a voice.
+
+For review before saving, use `POST /api/references` with `transcribe=true`, then `POST /api/voices` with its ID and reviewed transcript. The UI follows this flow, preserves edits, and offers local playback. Completed canceled previews remain references, as other reference uploads do. Do not replace manual words, reuse an old file's recognition result, upload a reviewed file twice, or replay a speech job to obtain a transcript. Weights stay under the configured data folder; source/tools/lock stay in the project. See docs/transcription.md for limits and errors.
+
 ## Resources and storage
 
 Generator Observability and `/api/observability`, `/api/observability/jobs`, `/api/observability/jobs/{id}` provide 5m/30m/1h/6h/24h/3d/7d histories and per-attempt charts. CPU/RSS include the generator tree; GPU counters are device-wide shared memory, not exclusive job use or discrete VRAM. Samples retain model/session/phase and gaps, keep seven days in the existing project DB, and never upload telemetry. Read docs/observability.md for metric scopes and query bounds.

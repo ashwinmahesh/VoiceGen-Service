@@ -21,6 +21,9 @@ from capabilities import capabilities, validate_controls
 from jobs import JobManager, BusyError
 import storage
 import pause_edits
+from transcription_schemas import TranscriptionStatus
+from transcription import transcribe_reference,TranscriptionError
+from transcription_assets import status as transcription_status
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -108,7 +111,7 @@ def asset_path(kind, identity):
 
 def ui_revision():
     # Bind HTML and its scripts to one revision so a returning browser cannot mix them.
-    names=('index.html','app.js','recording-session.js','observability.js','observability.css')
+    names=('index.html','app.js','recording-session.js','voice-upload.js','observability.js','observability.css')
     return hashlib.sha256(b'\0'.join((PROJECT_ROOT/'ui'/name).read_bytes() for name in names)).hexdigest()[:12]
 
 
@@ -120,6 +123,10 @@ def ui_shell(revision=None):
 @app.get('/collection',include_in_schema=False)
 @app.get('/collection/',include_in_schema=False)
 def index(): return HTMLResponse(ui_shell(),headers={'Cache-Control':'no-cache'})
+
+
+@app.get('/assets/voice-upload.js',include_in_schema=False)
+def voice_upload_script(): return FileResponse(PROJECT_ROOT/'ui/voice-upload.js',media_type='text/javascript',headers={'Cache-Control':'no-cache'})
 
 
 @app.get('/assets/recording-session.js',include_in_schema=False)
@@ -525,13 +532,36 @@ def audio(kind: str,identity: str,download: bool=False):
     return FileResponse(path,media_type='audio/wav',filename=path.name if download else None)
 
 
+@app.get('/api/transcription',response_model=TranscriptionStatus,tags=['Voices'],summary='Local automatic transcription readiness')
+def transcription_readiness():return transcription_status()
+
+
+def remove_new_reference(reference):
+    for path in [ROOT/'references'/f'{reference["id"]}.wav',ROOT/'references'/f'{reference["id"]}.json',ROOT/'references/originals'/f'{reference["id"]}.bin']:
+        path.unlink(missing_ok=True)
+
+
+async def prepare_uploaded_reference(raw,filename,transcript,transcribe,language,request):
+    try:reference=await asyncio.to_thread(storage.preserve_reference,raw,filename,transcript)
+    except (OSError,ValueError,RuntimeError) as exc:raise HTTPException(422,'Cannot use this reference: '+str(exc)) from None
+    if not transcribe or transcript.strip():return reference
+    try:
+        text,receipt=await transcribe_reference(ROOT/'references'/f'{reference["id"]}.wav',ROOT,language,request.is_disconnected)
+        reference.update(transcript=text,transcription=receipt)
+        await asyncio.to_thread(voice_catalog.atomic_json,ROOT/'references'/f'{reference["id"]}.json',reference)
+        return reference
+    except BaseException as exc:
+        await asyncio.to_thread(remove_new_reference,reference)
+        if isinstance(exc,TranscriptionError):raise HTTPException(exc.status,str(exc)) from None
+        raise
+
+
 @app.post('/api/references',status_code=201,response_model=Reference)
-async def upload_reference(file: UploadFile=File(...), transcript: str=Form(default='',max_length=3000)):
+async def upload_reference(request: Request,file: UploadFile=File(...), transcript: str=Form(default='',max_length=3000),
+                           transcribe: bool=Form(default=False),transcription_language: str=Form(default='auto',max_length=8)):
     raw = await file.read(25*1024*1024+1)
     if len(raw)>25*1024*1024: raise HTTPException(413,'Choose a file under 25 MB')
-    try: return await asyncio.to_thread(storage.preserve_reference,raw,file.filename,transcript)
-    except (OSError,ValueError,RuntimeError) as exc:
-        raise HTTPException(422,'Cannot use this reference: '+str(exc)) from None
+    return await prepare_uploaded_reference(raw,file.filename,transcript,transcribe,transcription_language,request)
 
 
 @app.get('/api/references/{identity}/original')
@@ -566,9 +596,10 @@ def restore_voice(identity: str):return change_collection(identity,'voices',Fals
 
 
 @app.post('/api/voices/upload',status_code=201,response_model=Voice)
-async def upload_voice(file: UploadFile=File(...),name: str=Form(...,min_length=1,max_length=100),
+async def upload_voice(request: Request,file: UploadFile=File(...),name: str=Form(...,min_length=1,max_length=100),
                        description: str=Form(default='',max_length=2000),
-                       transcript: str=Form(default='',max_length=3000),tags: list[voice_catalog.Tag]=Form(default=[],max_length=20)):
+                       transcript: str=Form(default='',max_length=3000),tags: list[voice_catalog.Tag]=Form(default=[],max_length=20),
+                       transcribe: bool=Form(default=True),transcription_language: str=Form(default='auto',max_length=8)):
     try:
         details=SaveVoice(name=name,description=description,transcript=transcript,tags=tags)
     except ValueError as exc:
@@ -576,20 +607,12 @@ async def upload_voice(file: UploadFile=File(...),name: str=Form(...,min_length=
         raise HTTPException(422,'Invalid voice details: '+message) from None
     raw=await file.read(25*1024*1024+1)
     if len(raw)>25*1024*1024:raise HTTPException(413,'Choose a file under 25 MB')
-    def import_voice():
-        reference=storage.preserve_reference(raw,file.filename,details.transcript or '')
-        try:
-            return save_voice(details.model_copy(update={'reference_id':reference['id']}))
-        except BaseException:
-            # Roll back only this new upload if catalog creation fails; preserve all existing data.
-            for path in [ROOT/'references'/f'{reference["id"]}.wav',
-                         ROOT/'references'/f'{reference["id"]}.json',
-                         ROOT/'references/originals'/f'{reference["id"]}.bin']:
-                path.unlink(missing_ok=True)
-            raise
-    try:return await asyncio.to_thread(import_voice)
-    except (OSError,ValueError,RuntimeError) as exc:
-        raise HTTPException(422,'Cannot upload this voice: '+str(exc)) from None
+    reference=await prepare_uploaded_reference(raw,file.filename,details.transcript or '',transcribe,transcription_language,request)
+    try:return await asyncio.to_thread(save_voice,details.model_copy(update={'reference_id':reference['id'],'transcript':reference['transcript']}))
+    except BaseException as exc:
+        await asyncio.to_thread(remove_new_reference,reference)
+        if isinstance(exc,(OSError,ValueError,RuntimeError)):raise HTTPException(422,'Cannot upload this voice: '+str(exc)) from None
+        raise
 
 
 @app.get("/api/voice-tags", response_model=TagsPage)
@@ -657,6 +680,8 @@ def save_voice(request: SaveVoice):
            "audio_url": f"/api/audio/voices/{identity}",
            "transcript": request.transcript if request.transcript is not None else
                (__import__("performance_controls").spoken_transcript(original) if source_duration <= 30 and not original.get("possibly_truncated") else "")}
+    if original.get('transcription') and row['transcript']==original.get('transcript'):
+        row['transcription']=original['transcription']
     temporary = target.with_suffix(".tmp.wav")
     try:
         sf.write(temporary, data, sr, subtype="PCM_16")

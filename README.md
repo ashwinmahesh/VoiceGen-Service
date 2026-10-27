@@ -30,6 +30,8 @@ Higgs starts new UI settings with a 2,000-token audio limit. If one option canno
 
 **Collection:** browse previous takes or save and upload voices with names, descriptions, and searchable tags.
 
+Uploaded voices are transcribed locally with a small CPU model. Listen, correct the detected words, and save them with the voice; automatic transcription can also be switched off. [Upload transcription](docs/transcription.md) explains setup and API use.
+
 Voice library appears first and opens by default; History holds your generated takes. Both offer **Delete** with a confirmation popup. Use **Show deleted → Restore** to bring an entry back. Deletion removes it from the active collection while retaining its audio for queued jobs and existing recordings; it does not free disk space.
 
 [View the deletion confirmation](docs/images/collection-delete-confirmation.jpg).
@@ -132,6 +134,7 @@ Here are the available endpoints. See [API.md](API.md) for request formats, exam
 | GET | `/api/metadata/{id}` | Download a take's saved metadata. |
 | GET | `/api/audio/{kind}/{id}` | Play or download audio. |
 | POST | `/api/artifacts/{id}/pauses` | Save a version with adjusted pauses. |
+| GET | `/api/transcription` | Check local automatic transcription readiness and languages. |
 | GET | `/api/voices` | Search the voice library. |
 | GET | `/api/voices/{id}` | Get a saved voice. |
 | POST | `/api/voices` | Save a voice to the library. |

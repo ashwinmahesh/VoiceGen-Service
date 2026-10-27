@@ -40,11 +40,12 @@ TEST_PYTHON ?= $(if $(wildcard $(CURDIR)/.venv/bin/python),$(CURDIR)/.venv/bin/p
 QUEUE_PYTHON ?= $(if $(wildcard $(CURDIR)/.venv-queue/bin/python),$(CURDIR)/.venv-queue/bin/python,$(PYTHON))
 export QUEUE_PORT QUEUE_PYTHON
 
-.PHONY: help setup-selected serve-selected setup setup-env setup-queue setup-llm download-llm configure-storage download download-extensions verify serve queue stop-queue queue-status start stop status health test smoke open sync-check
+.PHONY: help setup-selected serve-selected setup setup-env setup-queue setup-llm setup-transcriber download-llm configure-storage download download-extensions verify serve queue stop-queue queue-status start stop status health test smoke open sync-check
 help:
 	@echo 'make setup | download | verify | serve | queue | stop-queue | queue-status | start | stop | status | health | test | smoke | open'
 	@echo 'Overrides: MODEL=voxcpm2|qwen3|chatterbox|indextts|moss|fish|higgs, PORT, VENV, BOOTSTRAP_PYTHON, DATA_DIR, WEIGHTS_DIR, OUTPUT_DIR'
 	@echo 'make setup installs/reuses the shared prompt LLM; make setup-llm adds it to an existing installation'
+	@echo 'make setup includes automatic local voice transcription; make setup-transcriber adds it to existing installations'
 	@echo 'make serve enables the prompt LLM by default; NO_LLM=1 disables it and skips the LLM question'
 	@echo 'Generator UI/API: localhost:$(PORT); independent queue CRUD: localhost:$(QUEUE_PORT)'
 	@echo 'Default model: $(DEFAULT_MODEL); queue submissions may omit model to use this default'
@@ -56,6 +57,9 @@ setup-selected: configure-storage
 	$(MAKE) setup-queue
 	$(MAKE) download
 	$(MAKE) setup-llm
+	$(MAKE) setup-transcriber
+setup-transcriber:
+	$(BOOTSTRAP) setup setup_transcription.py
 setup-queue:
 	$(BOOTSTRAP) setup python_runtime.py setup-queue
 setup-llm:
