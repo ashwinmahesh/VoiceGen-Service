@@ -399,17 +399,22 @@ function updateTagSummary(){
 }
 function renderTagChoices(){
  const list=$('tag-choices');list.replaceChildren();
- for(const tag of availableTags){
+ const query=$('tag-search').value.trim().toLocaleLowerCase();
+ const matches=availableTags.filter(tag=>tag.name.toLocaleLowerCase().includes(query));
+ for(const tag of matches){
   const label=el('label'),input=el('input');input.type='checkbox';input.value=tag.name;input.checked=selectedTags.has(tag.name);
   input.onchange=()=>{if(input.checked)selectedTags.add(tag.name);else selectedTags.delete(tag.name);updateTagSummary();catalogOffset=0;loadVoicePage().catch(exc=>error(exc.message))};
   label.append(input,el('span',tag.name),el('small',tag.count));list.append(label);
  }
- if(!availableTags.length)list.append(el('p','No tags in this collection yet.','hint'));
+ if(!matches.length)list.append(el('p',availableTags.length?'No tags match your search.':'No tags in this collection yet.','hint'));
  updateTagSummary();
 }
-function closeTagChoices(restoreFocus=false){$('tag-options').hidden=true;$('tag-filter').setAttribute('aria-expanded','false');if(restoreFocus)$('tag-filter').focus()}
-$('tag-filter').onclick=()=>{const open=$('tag-options').hidden;$('tag-options').hidden=!open;$('tag-filter').setAttribute('aria-expanded',String(open))};
-$('tag-filter').onkeydown=event=>{if(event.key==='ArrowDown'){event.preventDefault();$('tag-options').hidden=false;$('tag-filter').setAttribute('aria-expanded','true');($('tag-choices').querySelector('input')||$('tag-clear')).focus()}};
+function closeTagChoices(restoreFocus=false){$('tag-options').hidden=true;$('tag-filter').setAttribute('aria-expanded','false');if($('tag-search').value){$('tag-search').value='';renderTagChoices()}if(restoreFocus)$('tag-filter').focus()}
+function openTagChoices(){$('tag-options').hidden=false;$('tag-filter').setAttribute('aria-expanded','true');$('tag-search').focus()}
+$('tag-filter').onclick=()=>{if($('tag-options').hidden)openTagChoices();else closeTagChoices()};
+$('tag-filter').onkeydown=event=>{if(event.key==='ArrowDown'){event.preventDefault();openTagChoices()}};
+$('tag-search').oninput=renderTagChoices;
+$('tag-search').onkeydown=event=>{if(event.key==='ArrowDown'){event.preventDefault();$('tag-choices').querySelector('input')?.focus()}};
 $('tag-clear').onclick=()=>{selectedTags.clear();renderTagChoices();closeTagChoices(true);catalogOffset=0;loadVoicePage().catch(exc=>error(exc.message))};
 document.addEventListener('pointerdown',event=>{if(!$('collection-tags').contains(event.target))closeTagChoices()});
 $('collection-tags').addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('tag-options').hidden){event.preventDefault();closeTagChoices(true)}});
