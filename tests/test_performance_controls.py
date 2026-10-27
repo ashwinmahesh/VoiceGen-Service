@@ -84,6 +84,23 @@ class PerformanceArtifactTests(unittest.TestCase):
     def setUp(self):
         self.fixture=test_contract.ContractTests(methodName='runTest');self.fixture.setUp();self.addCleanup(self.fixture.tearDown)
         self.reference=self.fixture.upload().json()
+    def test_auto_transcript_does_not_mislabel_a_clipped_or_truncated_recording(self):
+        fixture=self.fixture
+        admitted=fixture.generate(reference_id=self.reference['id'],ref_text='Recorded words.')
+        self.assertEqual(admitted.status_code,202,admitted.text)
+        take=fixture.finish(admitted.json())['result']
+        path=Path(take['path']);sidecar=path.with_suffix('.json')
+        original=json.loads(sidecar.read_text())
+        path.write_bytes(test_contract.wav(seconds=31))
+        # Stale duration metadata must not label a 30-second excerpt as the whole line.
+        saved=fixture.client.post('/api/voices',json={'output_id':take['id'],'name':'Clipped recording'})
+        self.assertEqual(saved.status_code,201,saved.text)
+        self.assertEqual(saved.json()['transcript'],'')
+        path.write_bytes(test_contract.wav(seconds=2))
+        original['possibly_truncated']=True;sidecar.write_text(json.dumps(original))
+        saved=fixture.client.post('/api/voices',json={'output_id':take['id'],'name':'Incomplete recording'})
+        self.assertEqual(saved.status_code,201,saved.text)
+        self.assertEqual(saved.json()['transcript'],'')
     def test_rendered_effective_metadata_requested_text_reuse_and_legacy_hash(self):
         fixture=self.fixture;original=fixture.engine.generate
         def generate(effective,*args,**kwargs):

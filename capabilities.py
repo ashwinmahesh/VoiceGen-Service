@@ -55,7 +55,7 @@ def capabilities():
             'voice_design':False,'manual_fish_tags':'whole-line by default; use native pause tags or structured delivery tags'}
         if backend=='moss':caps.limits['punctuation_pacing']={'method':'Native description guidance in one pass; timings are approximate targets, not inserted gaps','voice_design':True,'exact_timing':False}
     caps.limits['performance_guidance']={
-        'voxcpm2':'Auto uses combined conditioning with a reference, exact transcript and no new acting directions. New directions are disabled there; whole-line synthesis remains intact.',
+        'voxcpm2':'Auto uses combined conditioning with a reference, exact transcript and empty acting directions. Enter emotion or accent directions for flexible voice conditioning; whole-line synthesis remains intact.',
         'qwen3':'Base clones the recording: exact transcript enables in-context performance conditioning, without acting/accent instructions. VoiceDesign creates a voice; CustomVoice directs a fixed speaker. ICL repetition penalty has a runtime floor of 1.5.',
         'chatterbox':'Original English model: first 6s condition speech tokens, first 10s condition the decoder, full waveform supplies voice embedding. Keep a clean accented opening. More exaggeration can speed delivery; presets are experiments.',
         'indextts':'Follow recording retains the original speaker anchor. A separate emotion recording or named vector can change delivery; alpha 0.3–0.5 is an experimental starting point. Segment gaps do not mean every sentence.',

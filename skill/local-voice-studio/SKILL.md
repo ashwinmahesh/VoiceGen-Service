@@ -35,6 +35,10 @@ The Design tab is enabled whenever any capable model is ready. Entering a source
 
 Upload reference audio with `POST /api/references` (multipart file and optional transcript) or save directly to Collection with `POST /api/voices/upload` (file, name, description, transcript, repeated tags). Limits: 25 MiB, 1–30 seconds, 8–96 kHz, mono/stereo; preserve originals. Saved voice metadata supports names, descriptions, tags and exact transcripts. Search/list with `/api/voices`, get/edit `/api/voices/{id}`, tags `/api/voice-tags`. Save a generated take with `/api/voices` and its output_id. Read the live schema for precise fields.
 
+The studio preserves transcript edits through refreshes and offers Save transcript to voice; Generate saves a saved voice's edited transcript before admission. API ref_text is only an override: PATCH the voice transcript to persist it. Saving a complete generated take up to 30 actual seconds defaults its transcript to the spoken line without Fish/Higgs tags. Longer or potentially cut-off takes need an exact excerpt transcript rather than the full line. The listening room shows elapsed admission-to-completion time, including waiting, across batches and reloads.
+
+Vox Auto leaves accent/emotion directions editable and resolves to flexible conditioning when they are used; Combined/Continue performance disable them with an explanation. Higgs shows native Emotion/Prosody/Style instead of unsupported free-text direction fields. Its reference supplies the accent cue, with no accent-fidelity guarantee. Disabled fields have a lighter grey fill; never bypass capability checks merely to enable a control.
+
 ## Generate and compare
 
 `POST /api/generate` accepts one flat Generation request. Include `model` to choose a ready backend; omitted/null uses the shared saved default at admission. That choice is immutable for the job. Shared controls are top-level; model-specific settings belong under the exact model ID (`higgs`, `voxcpm2`, `qwen3`, etc.). Use the request model’s capabilities/defaults, asset requirements and prompt profile, never the last active backend’s.

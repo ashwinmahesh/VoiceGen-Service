@@ -271,7 +271,9 @@ Download the original with **`GET /api/references/{id}/original`**. For a voice 
 }
 ```
 
-Supply exactly one `output_id` or `reference_id`. Optional `transcript` overrides the saved sample's transcript. Saved samples use up to the first 30 seconds; for longer takes, supply the exact words in that excerpt or leave its transcript empty.
+Supply exactly one `output_id` or `reference_id`. Optional `transcript` overrides the saved sample's transcript. When omitted, a complete generated take of at most 30 seconds saves its spoken line automatically, with Fish/Higgs performance tags removed. Uploaded references reuse their stored transcript. Saved samples use up to the first 30 seconds; longer or potentially cut-off takes do not automatically reuse the full line. Supply the exact words in that excerpt or leave its transcript empty. Clipping uses the actual audio duration.
+
+The studio preserves transcript drafts when its catalog refreshes. **Save transcript to voice** uses `PATCH /api/voices/{id}`; generating with a saved voice saves any transcript edit before submitting the job. API `ref_text` remains a per-request override and does not modify the saved voice; use PATCH to persist it.
 
 ### Search and edit voices
 

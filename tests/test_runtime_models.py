@@ -219,6 +219,21 @@ class RuntimeAPITests(unittest.TestCase):
             self.assertEqual(response.status_code,422,response.text);self.assertIn('make setup MODEL=fish',response.json()['detail'])
         self.assertEqual(self.manager.store.listing()['total'],0)
 
+    def test_generated_voice_transcript_is_saved_editable_and_reused_by_higgs(self):
+        take=self.done(self.submit('voxcpm2',text='Welcome home. Sit, please.'))['result']
+        saved=self.client.post('/api/voices',json={'output_id':take['id'],'name':'Reusable narrator'})
+        self.assertEqual(saved.status_code,201,saved.text)
+        voice=saved.json();self.assertEqual(voice['transcript'],'Welcome home. Sit, please.')
+        transcript='Welcome home. Please sit.'
+        edited=self.client.patch('/api/voices/'+voice['id'],json={'transcript':transcript})
+        self.assertEqual(edited.status_code,200,edited.text)
+        self.assertEqual(self.client.get('/api/voices/'+voice['id']).json()['transcript'],transcript)
+        job=self.client.post('/api/generate',json={'model':'higgs','voice_id':voice['id'],'text':'A different line.'})
+        self.assertEqual(job.status_code,202,job.text)
+        result=self.done(job.json())
+        self.assertEqual(result['status'],'done',result)
+        self.assertEqual(result['result']['reference']['transcript'],transcript)
+
     def test_queue_openapi_covers_shared_management_and_typed_responses(self):
         for client,entry_model in ((self.client,'Job'),(self.queue,'Entry')):
             schema=client.get('/openapi.json').json();paths=schema['paths'];models=schema['components']['schemas']

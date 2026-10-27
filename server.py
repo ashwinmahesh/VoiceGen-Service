@@ -576,6 +576,7 @@ def save_voice(request: SaveVoice):
         original = json.loads(source.with_suffix(".json").read_text())
         with sf.SoundFile(source) as stream:
             sr = stream.samplerate
+            source_duration = stream.frames / sr
             # Read only the reference portion, even for long generated takes.
             data = stream.read(frames=sr * 30, dtype="float32", always_2d=True).mean(axis=1)
     except (OSError, ValueError, RuntimeError):
@@ -593,7 +594,7 @@ def save_voice(request: SaveVoice):
            "duration": round(len(data) / sr, 3), "sample_rate": sr, "channels": 1,
            "audio_url": f"/api/audio/voices/{identity}",
            "transcript": request.transcript if request.transcript is not None else
-               (__import__("performance_controls").spoken_transcript(original) if original.get("duration",0) <= 30 else "")}
+               (__import__("performance_controls").spoken_transcript(original) if source_duration <= 30 and not original.get("possibly_truncated") else "")}
     temporary = target.with_suffix(".tmp.wav")
     try:
         sf.write(temporary, data, sr, subtype="PCM_16")

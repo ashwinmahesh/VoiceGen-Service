@@ -7,6 +7,7 @@ if(collectionPage){$('page-title').textContent='Your collection';$('page-descrip
 $(observabilityPage?'observability-link':collectionPage?'catalog-link':'studio-link').setAttribute('aria-current','page');
 let availableModels=[],modelChoiceReady=false,changingModel=false,queuePaused=false,awaitingSourceModel=false,lastModelList=null,pendingModelRestore=null;
 function sourceMode(source=mode){return ['saved','upload'].includes(source)?'reference':source}
+function acceptsTextDirections(){return ['saved','upload'].includes(mode)?!!caps?.modes.reference.emotion&&!['continuation','combined'].includes($('clone-mode').value):mode==='preset'||!!caps?.modes.design.emotion}
 function readySourceModels(source=mode){return availableModels.filter(row=>row.modes?.includes(sourceMode(source)))}
 function readyDesignModels(){return readySourceModels('design')}
 let pageSize = 24, caps=null, storageKey='voice-studio', historyPage={data:[],total:0,has_more:false}, pendingKey=null;
@@ -18,8 +19,25 @@ const presets={natural:'Natural, conversational delivery with relaxed pacing.',j
 async function api(path,options={}){const response=await fetch(path,options);if(!response.ok){let body;try{body=await response.json()}catch{}throw Error(typeof body?.detail==='string'?body.detail:body?.detail?.[0]?.msg||`Request failed (${response.status})`)}return response.json()}
 function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
 function error(message){const target=$($('queue-dialog').open?'queue-error':browsePage?'page-error':'error');target.textContent=message;target.hidden=false}function announce(text){$('announcement').textContent=text}
-function controls(){ $('generate').disabled=!online||!queueWritable||submitting||uploading||enhancing||changingModel||!modelChoiceReady;$('unload').disabled=!online||busy||enhancing;$('new-seed').disabled=busy;updatePromptExpansion() }
+function controls(){ $('generate').disabled=!online||!queueWritable||submitting||uploading||enhancing||changingModel||transcriptSaving||!modelChoiceReady;$('unload').disabled=!online||busy||enhancing;$('new-seed').disabled=busy;updatePromptExpansion() }
 function clearExpansion(){appliedExpansion=null;pendingExpansion=null;updatePromptExpansion();}
+let generationClock=null;
+function elapsedTime(milliseconds){const seconds=Math.max(0,Math.floor(milliseconds/1000)),minutes=Math.floor(seconds/60);return minutes>=60?`${Math.floor(minutes/60)}:${String(minutes%60).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`:`${minutes}:${String(seconds%60).padStart(2,'0')}`}
+function updateElapsed(){
+ const target=$('elapsed');target.hidden=!generationClock;if(!generationClock)return;
+ target.textContent=`Elapsed ${elapsedTime((generationClock.end??Date.now())-generationClock.start)} · ${generationClock.label}`;
+ target.title='Time since this request was accepted, including time waiting in the queue.';
+}
+function generationTiming(identity,created,label,completed=null){
+ const timestamp=Date.parse(created),end=Date.parse(completed);
+ generationClock={identity,start:Number.isFinite(timestamp)?timestamp:generationClock?.identity===identity?generationClock.start:Date.now(),end:Number.isFinite(end)?end:null,label};updateElapsed();
+}
+function batchTiming(batch){
+ const running=batch.jobs.find(job=>job.status==='running'),finished=!['queued','running'].includes(batch.status);
+ const completed=batch.jobs.map(job=>job.completed_at).filter(Boolean).sort().at(-1);
+ generationTiming(batch.id,batch.created_at,running?`${running.stage} · option ${running.candidate_index} of ${batch.candidate_count}`:finished?`${batch.done_count} of ${batch.candidate_count} ready`:'Waiting in queue',finished?(completed||new Date().toISOString()):null);
+}
+setInterval(updateElapsed,1000);
 function updatePromptExpansion(){
  if(!caps)return;
  const available=modelChoiceReady&&!!caps.limits.prompt_expansion?.enabled,enabled=available&&$('prompt-expansion-enabled').checked,backend=caps.backend;
@@ -91,8 +109,10 @@ function setMode(next){
   awaitingSourceModel=caps.modes[sourceMode(next)]?.available===false;
  }
  pendingKey=null;clearExpansion();mode=next;
+ if(['saved','upload'].includes(mode)&&$('emotion-preset').value==='natural'&&$('emotion').value===presets.natural){$('emotion').value='';$('emotion-preset').value='custom'}
  for(const button of document.querySelectorAll('[data-mode]'))button.setAttribute('aria-selected',button.dataset.mode===mode);
  for(const name of ['design','saved','upload','preset'])$(name+'-panel').hidden=name!==mode;
+ if(mode==='saved')voicePreview();else transcriptVoice=null;
  renderModelChoices();updateCapabilities();updatePromptExpansion();controls();persist();
 }
 
@@ -114,7 +134,7 @@ function candidateExpansion(row){
 }
 function settings(){
  const referenceMode=mode==='saved'||mode==='upload';
- const direction=referenceMode?(caps?.modes.reference.emotion&&$('clone-mode').value==='reference'):mode==='preset'||caps?.modes.design.emotion;
+ const direction=acceptsTextDirections();
  const result={model:caps?.backend,prompt_expansion_id:appliedExpansion?.id||null,candidate_count:Number($('candidate-count').value),candidate_use_llm:!!caps?.limits.prompt_expansion?.enabled&&$('prompt-expansion-enabled').checked,candidate_variation:mode==='design'?$('candidate-variation').value:'auto',generate_immediately:$('generate-immediately').checked,text:$('text').value,description:mode==='design'?$('description').value:'',
    emotion:direction?$('emotion').value:'',accent:direction?$('accent').value:'',
    seed:Number($('seed').value),max_tokens:caps?.limits.max_tokens_fixed?1000:Number($('max-tokens').value),
@@ -141,14 +161,19 @@ function settings(){
  if(Object.keys(options).length)result[caps.backend]=options;
  return result;
 }
-function persist(){if(caps&&!awaitingSourceModel)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(),prompt_expansion_choice:expansionChoice,prompt_expansion:appliedExpansion,description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
+function persist(){if(caps&&!awaitingSourceModel)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(),ref_text:$('ref-text').value,prompt_expansion_choice:expansionChoice,prompt_expansion:appliedExpansion,description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
 function updateCapabilities(){
  if(!caps)return;
  const referenceMode=mode==='saved'||mode==='upload';
- const direction=referenceMode?(caps.modes.reference.emotion&&$('clone-mode').value==='reference'):mode==='preset'||caps.modes.design.emotion;
+ const direction=acceptsTextDirections();
  $('emotion').disabled=$('emotion-preset').disabled=$('accent').disabled=!direction;
- $('emotion-hint').textContent=referenceMode&&$('clone-mode').value==='auto'?'Auto follows recorded performance when transcribed. Retained emotion/accent fields are not sent; choose flexible Voice reference to apply them.':referenceMode&&['continuation','combined'].includes($('clone-mode').value)?'Continuation and combined cloning follow the reference delivery. Choose Voice reference to direct a different emotion or accent.':direction?'Direct the performance in words. Voice identity and expression are approximate.':'This model takes its voice from the recording. Use only the controls and inline tags listed below.';
- $('accent-hint').textContent=direction?'A prompt direction, not a trained accent pack. A recording with the desired accent is usually the stronger cue.':'The reference recording supplies the accent in this mode.';
+ $('emotion-hint').textContent=referenceMode&&caps.backend==='voxcpm2'&&$('clone-mode').value==='auto'?'Leave directions empty to follow the transcribed recording. Enter an emotion or accent to use flexible voice conditioning.':referenceMode&&['continuation','combined'].includes($('clone-mode').value)?'Unavailable with Combined or Continue performance: these follow the recorded delivery. Change Reference conditioning to Auto or Voice reference to enter new emotion or accent directions.':direction?'Direct the performance in words. Voice identity and expression are approximate.':'This model takes its voice from the recording. Use its model-specific controls to direct delivery.';
+ $('accent-hint').textContent=direction?'A prompt direction, not a trained accent pack. A recording with the desired accent is usually the stronger cue.':referenceMode&&caps.backend==='voxcpm2'?'Accent direction is unavailable with Combined or Continue performance. Choose Auto or Voice reference to edit it.':`Accent direction is unavailable for ${caps.name} reference cloning; the recording supplies the accent.`;
+ const structured=referenceMode&&['higgs','fish'].includes(caps.backend);
+ $('accent-direction-field').hidden=structured;
+ $('emotion-direction-field').hidden=structured;
+ $('recorded-accent-hint').hidden=!structured;
+ $('recorded-accent-hint').textContent=structured?`${caps.name} uses the recording as its accent cue; the accent can still drift. ${caps.backend==='higgs'?'Use Emotion, Prosody and Style above for delivery. Compare Follow recording before adding acting tags; free-text accent instructions are unsupported.':'Use delivery tags above for expression. Choose VoxCPM2 for editable accent directions.'}`:'';
  for(const key of ['steps','guidance','temperature'])$(key+'-field').hidden=!caps.controls[key];
  document.querySelector('[data-mode="preset"]').hidden=!readySourceModels('preset').length;
  const designTab=document.querySelector('[data-mode="design"]'),designDisabled=!readyDesignModels().length;
@@ -166,10 +191,10 @@ function updateCapabilities(){
  for(const option of $('clone-mode').options)option.hidden=!(caps.modes.reference.clone_modes||['auto','reference']).includes(option.value);
  if(!(caps.modes.reference.clone_modes||['auto','reference']).includes($('clone-mode').value))$('clone-mode').value='auto';
  $('clone-mode-field').hidden=!caps.modes.reference.continuation;
- const transcript=referenceMode&&(caps.modes.reference.transcript&&caps.backend!=='voxcpm2'||['auto','continuation','combined'].includes($('clone-mode').value));
+ const transcript=referenceMode&&caps.modes.reference.transcript;
  $('transcript-field').hidden=!transcript;
  $('ref-text-label').textContent=caps.backend==='qwen3'?'Exact reference transcript (optional)':'Exact reference transcript (or use saved transcript)';
- $('transcript-hint').textContent=caps.modes.reference.transcript_required?'This model requires the exact words in the reference recording. Supply them here or in the saved voice.':caps.backend==='qwen3'?'An exact transcript improves cloning. Leave blank to use the saved transcript, or speaker embedding mode when none is saved.':'Auto follows recorded performance when an exact transcript is available; otherwise it uses voice reference. Explicit combined/continuation require a transcript.';
+ $('transcript-hint').textContent=caps.backend==='voxcpm2'&&$('clone-mode').value==='reference'?'Saved with this voice for later reuse; flexible Voice reference does not send the transcript as performance context.':caps.modes.reference.transcript_required?'This model requires the exact words in the reference recording. Supply them here or in the saved voice.':caps.backend==='qwen3'?'An exact transcript improves cloning. Leave blank to use the saved transcript, or speaker embedding mode when none is saved.':'Auto follows recorded performance when an exact transcript is available; otherwise it uses voice reference. Explicit combined/continuation require a transcript.';
  count();
  $('edit-transcript-field').hidden=false;
  updatePerformancePreview();
@@ -181,6 +206,7 @@ function updateCapabilities(){
  $('apply-recommended').closest('details').hidden=awaitingSourceModel;
  if(awaitingSourceModel){$('emotion-hint').textContent=$('accent-hint').textContent='Choose a model to see its supported performance controls.';$('performance-guidance').hidden=true;$('inline-hint').hidden=true;$('expansion-profile').hidden=true;$('performance-controls').hidden=true;$('rendered-preview-field').hidden=true;$('backend-settings').hidden=true;$('license-notice').hidden=true;$('model-badge').textContent='Choose a model for this voice source';}
  installControlHelp();
+ updateTranscriptActions();
 }
 $('clone-mode').onchange=()=>{updateCapabilities();persist()};
 $('steering-emotion').onchange=()=>{if($('steering-emotion').value){if($('emotion-preset').value==='natural'){$('emotion').value='';$('emotion-preset').value='custom'}if(Number($('temperature').value)===.9)$('temperature').value='1.1'}updateCapabilities();persist()};
@@ -205,11 +231,31 @@ function restore(row){
  for(const key of ['exaggeration','cfg_weight','duration_factor','interval_silence','emotion_alpha'])if($(key))$(key).value=row[caps.backend]?.[key]??row[key]??caps.controls[caps.backend]?.[key]?.default??1;
  $('emotion-reference-id').value=row[caps.backend]?.emotion_reference_id||row.emotion_reference_id||'';$('emotion-vector').value=(row[caps.backend]?.emotion_vector||row.emotion_vector)?.join(',')||'';
  $('emotion-reference-info').textContent=(row[caps.backend]?.emotion_reference_id||row.emotion_reference_id)?'Using the saved emotion recording.':'';
- restorePerformance(row);$('ref-text').value=row.ref_text||'';appliedExpansion=row.candidate_variant?null:row.prompt_expansion||null;updateCapabilities();updatePromptExpansion();count();persist();
+ restorePerformance(row);$('ref-text').value=row.ref_text??(mode==='saved'?voiceRows.find(v=>v.id===$('voice').value)?.transcript:reference?.transcript)??'';rememberTranscriptDraft();appliedExpansion=row.candidate_variant?null:row.prompt_expansion||null;updateCapabilities();updatePromptExpansion();count();persist();
 }
 $('form').addEventListener('input',event=>{if(['description','emotion','accent','voice','reference','ref-text','clone-mode','preset-voice','fish-delivery-tags','higgs-emotion','higgs-prosody','higgs-style'].includes(event.target.id))clearExpansion();pendingKey=null;count();updatePerformancePreview();persist()});$('form').addEventListener('change',event=>{if(['voice','reference','clone-mode','preset-voice','higgs-emotion','higgs-prosody','higgs-style'].includes(event.target.id))clearExpansion();pendingKey=null;persist()});
 $('new-seed').onclick=()=>{pendingKey=null;$('seed').value=crypto.getRandomValues(new Uint32Array(1))[0];persist();announce('New seed selected')};
-function voicePreview(){const row=voiceRows.find(v=>v.id===$('voice').value);$('voice-preview').hidden=!row;if(row){$('ref-text').value=row.transcript||'';$('voice-preview').src=row.audio_url;$('voice-hint').textContent=row.description||'Reference identity is reused; emotion is directed separately.'}}$('voice').onchange=voicePreview;
+const transcriptDrafts=new Map();let transcriptVoice=null,transcriptSaving=false;
+function rememberTranscriptDraft(){if(mode==='saved'&&transcriptVoice)transcriptDrafts.set(transcriptVoice,$('ref-text').value);updateTranscriptActions()}
+function updateTranscriptActions(){
+ const row=mode==='saved'?voiceRows.find(v=>v.id===$('voice').value):null;
+ $('transcript-actions').hidden=!row;
+ const changed=!!row&&$('ref-text').value.trim()!==(row.transcript||'').trim();
+ $('save-transcript').disabled=!changed||transcriptSaving;
+ $('save-transcript').textContent=transcriptSaving?'Saving transcript…':'Save transcript to voice';
+ $('transcript-status').textContent=transcriptSaving?'Saving…':changed?'Unsaved · also saved when you generate':row?.transcript?'Saved with this voice':'No transcript saved';
+}
+async function saveSelectedTranscript(){
+ const row=mode==='saved'?voiceRows.find(v=>v.id===$('voice').value):null;if(!row)return;
+ const transcript=$('ref-text').value.trim();if(transcript===(row.transcript||'').trim())return;
+ const identity=row.id;transcriptSaving=true;updateTranscriptActions();controls();
+ try{const saved=await api('/api/voices/'+identity,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({transcript})});Object.assign(row,saved);announce('Exact transcript saved with “'+saved.name+'”.')}
+ finally{transcriptSaving=false;updateTranscriptActions();controls()}
+}
+$('ref-text').addEventListener('input',rememberTranscriptDraft);
+$('save-transcript').onclick=async()=>{try{await saveSelectedTranscript();persist()}catch(exc){error('Could not save the transcript: '+exc.message)}};
+function voicePreview(){const row=voiceRows.find(v=>v.id===$('voice').value);$('voice-preview').hidden=!row;if(row){if(mode==='saved'&&transcriptVoice!==row.id){transcriptVoice=row.id;$('ref-text').value=transcriptDrafts.get(row.id)??row.transcript??''}if($('voice-preview').getAttribute('src')!==row.audio_url)$('voice-preview').src=row.audio_url;$('voice-hint').textContent=row.description||'Reference identity is reused; use the supported delivery controls below.'}else transcriptVoice=null;updateTranscriptActions()}
+$('voice').onchange=()=>{voicePreview();persist()};
 async function refresh() {
   const [history, picker, tags] = await Promise.all([
     api('/api/history?'+new URLSearchParams({q:collection==='history'?$('search').value:'',limit:pageSize,offset:collection==='history'?catalogOffset:0})), api('/api/voices?limit=100'), api('/api/voice-tags')
@@ -362,6 +408,7 @@ $('reuse').onclick=()=>{if(latest){restore(latest);$('text').focus()}};
 function renderCandidates(batch){
  if(currentCandidates?.id!==batch.id){candidateCards.clear();$('candidate-cards').replaceChildren();latest=null;$('result').hidden=true;}
  currentCandidates=batch;$('candidate-results').hidden=false;
+ batchTiming(batch);
  $('candidate-summary').textContent=`${batch.done_count} of ${batch.candidate_count} ready · ${batch.status==='done'?'Choose a favorite to save':batch.status==='partial'?'Some options failed or were removed':batch.status==='error'?'Generation failed':batch.status==='deleted'?'Pending options removed':'Options generate one at a time'}`;
  for(const job of batch.jobs){
   const signature=JSON.stringify([job.status,job.stage,job.error,job.result?.id,job.candidate_variant]);
@@ -375,7 +422,7 @@ function renderCandidates(batch){
    const audio=el('audio');audio.controls=true;audio.preload='none';audio.src=job.result.audio_url;audio.setAttribute('aria-label','Listen to option '+job.candidate_index);card.append(audio);
    const actions=el('div',null,'card-actions'),select=el('button','Select option','secondary'),save=el('button','Save voice','secondary'),download=el('a','Download WAV','secondary');
    select.type=save.type='button';select.onclick=()=>showResult(job.result);
-   save.onclick=()=>openVoiceEditor({output_id:job.result.id,name:'',description:job.result.description||'',transcript:job.result.duration<=30?spokenTranscript(job.result):'',tags:[]});
+   save.onclick=()=>openVoiceEditor({output_id:job.result.id,name:'',description:job.result.description||'',transcript:savedTranscript(job.result),tags:[]});
    download.href=job.result.audio_url+'?download=true';download.download='';actions.append(select,save,download);card.append(actions);
   }else if(job.status==='error'&&!job.paused&&job.backend===caps?.backend){
    const retry=el('button','Retry this option','secondary');retry.type='button';retry.onclick=async()=>{try{await post('/api/jobs/'+job.id+'/retry',{});watchCandidates(batch.id)}catch(exc){error(exc.message)}};card.append(retry);
@@ -401,11 +448,11 @@ async function watchCandidates(identity){
 }
 async function watch(identity){
  if(browsePage){location.href='/?job='+encodeURIComponent(identity);return}if(watching===identity)return;localStorage.removeItem(storageKey+'-candidates');$('candidate-results').hidden=true;watching=identity;controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
- const started=Date.now();localStorage.setItem(storageKey+'-job',identity);
+ localStorage.setItem(storageKey+'-job',identity);
  try{while(watching===identity){const job=await api('/api/jobs/'+identity);if(watching!==identity)return;
   $('stage').textContent=job.stage;
   $('working-job-resources').href='/observability?job='+encodeURIComponent(identity);
-  $('elapsed').textContent=`${Math.floor((Date.now()-started)/1000)} seconds since monitoring began`;
+  generationTiming(identity,job.created_at,job.stage,job.completed_at);
   if(job.status==='done'){localStorage.removeItem(storageKey+'-job');showResult(job.result);await refresh();announce('Speech ready');break}
   if(job.status==='error'||job.status==='deleted'){localStorage.removeItem(storageKey+'-job');throw Error(job.error||'This pending take was removed.');}
   await new Promise(resolve=>setTimeout(resolve,1500));
@@ -418,13 +465,14 @@ $('form').onsubmit=async event=>{
  if(mode==='saved'&&!request.voice_id){error('Choose a saved voice first.');return}
  if(mode==='upload'&&!request.reference_id){error('Choose an audio reference first.');return}
  submitting=true;controls();
- try{pendingKey=pendingKey||crypto.randomUUID();const batch=await post('/api/candidates',{...request,idempotency_key:pendingKey});pendingKey=null;watchCandidates(batch.id);await refreshQueue()}
- catch(exc){error(exc.message)}finally{submitting=false;controls()}
+ generationTiming('submitting',new Date().toISOString(),'Submitting request');
+ try{await saveSelectedTranscript();pendingKey=pendingKey||crypto.randomUUID();const batch=await post('/api/candidates',{...request,idempotency_key:pendingKey});pendingKey=null;watchCandidates(batch.id);await refreshQueue()}
+ catch(exc){if(generationClock?.identity==='submitting'){generationClock=null;updateElapsed()}error(exc.message)}finally{submitting=false;controls()}
 };
 document.addEventListener('keydown',event=>{if(!browsePage&&(event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();if(!$('generate').disabled)$('form').requestSubmit()}});
 $('save-voice').onclick = () => {
   if (latest) openVoiceEditor({output_id: latest.id, name: $('voice-name').value,
-    description: latest.description || '', transcript:latest.duration<=30?spokenTranscript(latest):'',tags: []});
+    description: latest.description || '', transcript:savedTranscript(latest),tags: []});
 };
 $('reference').onchange=async()=>{const file=$('reference').files[0];reference=null;$('reference-preview').hidden=true;$('save-reference').hidden=true;if(!file)return;uploading=true;controls();$('reference-info').textContent='Preparing reference…';try{if(file.size>25*1024*1024)throw Error('Choose a file under 25 MB.');const body=new FormData();body.append('file',file);body.append('transcript',$('ref-text').value);reference=await api('/api/references',{method:'POST',body});$('reference-info').textContent=`${reference.name} · ${reference.duration}s`;$('reference-preview').src=reference.audio_url;$('reference-preview').hidden=false;$('save-reference').hidden=false}catch(exc){$('reference-info').textContent='';error(exc.message)}finally{uploading=false;controls()}};
 $('save-reference').onclick = () => {
@@ -595,7 +643,7 @@ function chooseVoice(row, focus = true) {
   if(browsePage&&focus){location.href='/?voice='+encodeURIComponent(row.id);return;}
   if (!voiceRows.some(item => item.id === row.id)) voiceRows.push(row);
   if (![...$('voice').options].some(option => option.value === row.id)) $('voice').append(new Option(row.name, row.id));
-  $('voice').value = row.id; setMode('saved'); voicePreview();
+  $('voice').value = row.id; setMode('saved'); voicePreview();persist();
   if (focus) { $('text').focus(); $('form').scrollIntoView({block: 'start'}); }
 }
 function openVoiceEditor(context) {
@@ -649,6 +697,8 @@ $('voice-editor-form').onsubmit = async event => {
       collection = 'voices'; catalogOffset = 0;
       document.querySelectorAll('[data-collection]').forEach(button => button.setAttribute('aria-selected', button.dataset.collection === collection));
     }
+    transcriptDrafts.set(row.id,row.transcript||'');
+    if(transcriptVoice===row.id)$('ref-text').value=row.transcript||'';
     await refresh();
     if (!context.edit_id) chooseVoice(row, false);
     $('voice-editor').close();
@@ -740,6 +790,7 @@ $('clear-emotion-reference').onclick=()=>{$('emotion-reference-id').value='';$('
 
 
 function spokenTranscript(row){const backend=row.backend||caps.backend;return (backend==='fish'?row.text.replace(/\[[^\[\]]*\]\s*/g,''):backend==='higgs'?row.text.replace(/<\|[^|>]+\|>\s*/g,''):row.text).trim()}
+function savedTranscript(row){return row.duration<=30&&!row.possibly_truncated?spokenTranscript(row):''}
 function readIndexVector(){return ['happy','angry','sad','afraid','disgusted','melancholic','surprised','calm'].map(name=>Number($('index-vector-'+name)?.value||0))}
 function updateIndexEmotion(chosen=false){
  if(caps?.backend!=='indextts')return;

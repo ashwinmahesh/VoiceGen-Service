@@ -18,7 +18,9 @@ Numbers below mean temperature / top-p / top-k unless stated otherwise. API over
 
 For Vox `auto`, requested metadata retains `auto`; effective metadata and the durable queue freeze the concrete mode before execution. Existing queued reference jobs are not upgraded. Historical omitted-mode keyed retries recover their old jobs through narrowly versioned compatibility checks. New auto requests and explicit reference requests have distinct fingerprints. Other backends resolve auto to reference without acquiring Vox conditioning capabilities.
 
-In the UI, Auto explicitly means follow the recording: retained emotion/accent fields are disabled and unsent until flexible Voice reference is selected. The API also supports auto plus explicit directions; those resolve to reference rather than discarding the directions. No private voice or character preset is shipped.
+In the UI and API, Auto follows the recording when new emotion/accent directions are empty. The fields remain editable: entering new directions resolves Auto to flexible reference conditioning. Combined and Continue performance disable those fields, with a lighter grey background and an explanation. No private voice or character preset is shipped.
+
+Higgs exposes its native Emotion, Prosody and Style selectors in the delivery section. Its reference recording supplies the accent cue; it has no free-text accent control here, and the accent can still drift. Keep an exact saved transcript and compare the default Follow recording settings with one acting control at a time. A UI or transcript fix alone does not establish improved accent fidelity.
 
 ## Why these choices
 

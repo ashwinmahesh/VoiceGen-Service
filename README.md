@@ -14,6 +14,8 @@ Screenshots use benign demonstration records and fake inference; displayed timin
 
 **Generate:** choose or design a voice, enter dialogue, direct the performance, and audition the results.
 
+An elapsed timer follows each request through waiting and generation. Reference transcripts stay with saved voices; you can save an edit directly or let Generate save it before submitting. Higgs shows its Emotion, Prosody, and Style controls in the delivery section, with accent supplied by the reference recording.
+
 **Design a voice** stays visible when the current model needs a recording, such as Higgs. Open it and choose a set-up VoxCPM2, Qwen3-TTS, or MOSS VoiceGenerator from the model menu. If none is set up, the tab stays disabled and its tooltip lists those alternatives.
 
 ![Full Generate page with Higgs performance controls and audio playback](docs/images/studio-page.jpg)
