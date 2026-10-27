@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
-from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage,model_context
+from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage,model_context,validate_mount
 from queue_config import QUEUE_DB, DEFAULT_QUEUE_PORT
 from queue_schemas import QueueMove, QueueState, ModelList
 from resource_schemas import ResourceOverview, ResourceJobPage, ResourceJobHistory, JobLogs
@@ -23,7 +23,7 @@ import pause_edits
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
-from schemas import Generation, CandidateGeneration, CandidateBatch, ExpandVoiceGuidance, PromptExpansion, Health, Capabilities, Job, Artifact, ArtifactPage, Reference, Unloaded, TagsPage, PauseAdjustment, QueuePage, QueueRemoval
+from schemas import Generation, CandidateGeneration, CandidateBatch, ExpandVoiceGuidance, PromptExpansion, Health, Capabilities, Job, Artifact, ArtifactPage, Reference, Unloaded, TagsPage, PauseAdjustment, QueuePage, QueueRemoval, CollectionChange
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from body_limit import BodyLimit
 import voice_catalog
@@ -434,13 +434,33 @@ def queue_run_now(identity: str):
 
 @app.get('/api/history',response_model=ArtifactPage)
 def history(q: str=Query(default='',max_length=300),limit: int=Query(default=24,ge=1,le=100),
-            offset: int=Query(default=0,ge=0)):
+            offset: int=Query(default=0,ge=0),deleted: bool=False):
     words = voice_catalog.searchable(q).split()
-    rows = [r for r in storage.artifact_rows() if all(word in voice_catalog.searchable(' '.join(
+    rows = [r for r in storage.artifact_rows(deleted=deleted) if all(word in voice_catalog.searchable(' '.join(
         str(r.get(k,'')) for k in ['text','description','emotion'])) for word in words)]
     total = len(rows); more = offset+limit < total
     return ArtifactPage(data=rows[offset:offset+limit],total=total,offset=offset,limit=limit,
                         has_more=more,next_offset=offset+limit if more else None)
+
+
+def change_collection(identity,kind,deleted):
+    try:
+        validate_mount(ROOT)
+        if kind=='voices':voice_catalog.read_voice(ROOT,identity,include_deleted=True)
+        else:storage.read_artifact(identity)
+        changed=voice_catalog.set_deleted(ROOT,kind,identity,deleted)
+        return dict(id=identity,kind=kind,deleted=deleted,changed=changed)
+    except FileNotFoundError:raise HTTPException(404,'Collection entry or its recording is unavailable') from None
+    except (OSError,ValueError,TypeError,KeyError,RuntimeError) as exc:
+        raise HTTPException(422,'Could not update Collection. Check that its storage is available and writable: '+str(exc)) from None
+
+
+@app.delete('/api/artifacts/{identity}',response_model=CollectionChange)
+def delete_artifact(identity: str):return change_collection(identity,'outputs',True)
+
+
+@app.post('/api/artifacts/{identity}/restore',response_model=CollectionChange)
+def restore_artifact(identity: str):return change_collection(identity,'outputs',False)
 
 
 @app.get('/api/artifacts/{identity}',response_model=Artifact)
@@ -499,8 +519,16 @@ async def unload():
 @app.get("/api/voices", response_model=VoicePage)
 def voices(q: str = Query(default="", max_length=300), tag: str = Query(default="", max_length=40),
            sort: Literal["newest", "updated", "name"] = "newest",
-           limit: int = Query(default=24, ge=1, le=100), offset: int = Query(default=0, ge=0)):
-    return voice_catalog.search(ROOT, q, tag, sort, limit, offset)
+           limit: int = Query(default=24, ge=1, le=100), offset: int = Query(default=0, ge=0),deleted: bool=False):
+    return voice_catalog.search(ROOT, q, tag, sort, limit, offset,deleted=deleted)
+
+
+@app.delete('/api/voices/{identity}',response_model=CollectionChange)
+def delete_voice(identity: str):return change_collection(identity,'voices',True)
+
+
+@app.post('/api/voices/{identity}/restore',response_model=CollectionChange)
+def restore_voice(identity: str):return change_collection(identity,'voices',False)
 
 
 @app.post('/api/voices/upload',status_code=201,response_model=Voice)
@@ -531,9 +559,9 @@ async def upload_voice(file: UploadFile=File(...),name: str=Form(...,min_length=
 
 
 @app.get("/api/voice-tags", response_model=TagsPage)
-def voice_tags():
+def voice_tags(deleted: bool=False):
     counts = {}
-    for voice in voice_catalog.all_voices(ROOT):
+    for voice in voice_catalog.all_voices(ROOT,deleted=deleted):
         for tag in set(voice.tags):
             counts[tag] = counts.get(tag, 0) + 1
     return {"data": [{"name": tag, "count": counts[tag]} for tag in sorted(counts)]}

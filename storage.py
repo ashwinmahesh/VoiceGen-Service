@@ -3,7 +3,7 @@ import json
 import tempfile
 from pathlib import Path
 from config import ROOT, OUTPUT_DIR, validate_mount
-from voice_catalog import IDENTITY, atomic_json
+from voice_catalog import IDENTITY, atomic_json,is_deleted
 
 
 def output_folder(value):
@@ -41,7 +41,7 @@ def read_artifact(identity):
     return row
 
 
-def artifact_rows():
+def artifact_rows(deleted=False):
     identities = {p.stem for folder in [ROOT/'outputs', ROOT/'artifact-index'] for p in folder.glob('*.json')
                   if IDENTITY.fullmatch(p.stem)}
     if OUTPUT_DIR != ROOT/'outputs':
@@ -49,7 +49,7 @@ def artifact_rows():
     rows = []
     for identity in identities:
         try:
-            rows.append(read_artifact(identity))
+            if is_deleted(ROOT,'outputs',identity)==deleted:rows.append(read_artifact(identity))
         except (OSError, ValueError, KeyError, RuntimeError):
             continue
     return sorted(rows,key=lambda row:row.get('created_at',''),reverse=True)

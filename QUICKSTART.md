@@ -77,7 +77,9 @@ For Higgs, new UI settings use a **2,000-token Audio limit**. Existing saved set
 
 Prompt expansion uses the separate local Qwen3.5-2B LLM, with rules tailored to each speech model. It sees written voice and delivery directions, not your dialogue, reference transcript, or audio. Some modes do not support it. See [voice quality tips](VOICE_QUALITY.md) for choosing references and balancing expression against accent and voice consistency.
 
-Open **Collection** for generated History and the saved voice library. Name, describe, tag, and search your voices there. **Upload voice** imports a recording directly into the library.
+Open **Collection** to start in **Voice library**, the left tab. Name, describe, tag, and search your voices there. **Upload voice** imports a recording directly into the library; **History** shows generated takes. Click the Voice Studios icon, title, or subtitle at the top left to return to Studio.
+
+To remove a voice or take, choose its **Delete** button, check the item named in the confirmation popup, and confirm **Delete**. Cancel or Escape keeps it. **Show deleted** lists removed entries; choose **Restore**, then uncheck the filter to see the entry again. Audio stays on disk so existing jobs, saved voices, and job-result links continue working. This clears your collection view rather than reclaiming storage.
 
 Open **Queue** in the header to monitor progress. Drag a left-side handle to reorder waiting jobs, or focus it and use the up/down arrow keys. **Run Now** moves a waiting job first, ahead of other immediate jobs; the current batch finishes before it starts. **Generate immediately**, checked by default in the UI, runs your request next after the active batch, ahead of ordinary waiting jobs. It does not interrupt work already running. Pending jobs survive restarts. The generator switches models automatically; a missing model stays blocked with a setup hint while other work continues. **Pause queue** holds normal waiting work; immediate jobs can still run.
 

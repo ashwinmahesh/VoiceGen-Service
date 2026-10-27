@@ -234,6 +234,13 @@ class Health(BaseModel):
     prompt_expansion: dict = Field(default_factory=dict)
 
 
+class CollectionChange(BaseModel):
+    id: str
+    kind: Literal['voices','outputs']
+    deleted: bool
+    changed: bool
+
+
 class Artifact(BaseModel):
     model_config = ConfigDict(extra='allow')  # legacy records retain their original fields
     id: str

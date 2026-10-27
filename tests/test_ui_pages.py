@@ -8,16 +8,24 @@ import server
 
 class Page(HTMLParser):
     def __init__(self,markup):
-        super().__init__();self.ids=[];self.scripts=[];self.task_tabs=[];self.catalog_links=[];self.feed(markup)
+        super().__init__();self.ids=[];self.scripts=[];self.task_tabs=[];self.catalog_links=[];self.collection_tabs=[];self.home_links=[];self.feed(markup)
     def handle_starttag(self,tag,attrs):
         attrs=dict(attrs)
         if 'id' in attrs:self.ids.append(attrs['id'])
         if tag=='script' and 'src' in attrs:self.scripts.append(attrs['src'])
         if attrs.get('data-mode'):self.task_tabs.append(attrs)
         if attrs.get('id')=='browse-voices':self.catalog_links.append((tag,attrs))
+        if attrs.get('data-collection'):self.collection_tabs.append(attrs)
+        if attrs.get('id')=='brand-home':self.home_links.append((tag,attrs))
 
 
 class SharedPageTests(unittest.TestCase):
+    def test_collection_defaults_to_voice_library_and_has_a_confirmation_dialog(self):
+        page=Page(TestClient(server.app).get('/collection').text)
+        self.assertEqual([tab['data-collection'] for tab in page.collection_tabs],['voices','history'])
+        self.assertEqual([tab['aria-selected'] for tab in page.collection_tabs],['true','false'])
+        for identity in ('show-deleted','collection-delete-dialog','collection-delete-confirm','collection-delete-cancel'):
+            self.assertIn(identity,page.ids)
     def test_studio_has_two_tasks_with_a_record_source_picker_and_new_tab_catalog(self):
         markup=TestClient(server.app).get('/').text;page=Page(markup)
         self.assertEqual([tab['data-mode'] for tab in page.task_tabs],['design','record'])
@@ -43,6 +51,11 @@ class SharedPageTests(unittest.TestCase):
             for identity in ('open-queue','status','unload','queue-dialog','queue-pause','queue-entries'):
                 self.assertEqual(page.ids.count(identity),1,(path,identity))
             self.assertIn('/assets/app.js',page.scripts)
+            self.assertEqual(len(page.home_links),1,path)
+            tag,attrs=page.home_links[0]
+            self.assertEqual((tag,attrs['href']),('a','/'),path)
+            brand=re.search(r'<a [^>]*id="brand-home".*?</a>',markup,re.S).group()
+            for element in ('<img','<strong','<small'):self.assertIn(element,brand,path)
 
     def test_observability_content_and_script_only_load_on_its_page(self):
         client=TestClient(server.app)

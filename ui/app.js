@@ -1,9 +1,9 @@
 
-const $=id=>document.getElementById(id);let mode='design',collection='history',reference=null,latest=null,voiceRows=[],historyRows=[],busy=false,online=false,uploading=false,watching=null,submitting=false,queueWritable=true;
+const $=id=>document.getElementById(id);let mode='design',collection='voices',reference=null,latest=null,voiceRows=[],historyRows=[],busy=false,online=false,uploading=false,watching=null,submitting=false,queueWritable=true;
 const collectionPage=location.pathname.startsWith('/collection'),observabilityPage=location.pathname.startsWith('/observability');
 const browsePage=collectionPage||observabilityPage;
 document.title=(observabilityPage?'Observability':collectionPage?'Collection':'Studio')+' · Voice Studios';
-if(collectionPage){$('page-title').textContent='Your collection';$('page-description').textContent='Find saved voices, listen to takes, and reuse a performance in the studio.';}
+if(collectionPage){const params=new URLSearchParams(location.search);collection=params.get('tab')==='history'?'history':'voices';$('show-deleted').checked=params.get('deleted')==='1';$('page-title').textContent='Your collection';$('page-description').textContent='Find saved voices, listen to takes, and reuse a performance in the studio.';}
 $(observabilityPage?'observability-link':collectionPage?'catalog-link':'studio-link').setAttribute('aria-current','page');
 let availableModels=[],modelChoiceReady=false,changingModel=false,queuePaused=false,awaitingSourceModel=false,lastModelList=null,pendingModelRestore=null;
 let recordSource='saved',uploadTranscriptDraft=null;
@@ -21,7 +21,8 @@ let pageSize = 24, caps=null, storageKey='voice-studio', historyPage={data:[],to
 let voicePage = {data: [], total: 0, has_more: false};
 let currentCandidates=null, candidateCards=new Map();
 let appliedExpansion=null,pendingExpansion=null,enhancing=false,expansionChoice=null;
-let catalogOffset = 0, searchTimer = null, catalogRequest = 0, voiceEditor = null, voiceSaving = false;
+let catalogOffset = 0, searchTimer = null, catalogRequest = 0, refreshRequest=0, voiceEditor = null, voiceSaving = false;
+let collectionDeleteTarget=null,collectionChanging=false;
 const presets={natural:'Natural, conversational delivery with relaxed pacing.',joy:'Excited and joyful, with an audible smile and lively pacing.',sadness:'Quiet sadness and disappointment, speaking slowly with a trembling voice.',anger:'Angry and frustrated, with firm emphasis and a tense, forceful delivery.',fear:'Frightened and anxious, with a trembling voice and urgent, uneven pacing.',relief:'Deeply relieved, softening into warmth with a gentle exhale.',sarcasm:'Dry, understated sarcasm with deliberate pauses and restrained emphasis.',whisper:'A soft, intimate whisper, speaking gently and slowly.',custom:''};
 async function api(path,options={}){const response=await fetch(path,options);if(!response.ok){let body;try{body=await response.json()}catch{}throw Error(typeof body?.detail==='string'?body.detail:body?.detail?.[0]?.msg||`Request failed (${response.status})`)}return response.json()}
 function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
@@ -304,18 +305,21 @@ $('save-transcript').onclick=async()=>{try{await saveSelectedTranscript();persis
 function voicePreview(){const row=voiceRows.find(v=>v.id===$('voice').value);$('voice-preview').hidden=!row;if(row){if(mode==='saved'&&transcriptVoice!==row.id){transcriptVoice=row.id;$('ref-text').value=transcriptDrafts.get(row.id)??row.transcript??''}if($('voice-preview').getAttribute('src')!==row.audio_url)$('voice-preview').src=row.audio_url;$('voice-hint').textContent=row.description||'Reference identity is reused; use the supported delivery controls below.'}else transcriptVoice=null;updateTranscriptActions();updatePromptExpansion()}
 $('voice').onchange=()=>{voicePreview();persist()};
 async function refresh() {
-  const [history, picker, tags] = await Promise.all([
-    api('/api/history?'+new URLSearchParams({q:collection==='history'?$('search').value:'',limit:pageSize,offset:collection==='history'?catalogOffset:0})), api('/api/voices?limit=100'), api('/api/voice-tags')
+  const token=++refreshRequest;
+  const [picker, tags] = await Promise.all([
+    api('/api/voices?limit=100'), api('/api/voice-tags?'+new URLSearchParams({deleted:$('show-deleted').checked}))
   ]);
-  historyPage=history;historyRows = history.data;
+  if(token!==refreshRequest)return;
   let selected = $('voice').value;
   if (!selected) {
     try { selected = JSON.parse(localStorage.getItem(storageKey+'-form') || 'null')?.voice_id || ''; } catch {}
   }
-  voiceRows = picker.data;
-  if (selected && !voiceRows.some(row => row.id === selected)) {
-    try { voiceRows.push(await api('/api/voices/' + selected)); } catch {}
+  const rows=picker.data;
+  if (selected && !rows.some(row => row.id === selected)) {
+    try { rows.push(await api('/api/voices/' + selected)); } catch {}
   }
+  if(token!==refreshRequest)return;
+  voiceRows=rows;
   $('voice').replaceChildren(new Option('Choose a saved voice…', ''));
   for (const row of voiceRows) $('voice').append(new Option(row.name, row.id));
   $('voice').value = selected;
@@ -324,7 +328,7 @@ async function refresh() {
   $('tag-filter').replaceChildren(new Option('All tags', ''));
   for (const tag of tags.data) $('tag-filter').append(new Option(`${tag.name} (${tag.count})`, tag.name));
   $('tag-filter').value = filter;
-  await loadVoicePage();
+  await loadCollection();
 }
 function el(tag,text,cls){const node=document.createElement(tag);if(text!=null)node.textContent=text;if(cls)node.className=cls;return node}
 const queueIconPaths={
@@ -351,7 +355,7 @@ function queueControl(tag,label,icon,cls='secondary'){return queueLabel(el(tag,n
 for(const[id,icon,label]of [['queue-pause','pause','Pause queue'],['queue-clear','clear','Clear pending'],['close-queue','close','Close'],['queue-prev','previous','Previous'],['queue-next','next','Next']])queueLabel($(id),icon,label);
 $('open-queue').prepend(queueIcon('queue'));
 function renderCards() {
-  const isVoices = collection === 'voices';
+  const isVoices = collection === 'voices',deleted=$('show-deleted').checked;
   $('search').placeholder = isVoices ? 'Search voice names, descriptions, or tags…' : 'Search text, voice descriptions, or emotions…';
   const query = $('search').value.toLowerCase();
   const page=isVoices?voicePage:historyPage;const rows=page.data;
@@ -361,16 +365,18 @@ function renderCards() {
   $('voice-pagination').hidden = page.total <= pageSize;
   $('voice-prev').disabled = catalogOffset === 0;
   $('voice-next').disabled = !page.has_more;
-  $('catalog-count').textContent = `${page.total} ${isVoices?'saved voices':'takes'}`;
+  $('catalog-count').textContent = `${page.total} ${deleted?'deleted ':''}${isVoices?'voice':'take'}${page.total===1?'':'s'}`;
+  $('deleted-collection-hint').hidden=!deleted;
   $('voice-page-label').textContent = page.total ?
-    `${catalogOffset + 1}–${catalogOffset + rows.length} of ${page.total}` : 'No voices';
+    `${catalogOffset + 1}–${catalogOffset + rows.length} of ${page.total}` : 'No entries';
   $('collection-empty').hidden = rows.length > 0;
   $('collection-empty').textContent = (query || (isVoices && $('tag-filter').value)) ?
-    'No matching takes or voices.' : isVoices ?
+    'No matching takes or voices.' : deleted?`No deleted ${isVoices?'voices':'takes'}.`:isVoices ?
     'Save a generated take or upload a reference to create your voice library.' :
     'Your generated takes will appear here.';
   for (const row of rows) {
     const card = el('article', null, 'card');
+    card.dataset.collectionId=row.id;card.dataset.collectionKind=isVoices?'voices':'outputs';
     const head = el('div', null, 'card-title');
     head.append(el('strong', isVoices ? row.name : new Date(row.created_at).toLocaleString()),
       el('span', `${row.duration.toFixed(1)}s`, 'tiny'));
@@ -390,6 +396,7 @@ function renderCards() {
     const player = el('audio'); player.controls = true; player.preload = 'none'; player.src = row.audio_url;
     card.append(player);
     const actions = el('div', null, 'card-actions');
+    if(!deleted){
     const use = el('button', isVoices ? 'Use this voice' : 'Open take', 'secondary');
     use.type = 'button';
     use.onclick = () => { if (isVoices) chooseVoice(row); else showResult(row); };
@@ -403,10 +410,56 @@ function renderCards() {
       reuse.onclick = () => { if(browsePage){location.href='/?reuse='+encodeURIComponent(row.id);return}restore(row); $('text').focus(); }; actions.append(reuse);
       const pauses=el('button','Adjust pauses','secondary');pauses.type='button';pauses.onclick=()=>openPauseEditor(row);actions.append(pauses);
     }
+    }
     const download = el('a', 'Download WAV', 'secondary');
     download.href = row.audio_url + '?download=true'; download.download = '';
-    actions.append(download); card.append(actions); $('cards').append(card);
+    actions.append(download);
+    const change=el('button',deleted?'Restore':'Delete',deleted?'secondary':'secondary danger');change.type='button';
+    change.onclick=()=>deleted?restoreCollectionEntry(row,isVoices,change):openCollectionDelete(row,isVoices);
+    actions.append(change);card.append(actions); $('cards').append(card);
   }
+}
+function collectionPath(target){return '/api/'+(target.kind==='voices'?'voices':'artifacts')+'/'+target.id}
+function collectionTarget(row,isVoice){return {id:row.id,kind:isVoice?'voices':'outputs',label:isVoice?row.name:(row.text||'Recording').slice(0,160)}}
+function collectionNotice(message){$('voice-notice').textContent=message;$('voice-notice').hidden=false;announce(message)}
+function openCollectionDelete(row,isVoice){
+ collectionDeleteTarget=collectionTarget(row,isVoice);
+ $('collection-delete-title').textContent=isVoice?'Delete voice?':'Delete take?';
+ $('collection-delete-target').textContent=collectionDeleteTarget.label;
+ $('collection-delete-error').hidden=true;$('collection-delete-confirm').disabled=false;
+ $('collection-delete-dialog').showModal();
+}
+$('collection-delete-cancel').onclick=()=>{if(!collectionChanging)$('collection-delete-dialog').close()};
+$('collection-delete-dialog').addEventListener('cancel',event=>{if(collectionChanging)event.preventDefault()});
+$('collection-delete-dialog').addEventListener('close',()=>{if(!collectionChanging)collectionDeleteTarget=null});
+$('collection-delete-confirm').onclick=async()=>{
+ if(collectionChanging||!collectionDeleteTarget)return;
+ const target=collectionDeleteTarget;let completed=false;collectionChanging=true;
+ $('collection-delete-error').hidden=true;
+ $('collection-delete-confirm').disabled=$('collection-delete-cancel').disabled=true;$('collection-delete-confirm').textContent='Deleting…';
+ try{
+  await api(collectionPath(target),{method:'DELETE'});completed=true;
+  if(target.kind==='voices'&&$('voice').value===target.id){
+   $('voice').value='';transcriptDrafts.delete(target.id);
+   if(mode==='saved'){transcriptVoice=null;$('ref-text').value='';clearExpansion();persist()}
+  }
+  $('collection-delete-dialog').close();
+  collectionNotice(`Deleted “${target.label}”. Use Show deleted to restore it.`);
+  await refresh();
+ }catch(exc){
+  if(completed)error('Deleted successfully, but Collection could not refresh. Reload the page. '+exc.message);
+  else{$('collection-delete-error').textContent=exc.message;$('collection-delete-error').hidden=false;}
+ }finally{
+  collectionChanging=false;collectionDeleteTarget=null;
+  $('collection-delete-confirm').disabled=$('collection-delete-cancel').disabled=false;$('collection-delete-confirm').textContent='Delete';
+  if(!completed&&$('collection-delete-dialog').open)collectionDeleteTarget=target;
+ }
+};
+async function restoreCollectionEntry(row,isVoice,button){
+ const target=collectionTarget(row,isVoice);button.disabled=true;button.textContent='Restoring…';let completed=false;
+ try{await post(collectionPath(target)+'/restore',{});completed=true;collectionNotice(`Restored “${target.label}”. Uncheck Show deleted to see it in your collection.`);await refresh()}
+ catch(exc){error((completed?'Restored successfully. Reload Collection. ':'')+exc.message)}
+ finally{button.disabled=false;button.textContent='Restore'}
 }
 document.querySelectorAll('[data-collection]').forEach(button => button.onclick = () => setCollection(button.dataset.collection));
 $('search').oninput = () => {
@@ -674,14 +727,20 @@ $('queue-clear').onclick=async()=>{try{const result=await api('/api/queue',{meth
 $('queue-status').onchange=$('queue-size').onchange=()=>{queueOffset=0;refreshQueue().catch(exc=>error(exc.message))};
 $('queue-prev').onclick=()=>{queueOffset=Math.max(0,queueOffset-Number($('queue-size').value));refreshQueue().catch(exc=>error(exc.message))};
 $('queue-next').onclick=()=>{if(queuePage?.has_more){queueOffset+=Number($('queue-size').value);refreshQueue().catch(exc=>error(exc.message))}};
-async function loadCollection(){if(collection==='voices')return loadVoicePage();const page=await api('/api/history?'+new URLSearchParams({q:$('search').value,limit:pageSize,offset:catalogOffset}));historyPage=page;historyRows=page.data;renderCards()}
+async function loadCollection(){
+ if(collection==='voices')return loadVoicePage();
+ const token=++catalogRequest,page=await api('/api/history?'+new URLSearchParams({q:$('search').value,limit:pageSize,offset:catalogOffset,deleted:$('show-deleted').checked}));
+ if(token!==catalogRequest)return;
+ if(catalogOffset&&catalogOffset>=page.total){catalogOffset=Math.max(0,Math.floor((page.total-1)/pageSize)*pageSize);return loadCollection()}
+ historyPage=page;historyRows=page.data;renderCards();
+}
 async function loadVoicePage() {
   const token = ++catalogRequest;
   const params = new URLSearchParams({q: collection === 'voices' ? $('search').value : '',
-    tag: $('tag-filter').value, sort: $('voice-sort').value, limit: pageSize, offset: catalogOffset});
+    tag: $('tag-filter').value, sort: $('voice-sort').value, limit: pageSize, offset: catalogOffset,deleted:$('show-deleted').checked});
   const page = await api('/api/voices?' + params);
   if (token !== catalogRequest) return;
-  if (catalogOffset && catalogOffset >= page.total) { catalogOffset = 0; return loadVoicePage(); }
+  if (catalogOffset && catalogOffset >= page.total) { catalogOffset=Math.max(0,Math.floor((page.total-1)/pageSize)*pageSize);return loadVoicePage(); }
   voicePage = page;
   renderCards();
 }
@@ -689,9 +748,10 @@ function setCollection(next) {
   clearTimeout(searchTimer); collection = next; catalogOffset = 0;
   document.querySelectorAll('[data-collection]').forEach(button => button.setAttribute('aria-selected', button.dataset.collection === collection));
   $('search').placeholder = next === 'voices' ? 'Search voice names, descriptions, or tags…' : 'Search text, voice descriptions, or emotions…';
-  if (next === 'voices') loadVoicePage().catch(exc => error(exc.message));
-  else { catalogRequest++; loadCollection().catch(exc=>error(exc.message)); }
+  syncCollectionLocation();loadCollection().catch(exc=>error(exc.message));
 }
+function syncCollectionLocation(){if(collectionPage){const url=new URL(location.href);url.searchParams.set('tab',collection);if($('show-deleted').checked)url.searchParams.set('deleted','1');else url.searchParams.delete('deleted');history.replaceState(null,'',url)}}
+$('show-deleted').onchange=()=>{catalogOffset=0;catalogRequest++;$('tag-filter').value='';syncCollectionLocation();refresh().catch(exc=>error(exc.message))};
 function chooseVoice(row, focus = true) {
   if(browsePage&&focus){location.href='/?voice='+encodeURIComponent(row.id);return;}
   if (!voiceRows.some(item => item.id === row.id)) voiceRows.push(row);
@@ -747,7 +807,9 @@ $('voice-editor-form').onsubmit = async event => {
     else row = await post('/api/voices', {...details, output_id: context.output_id || null, reference_id: context.reference_id || null});
     if (!context.edit_id) {
       $('search').value = ''; $('tag-filter').value = ''; $('voice-sort').value = 'updated';
+      $('show-deleted').checked=false;
       collection = 'voices'; catalogOffset = 0;
+      syncCollectionLocation();
       document.querySelectorAll('[data-collection]').forEach(button => button.setAttribute('aria-selected', button.dataset.collection === collection));
     }
     transcriptDrafts.set(row.id,row.transcript||'');
@@ -975,7 +1037,7 @@ async function openPageSelection(){
  if(observabilityPage)return true;
  const params=new URLSearchParams(location.search);
  if(params.get('candidates')&&!collectionPage){watchCandidates(params.get('candidates'));return true}
- if(collectionPage){if(params.get('tab')==='voices')setCollection('voices');return}
+ if(collectionPage){$('show-deleted').checked=params.get('deleted')==='1';setCollection(params.get('tab')==='history'?'history':'voices');return}
  if(/^[a-f0-9]{32}$/.test(params.get('voice')||'')){const row=await api('/api/voices/'+params.get('voice'));chooseVoice(row,false);return true;}
  else if(/^[a-f0-9]{32}$/.test(params.get('artifact')||params.get('reuse')||'')){const row=await api('/api/artifacts/'+(params.get('artifact')||params.get('reuse')));if(params.has('reuse'))restore(row);showResult(row);return true;}
  else if(/^[a-f0-9]{32}$/.test(params.get('job')||'')){watch(params.get('job'));return true;}
@@ -983,6 +1045,7 @@ async function openPageSelection(){
 }
 
 const controlHelp={
+ 'show-deleted':'Show deleted voices or takes instead of your active collection. Restore returns an entry to its library. Audio stays on disk so queued jobs and saved recordings continue to work.',
  'record-source':'Choose a saved character, upload a reference recording, or use a built-in speaker when available. The same Record lines form handles each source.',
  description:'Describe the voice you want: pitch, age, accent and vocal texture. This designs a voice; save a take to reuse its recording.',
  voice:'Reuse a recording from your voice library for new dialogue. The recording supplies the speaker identity; catalog notes help you find it.',

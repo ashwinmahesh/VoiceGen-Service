@@ -94,9 +94,37 @@ def atomic_json(path, data):
         temporary.unlink(missing_ok=True)
 
 
-def read_voice(root, identity):
+def collection_marker(root, kind, identity):
+    if kind not in ('voices','outputs') or not IDENTITY.fullmatch(identity):
+        raise FileNotFoundError('Collection entry not found')
+    return Path(root)/'collection-deletions'/f'{kind}-{identity}.json'
+
+
+def is_deleted(root, kind, identity):
+    return collection_marker(root,kind,identity).is_file()
+
+
+def set_deleted(root, kind, identity, deleted):
+    """Separate markers keep generated metadata, audio and queued references intact."""
+    from config import validate_mount
+    validate_mount(Path(root))
+    with metadata_lock:
+        marker=collection_marker(root,kind,identity)
+        if marker.parent.is_symlink() or marker.is_symlink():
+            raise ValueError('Collection deletion state must not be a symbolic link')
+        if marker.is_file()==deleted:return False
+        if deleted:
+            marker.parent.mkdir(parents=True,exist_ok=True)
+            atomic_json(marker,{'id':identity,'kind':kind,'deleted_at':now()})
+        else:marker.unlink()
+        return True
+
+
+def read_voice(root, identity, include_deleted=False):
     if not IDENTITY.fullmatch(identity):
         raise FileNotFoundError("Invalid voice ID")
+    if not include_deleted and is_deleted(root,'voices',identity):
+        raise FileNotFoundError('Voice is deleted from the library; restore it first')
     folder = root / "voices"
     if not (folder / f"{identity}.wav").is_file():
         raise FileNotFoundError("Voice reference recording is unavailable")
@@ -109,12 +137,13 @@ def read_voice(root, identity):
     return Voice.model_validate(raw)
 
 
-def all_voices(root):
+def all_voices(root, deleted=False):
     rows = []
     for path in (root / "voices").glob("*.json"):
         if IDENTITY.fullmatch(path.stem):
             try:
-                rows.append(read_voice(root, path.stem))
+                if is_deleted(root,'voices',path.stem)==deleted:
+                    rows.append(read_voice(root,path.stem,include_deleted=deleted))
             except (OSError, ValueError, TypeError):
                 continue
     return rows
@@ -125,11 +154,11 @@ def searchable(value):
                    if not unicodedata.combining(c))
 
 
-def search(root, query="", tag="", sort="newest", limit=24, offset=0):
+def search(root, query="", tag="", sort="newest", limit=24, offset=0, deleted=False):
     words = searchable(query).split()
     chosen_tag = searchable(tag.strip())
     rows = []
-    for row in all_voices(root):
+    for row in all_voices(root,deleted=deleted):
         haystack = searchable(" ".join([row.name, row.description, row.design_description, *row.tags]))
         if words and not all(word in haystack for word in words):
             continue

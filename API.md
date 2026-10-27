@@ -282,11 +282,35 @@ The studio preserves transcript drafts when its catalog refreshes. **Save transc
 | GET | `/api/voices?q=aristocrat&tag=romanian&sort=newest&limit=24&offset=0` | Search and filter the library. |
 | GET | `/api/voices/{id}` | Get voice details and its preview URL. |
 | PATCH | `/api/voices/{id}` | Edit `name`, `description`, `tags`, or `transcript`. |
+| DELETE | `/api/voices/{id}` | Move the voice to deleted items. |
+| POST | `/api/voices/{id}/restore` | Restore the voice. |
 | GET | `/api/voice-tags` | List tags and their counts. |
 
 Search matches all query words across names, notes, original designs, and tags, ignoring case and accents. `tag` is an exact tag filter. Sort choices are `newest`, `updated`, and `name`. Lists include `data`, `total`, `limit`, `offset`, `has_more`, and `next_offset`.
 
 PATCH replaces the supplied fields. Use `"description": ""`, `"transcript": ""`, or `"tags": []` to clear them; `null` is rejected. Tags are normalized and duplicates removed. Editing catalog notes does not alter its audio.
+
+### Delete and restore Collection entries
+
+Voice library is the UI's first/default Collection tab. Both voice and History cards open a confirmation popup before deletion. Cancellation sends no delete request. **Show deleted** lists removed entries and provides Restore.
+
+Deletion is reversible and affects Collection visibility. The service retains every recording, original metadata file, output index, queue entry, job result, and saved voice copied from a take. Known audio URLs and accepted jobs remain usable; this is not disk cleanup or access revocation. Separate ignored marker files under the configured data folder's `collection-deletions/` directory keep deletion state across restarts and metadata reconciliation.
+
+| Operation | Voice | Take |
+| --- | --- | --- |
+| Delete | `DELETE /api/voices/{id}` | `DELETE /api/artifacts/{id}` |
+| Restore | `POST /api/voices/{id}/restore` | `POST /api/artifacts/{id}/restore` |
+| List deleted only | `GET /api/voices?deleted=true` | `GET /api/history?deleted=true` |
+
+`deleted` defaults to `false`, so normal searches, totals, pagination, the voice picker, and tag counts exclude removed entries. `GET /api/voice-tags?deleted=true` counts tags in deleted voices. Search/tag/sort/pagination still apply to the selected list. Getting or editing a deleted library voice returns 404 until it is restored; direct take/job/audio links continue working.
+
+Delete and Restore return `200` with the same shape:
+
+```json
+{"id":"VOICE_OR_TAKE_ID","kind":"voices","deleted":true,"changed":true}
+```
+
+`kind` is `voices` or `outputs`. `deleted` reports the requested state; `changed:false` means it was already in that state. Repeating an operation is safe. Unknown/missing entries return 404. Unavailable or unwritable storage returns an actionable 422 without changing files or creating a fallback store. These endpoints belong to the generator; the standalone queue API is unaffected.
 
 ### Upload limits
 
@@ -739,6 +763,8 @@ An **output** (also called an artifact in endpoint names) is a generated or edit
 | --- | --- | --- |
 | GET | `/api/history?q=&limit=24&offset=0` | Search generated text, voice descriptions, and acting directions; newest first. |
 | GET | `/api/artifacts/{id}` | Get a recording's details. |
+| DELETE | `/api/artifacts/{id}` | Remove it from active History while retaining audio and job links. |
+| POST | `/api/artifacts/{id}/restore` | Return it to active History. |
 | GET | `/api/metadata/{id}` | Download its generation settings as JSON. |
 | GET | `/api/audio/outputs/{id}` | Play a generated or edited WAV. |
 | GET | `/api/audio/voices/{id}` | Play a saved voice. |

@@ -10,6 +10,8 @@ The studio supports **seven speech models**, with **Higgs TTS 3 as the default**
 
 Studio, Collection, and Observability share the same navigation, Queue button, service status, and memory-release control.
 
+Click the Voice Studios icon, title, or subtitle in the header to return to Studio.
+
 Screenshots use benign demonstration records and fake inference; displayed timings are not model benchmarks.
 
 **Generate:** choose or design a voice, enter dialogue, direct the performance, and audition the results.
@@ -25,6 +27,10 @@ Higgs starts new UI settings with a 2,000-token audio limit. If one option canno
 ![Full Generate page with Higgs performance controls and audio playback](docs/images/studio-page.jpg)
 
 **Collection:** browse previous takes or save and upload voices with names, descriptions, and searchable tags.
+
+Voice library appears first and opens by default; History holds your generated takes. Both offer **Delete** with a confirmation popup. Use **Show deleted → Restore** to bring an entry back. Deletion removes it from the active collection while retaining its audio for queued jobs and existing recordings; it does not free disk space.
+
+[View the deletion confirmation](docs/images/collection-delete-confirmation.jpg).
 
 ![Full Collection page with a saved voice, search, and tags](docs/images/collection-page.jpg)
 
@@ -111,6 +117,8 @@ Here are the available endpoints. See [API.md](API.md) for request formats, exam
 | POST | `/api/queue/{id}/run-now` | Put a waiting job first. |
 | GET | `/api/history` | Browse generated takes. |
 | GET | `/api/artifacts/{id}` | Get a take's details. |
+| DELETE | `/api/artifacts/{id}` | Move a take to deleted items. |
+| POST | `/api/artifacts/{id}/restore` | Restore a deleted take. |
 | GET | `/api/metadata/{id}` | Download a take's saved metadata. |
 | GET | `/api/audio/{kind}/{id}` | Play or download audio. |
 | POST | `/api/artifacts/{id}/pauses` | Save a version with adjusted pauses. |
@@ -118,6 +126,8 @@ Here are the available endpoints. See [API.md](API.md) for request formats, exam
 | GET | `/api/voices/{id}` | Get a saved voice. |
 | POST | `/api/voices` | Save a voice to the library. |
 | PATCH | `/api/voices/{id}` | Edit a voice's name, notes, tags, or transcript. |
+| DELETE | `/api/voices/{id}` | Move a voice to deleted items. |
+| POST | `/api/voices/{id}/restore` | Restore a deleted voice. |
 | POST | `/api/voices/upload` | Upload a recording directly to the library. |
 | GET | `/api/voice-tags` | List voice-library tags. |
 | POST | `/api/references` | Upload a reference recording. |

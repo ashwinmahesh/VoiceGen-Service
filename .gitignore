@@ -30,6 +30,7 @@ storage.json
 /artifact-index
 /idempotency
 /prompt-expansions
+/collection-deletions/
 /extensions
 /runtime
 /loras
