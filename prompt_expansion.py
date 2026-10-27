@@ -123,7 +123,9 @@ def expand(request,effective,backend,guidance='',root=ROOT,transcript=''):
             input=json.dumps({'weights':str(folder),'plan':prompt}),text=True,capture_output=True,
             env=environment,pass_fds=reservation_descriptors(),timeout=180)
     except subprocess.TimeoutExpired:raise ValueError('Expansion exceeded 180 seconds; no speech was generated.') from None
-    if response.returncode:raise ValueError('Local guidance expansion failed; keep the original or retry.')
+    if response.returncode:
+        if backend=='higgs':raise ValueError('Higgs delivery suggestion failed or did not return a supported control. Keep the original, choose Emotion/Prosody/Style directly, or try a short acting direction such as quietly amused or more expressive.')
+        raise ValueError('Local guidance expansion failed; keep the original or retry.')
     try:
         data=json.loads(response.stdout);updates=updates_for(prompt,original,data['completion'])
     except (ValueError,KeyError,TypeError) as error:raise ValueError('Invalid expansion: '+str(error)) from None
@@ -134,11 +136,15 @@ def expand(request,effective,backend,guidance='',root=ROOT,transcript=''):
     if resolved.clone_mode!=effective.clone_mode:raise ValueError('Expansion cannot change reference conditioning mode')
     rendered_text(resolved,backend)
     identity=uuid4().hex
-    record=dict(id=identity,created_at=now(),context=ctx,original=original,updates=updates,request_guidance=guidance,
+    record=dict(id=identity,created_at=now(),context=ctx,original=original,updates=updates,request_guidance=guidance,changed=updates!=original,
         llm=dict(model=REPOSITORY,revision=REVISION,policy_version=POLICY_VERSION,runtime='mlx-lm 0.32.2',
                  profile=backend+':'+prompt.get('target',prompt['kind']),policy_source='prompt_policy.py',
                  seconds=round(time.monotonic()-started,3),temperature=0,thinking=False,
                  peak_mlx_memory_gb=data.get('peak_mlx_memory_gb'),peak_process_rss_gb=data.get('peak_process_rss_gb')))
+    if backend=='higgs':
+        message=('Higgs uses catalog controls rather than expanded prose. Compare this control with the original take.' if record['changed'] else
+                 'No supported delivery control was suggested. Try an acting direction such as quietly amused, more expressive, or slower, or choose a native control yourself.')
+        record['higgs']={'message':message+' Accent and voice identity come from the reference recording; there is no Higgs accent control.'}
     record['llm'][backend]=prompt['profile_spec']
     target=validate_mount(Path(root)/'prompt-expansions'/f'{identity}.json');target.parent.mkdir(parents=True,exist_ok=True)
     atomic_json(target,record)

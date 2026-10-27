@@ -656,6 +656,8 @@ It does not receive dialogue, exact reference transcripts, recordings, file path
 
 A suggestion may be empty. Review it: a valid instruction can still sound wrong or weaken an accent.
 
+The response includes `request_guidance` (your written direction), `original` (the fields before expansion), `updates`, and `changed`. Check `changed` before applying: `false` means no settings changed. Higgs also returns `higgs.message` explaining its control/recording boundary. It selects one existing catalog control rather than expanding prose; for example, “more expressive intonation” can select `{"higgs":{"emotion":null,"prosody":"expressive_high","style":null}}`. An accent-only request should keep the original controls because Higgs has no text accent setting. Use a short acting direction or choose the native controls directly when a complex request is rejected.
+
 ### Apply a reviewed suggestion
 
 Merge `updates` into the original generation request, add `prompt_expansion_id` from the preview, and submit to `/api/generate` or `/api/candidates`.
@@ -677,6 +679,9 @@ response = requests.post(base + "/api/prompts/expand", json={
 response.raise_for_status()
 preview = response.json()
 print(preview["updates"])
+if not preview["changed"]:
+    print(preview.get("higgs", {}).get("message", "No change suggested."))
+    raise SystemExit("Original settings kept; no speech submitted.")
 if input("Apply this guidance? [y/N] ").strip().lower() != "y":
     raise SystemExit("Original guidance kept; no speech submitted.")
 

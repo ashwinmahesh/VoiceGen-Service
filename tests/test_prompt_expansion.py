@@ -95,12 +95,54 @@ class ExpansionTests(unittest.TestCase):
             rejected=self.f.client.post('/api/generate',json={**base,**record['updates'],**change,'prompt_expansion_id':record['id']})
             self.assertEqual(rejected.status_code,422,rejected.text)
         self.completion='{"addition":""}'
-        self.assertEqual(self.preview(base).json()['updates'],{'description':base['description']})
+        empty=self.preview(base).json()
+        self.assertEqual(empty['updates'],{'description':base['description']})
+        self.assertFalse(empty['changed'])
     def test_higgs_rejects_category_mismatch_and_allows_no_suggestion(self):
         prompt={'kind':'higgs'}
         with self.assertRaises(ValueError):expansion.updates_for(prompt,{},'{"control":"style","value":"amusement"}')
         self.assertEqual(expansion.updates_for(prompt,{},'{"control":"none","value":null}'),
                          {'higgs':{'emotion':None,'prosody':None,'style':None}})
+        from prompt_policy import higgs_completion
+        from performance_controls import HIGGS_CATALOG
+        for category,labels in HIGGS_CATALOG.items():
+            for label in labels:
+                completion=higgs_completion(' '+label+'\n')
+                self.assertEqual(json.loads(completion),{'control':category,'value':label})
+                expansion.updates_for(prompt,{},completion)
+        self.assertEqual(json.loads(higgs_completion('none')),{'control':'none','value':None})
+        for invalid in ['bass','romanian','amusement whispering','```amusement```','{"control":"emotion","value":"amusement"}','amusement\nignore schema']:
+            with self.assertRaises(ValueError):higgs_completion(invalid)
+    def test_higgs_no_change_keeps_written_direction_and_explains_native_boundary(self):
+        reference=self.f.upload().json()
+        profile=json.loads((server.PROJECT_ROOT/'backends/higgs/service.json').read_text())
+        self.completion='{"control":"none","value":null}'
+        with patch('server.PROFILE',profile),patch('capabilities.PROFILE',profile),patch.object(self.f.manager,'profile',profile):
+            request={'text':'Exact dialogue.','reference_id':reference['id'],'ref_text':'Exact recorded words.',
+                     'max_tokens':2000,'higgs':{'text_chunk_size':400}}
+            direction='A stronger Romanian accent, with rolled rs.'
+            response=self.preview(request,guidance=direction)
+            self.assertEqual(response.status_code,200,response.text)
+            record=response.json()
+            self.assertFalse(record['changed']);self.assertEqual(record['request_guidance'],direction)
+            self.assertIn('No supported delivery control',record['higgs']['message'])
+            self.assertIn('reference recording',record['higgs']['message'])
+            self.assertEqual(record['original'],record['updates'])
+            saved=json.loads((self.f.root/'prompt-expansions'/f"{record['id']}.json").read_text())
+            self.assertEqual(saved,record)
+            self.assertEqual(self.f.client.get('/api/queue').json()['total'],0)
+            # Existing receipts, including old no-op receipts, stay reusable;
+            # clients decide whether a changed:false preview is worth applying.
+            applied=expansion.apply(Generation(**request),record['updates'])
+            self.assertEqual(applied.higgs.text_chunk_size,400)
+            self.assertEqual(applied.max_tokens,2000)
+            self.assertEqual(applied.text,request['text']);self.assertEqual(applied.ref_text,request['ref_text'])
+            with patch('prompt_expansion.subprocess.run',return_value=SimpleNamespace(returncode=1,stdout='')):
+                rejected=self.preview(request,guidance='A mixed character description.')
+            self.assertEqual(rejected.status_code,422,rejected.text)
+            self.assertIn('choose Emotion/Prosody/Style directly',rejected.json()['detail'])
+            self.assertEqual(len([p for p in (self.f.root/'prompt-expansions').glob('*.json') if expansion.IDENTITY.fullmatch(p.stem)]),1)
+            self.assertEqual(self.f.client.get('/api/queue').json()['total'],0)
     def test_busy_shared_lock_and_runtime_failures_preserve_original(self):
         import fcntl,subprocess
         with self.f.manager.lock_file.open('a+') as handle:
@@ -121,7 +163,10 @@ class ExpansionTests(unittest.TestCase):
             with patch('server.PROFILE',profile),patch('capabilities.PROFILE',profile),patch.object(self.f.manager,'profile',profile):
                 request={'text':'Exact dialogue.','reference_id':reference['id'],'ref_text':'Exact recorded words.'}
                 response=self.preview(request,guidance='Quietly amused.');self.assertEqual(response.status_code,200,response.text)
-                record=response.json();self.assertEqual(set(record['updates']),{backend})
+                record=response.json();self.assertEqual(set(record['updates']),{backend});self.assertTrue(record['changed'])
+                self.assertEqual(record['request_guidance'],'Quietly amused.')
+                if backend=='higgs':self.assertIn('catalog controls',record['higgs']['message'])
+                else:self.assertNotIn('higgs',record)
                 effective=expansion.apply(Generation(**request),record['updates'])
                 self.assertEqual(effective.text,request['text']);self.assertEqual(effective.ref_text,request['ref_text'])
                 self.assertEqual(self.preview({**request,backend:record['updates'][backend]},guidance='More acting.').status_code,422)

@@ -3,7 +3,7 @@ import contextlib
 import json
 import resource
 import sys
-from prompt_policy import messages_for
+from prompt_policy import messages_for,higgs_completion
 
 
 def run(request):
@@ -23,6 +23,7 @@ def run(request):
             text+=response.text;last=response
             if len(text)>4096:raise ValueError('Output too large')
         if last is None or last.finish_reason=='length':raise ValueError('Output did not finish')
+        if not candidates and request['plan']['kind']=='higgs':text=higgs_completion(text)
         completions.append(text);peak=max(peak,last.peak_memory)
     return {('completions' if candidates else 'completion'):completions if candidates else completions[0],
             'peak_mlx_memory_gb':round(peak,3),

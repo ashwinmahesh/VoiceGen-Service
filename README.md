@@ -60,6 +60,8 @@ The optional prompt expander uses **Qwen3.5-2B, a 4-bit local language model**. 
 
 Expansion follows different rules for each supported model and mode. The studio shows the original and expanded guidance. The LLM receives written voice and delivery directions, while dialogue, reference transcripts, and recordings stay out of its input. Suggestions still need listening checks; extra wording does not always produce a better performance.
 
+For **Higgs**, enter a short acting direction and select **Suggest delivery control**. The LLM chooses one supported Emotion, Prosody, or Style setting; it does not write a longer prose prompt. For example, “more expressive intonation” can suggest `expressive_high`. The preview shows what you typed and makes **No change suggested** explicit. Accent comes from the reference recording, and can still drift.
+
 ## Speech models
 
 | Model | Main use in this studio |

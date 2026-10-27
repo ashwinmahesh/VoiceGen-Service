@@ -262,7 +262,7 @@ def health():
         prompt_expansion=__import__('prompt_expansion').capability(app.state.llm_enabled))
 
 
-@app.post('/api/prompts/expand',response_model=PromptExpansion)
+@app.post('/api/prompts/expand',response_model=PromptExpansion,response_model_exclude_unset=True)
 async def expand_voice_guidance(payload: ExpandVoiceGuidance):
     if not app.state.llm_enabled:raise HTTPException(422,'Local prompt expansion is disabled. Start with make serve without NO_LLM=1.')
     try:

@@ -28,7 +28,7 @@ The [official Vox project](https://github.com/OpenBMB/VoxCPM) distinguishes desi
 
 ## Application policy
 
-`prompt_policy.py` contains shared fidelity instructions; `voice-guidance-5` selects a versioned backend/mode specification from `backends/<model-id>/prompt_expansion.json`. Compact schemas and distinct examples apply to prose, Fish and Higgs; Chinese prose gets Chinese examples. Profiles are validated and recorded with each preview. Temperature0 and disabled thinking are reproducibility choices, not a claim of optimal Qwen sampling.
+`prompt_policy.py` contains the policies; `voice-guidance-6` selects a versioned backend/mode specification from `backends/<model-id>/prompt_expansion.json`. Prose and Fish use the shared fidelity instructions and compact JSON schemas; Chinese prose gets Chinese examples. Higgs profile v2 instead uses a short classification prompt: the LLM returns one exact catalog label or `none`. The worker validates that label and serializes it into the existing control/value JSON protocol. Unknown labels, explanatory prose and markup fail without repair or substitution. The server still validates the catalog category and complete generation request. Profiles are validated and recorded with each preview. Temperature0 and disabled thinking are reproducibility choices, not a claim of optimal Qwen sampling.
 
 The application preserves spoken `text` and exact `ref_text` verbatim and excludes both from the LLM payload. No audio, paths or speaker/reference IDs enter that payload. The model sees only written description/delivery/accent constraints. It cannot inspect a reference recording, infer its accent, select a speaker, change a clone mode or modify sampler/pause settings.
 
@@ -43,6 +43,16 @@ The auxiliary model is [Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B#best-
 Preview acquires the normal shared GPU/queue/data reservations, unloads resident speech weights and runs an offline text-only child. Maximum completion320 tokens, wall timeout180 seconds, one attempt; hitting a limit fails visibly. Native descendants inherit leases, and client disconnects do not free capacity prematurely. Serving never downloads. Busy previews return409 and create no speech job.
 
 Applied receipts persist original/expanded guidance, model/revision, profile/policy/runtime, context, timing and overlapping memory counters. Queue admission embeds the receipt before candidate fan-out. Restart/retry uses frozen applied guidance; an already applied receipt works with the auxiliary capability disabled. Single-take generation still requires explicit preview/application. Multi-option design batches now support automatic per-option planning as described below.
+
+Previews expose `changed`, computed from original and suggested fields. `request_guidance` preserves the user's written direction separately from those fields. The UI shows that text for Fish/Higgs; their original empty native controls are not the user's prose. Unchanged previews explicitly say no change was suggested and disable Apply. Higgs adds `higgs.message` to explain its catalog/reference boundary. Older receipts remain reusable; the UI compares their fields when `changed` is absent.
+
+[View the full-page Higgs preview](images/prompt-expansion.jpg). It uses a demonstration voice and fake speech inference; the suggestion came from the real local LLM.
+
+### Higgs check, 2026-10-27
+
+The former policy returned no suggestion for a direct request for more expression. It also proposed unrelated singing for a long mixed character description and an invalid accent category for an accent-only request. These were local LLM checks, not speech-quality measurements.
+
+The revised finite-label protocol was checked with eight directions using the installed, pinned LLM and actual one-preview-per-process worker path. Seven produced the expected result: amusement, greater expression, anger, slower delivery, whispering, and two no-change cases involving accent/identity only. The long mixed aristocrat/voice/accent description produced an unsupported label and was rejected. This remains a limitation: use a short acting direction or select native controls directly. Successful previews do not establish audible delivery or accent quality. The browser path was also checked with the real LLM and disposable fake speech; applying `expressive_high` preserved the dialogue/transcript and carried the receipt into both options.
 
 ## Distinct voice designs
 

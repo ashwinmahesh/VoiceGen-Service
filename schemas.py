@@ -159,6 +159,11 @@ class ExpandVoiceGuidance(BaseModel):
     guidance: str = Field(default='',max_length=1500)
 
 
+class HiggsExpansionFeedback(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    message: str
+
+
 class PromptExpansion(BaseModel):
     id: str
     created_at: str
@@ -167,6 +172,8 @@ class PromptExpansion(BaseModel):
     updates: dict
     llm: dict
     request_guidance: str = ''
+    changed: bool | None = None
+    higgs: HiggsExpansionFeedback | None = None
 
 
 class Capabilities(BaseModel):
