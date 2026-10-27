@@ -8,6 +8,7 @@ import unicodedata
 from uuid import uuid4
 from typing import Annotated
 
+from transcription_schemas import TranscriptionInfo
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 IDENTITY = re.compile(r"[a-f0-9]{32}")
@@ -67,6 +68,7 @@ class Voice(BaseModel):
     description: str = ""
     tags: list[str] = Field(default_factory=list)
     transcript: str = ""
+    transcription: TranscriptionInfo | None = None
     design_description: str = ""
     created_at: str
     updated_at: str
@@ -183,6 +185,8 @@ def update_voice(root, identity, changes):
         raw = json.loads(path.read_text())
         # Preserve original design text before changing the editable catalog notes.
         raw.setdefault("design_description", current.design_description)
+        if "transcript" in changes and changes["transcript"] != current.transcript:
+            raw.pop("transcription", None)
         raw.update(changes)
         raw["updated_at"] = now()
         atomic_json(path, raw)
