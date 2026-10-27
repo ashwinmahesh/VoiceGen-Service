@@ -1,3 +1,4 @@
+(()=>{
 'use strict';
 const $=id=>document.getElementById(id),svgNS='http://www.w3.org/2000/svg';
 const colors={higgs:'#9dcca8',voxcpm2:'#8ebfea',qwen3:'#e8bf83',chatterbox:'#e79eaa',indextts:'#6fd0cc',moss:'#c6c78e',fish:'#c5b9e7'};
@@ -109,3 +110,5 @@ $('copy-job-log').onclick=async()=>{try{await navigator.clipboard.writeText($('j
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
 const params=new URLSearchParams(location.search);if(/^[a-f0-9]{32}$/.test(params.get('job')||'')){selectedJob=params.get('job');selectedRun=/^[a-f0-9]{32}$/.test(params.get('run')||'')?params.get('run'):null;setView('jobs')}else refresh();
 setInterval(()=>{if(!document.hidden)refresh()},5000);
+
+})();

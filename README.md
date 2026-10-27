@@ -8,6 +8,8 @@ The studio supports **seven speech models**, with **Higgs TTS 3 as the default**
 
 ## Inside the studio
 
+Studio, Collection, and Observability share the same navigation, Queue button, service status, and memory-release control.
+
 Screenshots use benign demonstration records and fake inference; displayed timings are not model benchmarks.
 
 **Generate:** choose or design a voice, enter dialogue, direct the performance, and audition the results.

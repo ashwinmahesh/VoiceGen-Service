@@ -21,7 +21,7 @@ from jobs import JobManager, BusyError
 import storage
 import pause_edits
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from schemas import Generation, CandidateGeneration, CandidateBatch, ExpandVoiceGuidance, PromptExpansion, Health, Capabilities, Job, Artifact, ArtifactPage, Reference, Unloaded, TagsPage, PauseAdjustment, QueuePage, QueueRemoval
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -129,7 +129,12 @@ def favicon(): return FileResponse(PROJECT_ROOT/'ui/favicon.ico',media_type='ima
 
 @app.get('/observability',include_in_schema=False)
 @app.get('/observability/',include_in_schema=False)
-def observability_page(): return FileResponse(PROJECT_ROOT/'ui/observability.html')
+def observability_page():
+    # Use the generator's complete shell so header layout and controls have one source.
+    shell=(PROJECT_ROOT/'ui/index.html').read_text()
+    return HTMLResponse(shell.replace('<!-- page-assets -->','<link rel="stylesheet" href="/assets/observability.css">')
+        .replace('<!-- page-content -->',(PROJECT_ROOT/'ui/observability.html').read_text())
+        .replace('<!-- page-script -->','<script src="/assets/observability.js"></script>'))
 
 
 @app.get('/assets/observability.js',include_in_schema=False)

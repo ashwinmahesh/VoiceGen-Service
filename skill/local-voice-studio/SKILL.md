@@ -7,7 +7,7 @@ description: Use VoiceGen Service to design or clone character voices, generate 
 
 ## Locate and inspect
 
-Locate the checkout from the user’s configured projects; this installation is `~/Documents/models/VoiceGen-Service`. Read its README, QUICKSTART.md and API.md, then inspect the live `/health`, `/v1/models`, `/api/capabilities?model=<id>` and `/openapi.json`. Do not assume a backend supports another model’s controls. The browser app is named **Voice Studios** across all pages, regardless of the selected speech model. The normal UI/generator origin is localhost:5743; the independent queue API is localhost:55205. Both bind locally.
+Locate the checkout from the user’s configured projects; this installation is `~/Documents/models/VoiceGen-Service`. Read its README, QUICKSTART.md and API.md, then inspect the live `/health`, `/v1/models`, `/api/capabilities?model=<id>` and `/openapi.json`. Do not assume a backend supports another model’s controls. The browser app is named **Voice Studios** across all pages, regardless of the selected speech model. Studio, Collection and Observability share the generator header with Queue, service status and memory release. The normal UI/generator origin is localhost:5743; the independent queue API is localhost:55205. Both bind locally.
 
 Generator health has stable identity `service:voicegen-service`, `mode:generator`, `api_version:4.0.0`, `queue_scope:shared`, `runtime_model_switching:true`, plus project and database paths. `default_model` is the saved admission default; `active_model` is the backend loading/holding speech weights, or null. A model change never requires a new generator process. Do not identify a service or kill a process by its model.
 

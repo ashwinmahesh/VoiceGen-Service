@@ -1,9 +1,10 @@
 
 const $=id=>document.getElementById(id);let mode='design',collection='history',reference=null,latest=null,voiceRows=[],historyRows=[],busy=false,online=false,uploading=false,watching=null,submitting=false,queueWritable=true;
-const collectionPage=location.pathname.startsWith('/collection');
-document.title=(collectionPage?'Collection':'Studio')+' · Voice Studios';
+const collectionPage=location.pathname.startsWith('/collection'),observabilityPage=location.pathname.startsWith('/observability');
+const browsePage=collectionPage||observabilityPage;
+document.title=(observabilityPage?'Observability':collectionPage?'Collection':'Studio')+' · Voice Studios';
 if(collectionPage){$('page-title').textContent='Your collection';$('page-description').textContent='Find saved voices, listen to takes, and reuse a performance in the studio.';}
-$(collectionPage?'catalog-link':'studio-link').setAttribute('aria-current','page');
+$(observabilityPage?'observability-link':collectionPage?'catalog-link':'studio-link').setAttribute('aria-current','page');
 let availableModels=[],modelChoiceReady=false,changingModel=false,queuePaused=false,awaitingSourceModel=false,lastModelList=null,pendingModelRestore=null;
 function sourceMode(source=mode){return ['saved','upload'].includes(source)?'reference':source}
 function readySourceModels(source=mode){return availableModels.filter(row=>row.modes?.includes(sourceMode(source)))}
@@ -16,7 +17,7 @@ let catalogOffset = 0, searchTimer = null, catalogRequest = 0, voiceEditor = nul
 const presets={natural:'Natural, conversational delivery with relaxed pacing.',joy:'Excited and joyful, with an audible smile and lively pacing.',sadness:'Quiet sadness and disappointment, speaking slowly with a trembling voice.',anger:'Angry and frustrated, with firm emphasis and a tense, forceful delivery.',fear:'Frightened and anxious, with a trembling voice and urgent, uneven pacing.',relief:'Deeply relieved, softening into warmth with a gentle exhale.',sarcasm:'Dry, understated sarcasm with deliberate pauses and restrained emphasis.',whisper:'A soft, intimate whisper, speaking gently and slowly.',custom:''};
 async function api(path,options={}){const response=await fetch(path,options);if(!response.ok){let body;try{body=await response.json()}catch{}throw Error(typeof body?.detail==='string'?body.detail:body?.detail?.[0]?.msg||`Request failed (${response.status})`)}return response.json()}
 function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
-function error(message){const target=$($('queue-dialog').open?'queue-error':collectionPage?'page-error':'error');target.textContent=message;target.hidden=false}function announce(text){$('announcement').textContent=text}
+function error(message){const target=$($('queue-dialog').open?'queue-error':browsePage?'page-error':'error');target.textContent=message;target.hidden=false}function announce(text){$('announcement').textContent=text}
 function controls(){ $('generate').disabled=!online||!queueWritable||submitting||uploading||enhancing||changingModel||!modelChoiceReady;$('unload').disabled=!online||busy||enhancing;$('new-seed').disabled=busy;updatePromptExpansion() }
 function clearExpansion(){appliedExpansion=null;pendingExpansion=null;updatePromptExpansion();}
 function updatePromptExpansion(){
@@ -306,7 +307,7 @@ function renderCards() {
     } else {
       if(row.candidate_batch_id){const options=el('button','View all options','secondary');options.type='button';options.onclick=()=>watchCandidates(row.candidate_batch_id);actions.append(options);}
       const reuse = el('button', 'Reuse settings', 'secondary'); reuse.type = 'button';
-      reuse.onclick = () => { if(collectionPage){location.href='/?reuse='+encodeURIComponent(row.id);return}restore(row); $('text').focus(); }; actions.append(reuse);
+      reuse.onclick = () => { if(browsePage){location.href='/?reuse='+encodeURIComponent(row.id);return}restore(row); $('text').focus(); }; actions.append(reuse);
       const pauses=el('button','Adjust pauses','secondary');pauses.type='button';pauses.onclick=()=>openPauseEditor(row);actions.append(pauses);
     }
     const download = el('a', 'Download WAV', 'secondary');
@@ -321,7 +322,7 @@ $('search').oninput = () => {
   searchTimer=setTimeout(()=>loadCollection().catch(exc=>error(exc.message)),250);
 };
 function waveform(peaks){const canvas=$('waveform'),ratio=devicePixelRatio||1;canvas.width=canvas.clientWidth*ratio;canvas.height=110*ratio;const c=canvas.getContext('2d');c.clearRect(0,0,canvas.width,canvas.height);c.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent');if(!peaks?.length)return;const step=canvas.width/peaks.length;peaks.forEach((peak,i)=>{const h=Math.max(2*ratio,peak*canvas.height*.9);c.fillRect(i*step,(canvas.height-h)/2,Math.max(1,step*.55),h)})}
-function showResult(row){if(collectionPage){location.href='/?artifact='+encodeURIComponent(row.id);return}latest=row;renderExpansion(candidateExpansion(row),'result-expansion-details','Saved with this take');for(const [id,card] of candidateCards)card.element.dataset.selected=String(id===row.id);if(currentCandidates&&row.candidate_batch_id!==currentCandidates.id)$('candidate-results').hidden=true;$('result-title').textContent=row.candidate_index?'Option '+row.candidate_index+' · selected take':'Your latest take';const details=[row.preset_voice?'Preset '+row.preset_voice:'',row.clone_mode==='combined'?'Combined identity and recorded performance':row.clone_mode==='continuation'?'Continued reference performance':'',row.accent?'Accent direction: '+row.accent:'',row.steering_emotion?`Experimental ${row.steering_emotion} steering · ${row.steering_strength}`:''].filter(Boolean);$('direction-summary').textContent=details.join(' · ');$('direction-summary').hidden=!details.length;$('empty').hidden=true;$('working').hidden=true;$('result').hidden=false;$('player').src=row.audio_url;$('download').href=row.audio_url+'?download=true';$('metrics').textContent=`${row.duration.toFixed(1)} seconds · ${row.sample_rate/1000} kHz · ${row.transformation?`Pause edit ${row.transformation.processing_seconds}s · Original ${row.timing_scope?'process total':'synthesis'}`:row.timing_scope?'Total process':'Synthesis'} ${row.generation_seconds}s${row.cold_load&&Number.isFinite(row.load_seconds)?` · Load ${row.load_seconds}s`:``}`;$('result-seed').textContent=`Seed ${row.seed}`;$('path').textContent=row.path;$('truncated').hidden=!row.possibly_truncated;$('save-hint').textContent='Use a clean, natural take as your character reference. Up to the first 30 seconds are saved.';waveform(row.waveform)}
+function showResult(row){if(browsePage){location.href='/?artifact='+encodeURIComponent(row.id);return}latest=row;renderExpansion(candidateExpansion(row),'result-expansion-details','Saved with this take');for(const [id,card] of candidateCards)card.element.dataset.selected=String(id===row.id);if(currentCandidates&&row.candidate_batch_id!==currentCandidates.id)$('candidate-results').hidden=true;$('result-title').textContent=row.candidate_index?'Option '+row.candidate_index+' · selected take':'Your latest take';const details=[row.preset_voice?'Preset '+row.preset_voice:'',row.clone_mode==='combined'?'Combined identity and recorded performance':row.clone_mode==='continuation'?'Continued reference performance':'',row.accent?'Accent direction: '+row.accent:'',row.steering_emotion?`Experimental ${row.steering_emotion} steering · ${row.steering_strength}`:''].filter(Boolean);$('direction-summary').textContent=details.join(' · ');$('direction-summary').hidden=!details.length;$('empty').hidden=true;$('working').hidden=true;$('result').hidden=false;$('player').src=row.audio_url;$('download').href=row.audio_url+'?download=true';$('metrics').textContent=`${row.duration.toFixed(1)} seconds · ${row.sample_rate/1000} kHz · ${row.transformation?`Pause edit ${row.transformation.processing_seconds}s · Original ${row.timing_scope?'process total':'synthesis'}`:row.timing_scope?'Total process':'Synthesis'} ${row.generation_seconds}s${row.cold_load&&Number.isFinite(row.load_seconds)?` · Load ${row.load_seconds}s`:``}`;$('result-seed').textContent=`Seed ${row.seed}`;$('path').textContent=row.path;$('truncated').hidden=!row.possibly_truncated;$('save-hint').textContent='Use a clean, natural take as your character reference. Up to the first 30 seconds are saved.';waveform(row.waveform)}
 let pauseSource=null,pauseSpans=[],pausePreviewEnd=null,pausePreviewTimer=null,pausePendingKey=null,pauseSaving=false;
 function pauseError(message){$('pause-error').textContent=message;$('pause-error').hidden=false}
 function renderPauseSpans(){
@@ -384,7 +385,7 @@ function renderCandidates(batch){
  }
 }
 async function watchCandidates(identity){
- if(collectionPage){location.href='/?candidates='+encodeURIComponent(identity);return}
+ if(browsePage){location.href='/?candidates='+encodeURIComponent(identity);return}
  const token='candidates:'+identity;if(watching===token)return;
  if(latest?.candidate_batch_id!==identity){latest=null;$('result').hidden=true;}
  watching=token;controls();$('error').hidden=true;$('empty').hidden=true;$('working').hidden=true;
@@ -399,7 +400,7 @@ async function watchCandidates(identity){
  finally{if(watching===token){watching=null;controls();refreshQueue().catch(()=>{})}}
 }
 async function watch(identity){
- if(collectionPage){location.href='/?job='+encodeURIComponent(identity);return}if(watching===identity)return;localStorage.removeItem(storageKey+'-candidates');$('candidate-results').hidden=true;watching=identity;controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
+ if(browsePage){location.href='/?job='+encodeURIComponent(identity);return}if(watching===identity)return;localStorage.removeItem(storageKey+'-candidates');$('candidate-results').hidden=true;watching=identity;controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
  const started=Date.now();localStorage.setItem(storageKey+'-job',identity);
  try{while(watching===identity){const job=await api('/api/jobs/'+identity);if(watching!==identity)return;
   $('stage').textContent=job.stage;
@@ -420,7 +421,7 @@ $('form').onsubmit=async event=>{
  try{pendingKey=pendingKey||crypto.randomUUID();const batch=await post('/api/candidates',{...request,idempotency_key:pendingKey});pendingKey=null;watchCandidates(batch.id);await refreshQueue()}
  catch(exc){error(exc.message)}finally{submitting=false;controls()}
 };
-document.addEventListener('keydown',event=>{if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();if(!$('generate').disabled)$('form').requestSubmit()}});
+document.addEventListener('keydown',event=>{if(!browsePage&&(event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();if(!$('generate').disabled)$('form').requestSubmit()}});
 $('save-voice').onclick = () => {
   if (latest) openVoiceEditor({output_id: latest.id, name: $('voice-name').value,
     description: latest.description || '', transcript:latest.duration<=30?spokenTranscript(latest):'',tags: []});
@@ -451,7 +452,7 @@ async function health(){
   $('status').dataset.offline=!online;
   $('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';
   busy=state.busy;
-  if(queueWritable&&state.active_job&&!watching&&!collectionPage&&!localStorage.getItem(storageKey+'-candidates'))watch(state.active_job);
+  if(queueWritable&&state.active_job&&!watching&&!browsePage&&!localStorage.getItem(storageKey+'-candidates'))watch(state.active_job);
   if(queueWritable){
    try{await refreshQueue()}catch(exc){queueWritable=false;queueNotices({queue_storage:{status:'unavailable',message:exc.message}})}
   }else{
@@ -591,7 +592,7 @@ function setCollection(next) {
   else { catalogRequest++; loadCollection().catch(exc=>error(exc.message)); }
 }
 function chooseVoice(row, focus = true) {
-  if(collectionPage&&focus){location.href='/?voice='+encodeURIComponent(row.id);return;}
+  if(browsePage&&focus){location.href='/?voice='+encodeURIComponent(row.id);return;}
   if (!voiceRows.some(item => item.id === row.id)) voiceRows.push(row);
   if (![...$('voice').options].some(option => option.value === row.id)) $('voice').append(new Option(row.name, row.id));
   $('voice').value = row.id; setMode('saved'); voicePreview();
@@ -675,7 +676,7 @@ function renderModelChoices(){
  modelChoiceReady=rows.some(row=>row.id===selected);
  if(modelChoiceReady)$('voice-model').value=selected;
  else{$('voice-model').prepend(new Option(mode==='design'?'Choose a voice-design model…':'Choose a capable model…',''));$('voice-model').value=''}
- if(collectionPage){$('model-badge').textContent='All voice models';$('license-notice').hidden=true;}
+ if(browsePage){$('model-badge').textContent='All voice models';$('license-notice').hidden=true;}
  else if(caps){$('model-footer').textContent=awaitingSourceModel?'Choose a voice model · On your Mac':`${caps.name} · ${caps.quantization} · ${caps.limits.runtime||'MLX'} on Apple Silicon`;if(!awaitingSourceModel){$('model-badge').textContent=`${caps.sample_rate/1000} kHz · ${caps.quantization} · On your Mac`;$('license-notice').hidden=!caps.models[caps.backend]?.notice;}}
  $('voice-model-hint').textContent=(awaitingSourceModel?'Choose a model for this voice source. ':'')+'One shared queue · Default: '+lastModelList.default_model+(lastModelList.active_model?' · Active: '+lastModelList.active_model:'');
 }
@@ -709,7 +710,7 @@ async function selectVoiceModel(backend){
   await health();
   const pageSelected=await openPageSelection();
   const batch=localStorage.getItem(storageKey+'-candidates'),job=localStorage.getItem(storageKey+'-job');
-  if(!watching&&!collectionPage&&!pageSelected){if(batch)watchCandidates(batch);else if(job)watch(job)}
+  if(!watching&&!browsePage&&!pageSelected){if(batch)watchCandidates(batch);else if(job)watch(job)}
   renderModelChoices();
  }finally{changingModel=false;controls();if(pendingModelRestore){const row=pendingModelRestore;pendingModelRestore=null;restore(row)}}
 }
@@ -856,6 +857,7 @@ $('apply-recommended').onclick=()=>{
 $('open-queue').onclick=()=>{$('queue-error').hidden=true;$('queue-dialog').showModal();refreshQueue().catch(exc=>error(exc.message))};
 $('close-queue').onclick=()=>$('queue-dialog').close();
 async function openPageSelection(){
+ if(observabilityPage)return true;
  const params=new URLSearchParams(location.search);
  if(params.get('candidates')&&!collectionPage){watchCandidates(params.get('candidates'));return true}
  if(collectionPage){if(params.get('tab')==='voices')setCollection('voices');return}

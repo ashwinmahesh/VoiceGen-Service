@@ -1,6 +1,6 @@
 # Resource history
 
-Open **Observability** in the studio header, or visit `http://localhost:5743/observability` while the generator is running. Recording starts automatically when the generator starts. You do not need to keep the page open.
+Open **Observability** in the studio header, or visit `http://localhost:5743/observability` while the generator is running. Recording starts automatically when the generator starts. You do not need to keep the page open. Its header is the same as Studio and Collection, including Queue, service status, and Release model memory. The separate recorder status appears beside the page title.
 
 **Over time** offers 5m, 30m, 1h, 6h, 24h, 3 days, and 7 days. Filter by the speech model used by each job. Model colors and hover details identify the model recorded with each point. **By job** lists recorded attempts with their status, duration, and resource peaks. Select **Charts & logs** to see a whole attempt on a shorter elapsed-time axis. Choose another attempt to compare a retry. A Queue entry's **Resources & logs** link opens the same view.
 

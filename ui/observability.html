@@ -1,12 +1,6 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Observability · Voice Studios</title>
-<meta name="application-name" content="Voice Studios"><meta name="apple-mobile-web-app-title" content="Voice Studios"><meta name="theme-color" content="#151617">
-<link rel="icon" type="image/svg+xml" href="/assets/icon.svg"><link rel="icon" sizes="16x16 32x32 48x48" href="/favicon.ico"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-<link rel="stylesheet" href="/assets/observability.css"><script src="/assets/observability.js" defer></script></head>
-<body>
-<header><a href="/" class="brand"><img class="mark" src="/assets/icon.svg" width="38" height="38" alt="" aria-hidden="true"><span><strong>Voice Studios</strong><small>Local voice studio</small></span></a><div class="top-actions"><nav aria-label="Studio navigation"><a href="/">Studio</a><a href="/collection">Collection</a><a href="/observability" aria-current="page">Observability</a></nav><span id="collector-status" role="status">Connecting</span></div></header>
-<main>
-<div class="intro"><div><h1>Observability</h1><p>See what your Mac is doing, and what each take costs.</p></div><span class="tag">Local history · 7 days</span></div>
+<!-- Page content; the generator shell in index.html supplies the shared header, Queue and footer. -->
+<section id="observability-page" aria-label="Observability">
+<div class="intro"><div><h1>Observability</h1><p>See what your Mac is doing, and what each take costs.</p></div><div class="collector-summary"><span class="tag">Local history · 7 days</span><span id="collector-status" role="status">Connecting</span></div></div>
 <p id="resource-error" class="notice error" role="alert" hidden></p>
 <div class="toolbar"><div class="tabs" role="tablist" aria-label="Resource view"><button type="button" role="tab" aria-selected="true" id="timeline-tab" aria-controls="timeline-panel">Over time</button><button type="button" role="tab" aria-selected="false" id="jobs-tab" aria-controls="jobs-panel">By job</button></div><div class="model-filter"><label for="resource-model">Model</label><select id="resource-model" title="Filter history and jobs by the speech model used."><option value="">All models</option></select></div><button id="refresh-resources" class="secondary" type="button">Refresh</button></div>
 <section id="timeline-panel" role="tabpanel" aria-labelledby="timeline-tab">
@@ -23,5 +17,4 @@
 </section>
 </section>
 <aside class="notes"><h2>Reading these charts</h2><p><strong>CPU and memory</strong> cover VoiceGen and its child processes, including native models and prompt expansion. CPU at 100% uses one core, so multiple cores can exceed 100%. Memory is summed resident memory; shared pages can be counted more than once.</p><p><strong>GPU utilization and GPU memory</strong> cover the whole Mac, including other apps. A job chart shows the GPU counters observed while that job ran, rather than exclusive usage by that job. Apple Silicon shares memory between CPU and GPU; do not add these memory figures together.</p><p>Samples are taken every second during a job and every five seconds when idle. Longer windows show bucket averages; hover or focus a chart and use the arrow keys to see the bucket’s peak. Missing counters and times when the generator was off appear as gaps. History is kept in the project’s SQLite database for seven days.</p></aside>
-</main><footer>VoiceGen · Resource history stays on this Mac</footer>
-</body></html>
+</section>
