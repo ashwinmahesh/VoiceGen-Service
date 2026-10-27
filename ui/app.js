@@ -30,6 +30,7 @@ function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':
 function error(message){const target=$($('queue-dialog').open?'queue-error':browsePage?'page-error':'error');target.textContent=message;target.hidden=false}function announce(text){$('announcement').textContent=text}
 function immediateInProgress(){return !!watching&&monitoredImmediate&&$('generate-immediately').checked}
 function controls(){
+ updateSeedMode();
  const loading=immediateInProgress();$('generate').disabled=!online||!queueWritable||submitting||uploading||enhancing||changingModel||transcriptSaving||!modelChoiceReady||unresolvedHiggsControls().length>0||loading;
  $('generate').setAttribute('aria-busy',String(submitting||loading));$('generate-label').textContent=submitting?'Submitting…':loading?'Generating speech…':'Generate speech';
  $('generate-icon').className=submitting||loading?'button-spinner':'';$('generate-icon').textContent=submitting||loading?'':'↗';
@@ -222,7 +223,7 @@ function settings(allowCustomHiggs=false){
  if(Object.keys(options).length)result[caps.backend]=options;
  return result;
 }
-function persist(){if(caps&&!awaitingSourceModel)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(true),...(caps.backend==='higgs'?{higgs_direction_drafts:Object.fromEntries(['emotion','prosody','style'].map(key=>[key,$('higgs-'+key).value])),higgs_selected_controls:higgsSelectedControls,higgs_suspended_directions:suspendedHiggsDirections}:{}),ref_text:$('ref-text').value,expansion_guidance:$('expansion-guidance').value,prompt_expansion_choice:expansionChoice,prompt_expansion:appliedExpansion,description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
+function persist(){if(caps&&!awaitingSourceModel)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(true),randomize_seed:$('random-seed').checked,...(caps.backend==='higgs'?{higgs_direction_drafts:Object.fromEntries(['emotion','prosody','style'].map(key=>[key,$('higgs-'+key).value])),higgs_selected_controls:higgsSelectedControls,higgs_suspended_directions:suspendedHiggsDirections}:{}),ref_text:$('ref-text').value,expansion_guidance:$('expansion-guidance').value,prompt_expansion_choice:expansionChoice,prompt_expansion:appliedExpansion,description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
 function updateCapabilities(){
  if(!caps)return;
  const referenceMode=mode==='saved'||mode==='upload';
@@ -292,6 +293,7 @@ function restore(row){
  $('candidate-variation').value=row.candidate_variant?'seed_only':row.candidate_variation||'auto';
  $('expansion-guidance').value=row.expansion_guidance||'';
  $('generate-immediately').checked=row.generate_immediately??true;
+ $('random-seed').checked=row.randomize_seed??$('random-seed').checked;
  $('text').value=row.text||'';$('description').value=row.description||'';$('emotion').value=row.preset_voice&&!row.mode?[row.description,row.emotion].filter(Boolean).map(x=>x.trim().replace(/\.+$/,'')).join('. '):row.emotion||'';
  $('accent').value=row.accent||'';$('emotion-preset').value='custom';
  $('clone-mode').value=row.clone_mode||'reference';$('steering-emotion').value=row.steering_emotion||'';
@@ -308,7 +310,17 @@ function restore(row){
  restorePerformance(row);$('ref-text').value=row.ref_text??(mode==='saved'?voiceRows.find(v=>v.id===$('voice').value)?.transcript:reference?.transcript)??'';rememberTranscriptDraft();appliedExpansion=row.candidate_variant||caps.backend==='higgs'&&!$('prompt-expansion-enabled').checked?null:row.prompt_expansion||null;updateCapabilities();updatePromptExpansion();count();persist();
 }
 $('form').addEventListener('input',event=>{if(['description','emotion','accent','voice','reference','ref-text','clone-mode','preset-voice','fish-delivery-tags','higgs-emotion','higgs-prosody','higgs-style','expansion-guidance'].includes(event.target.id))clearExpansion();pendingKey=null;count();updatePerformancePreview();controls();persist()});$('form').addEventListener('change',event=>{if(['voice','reference','clone-mode','preset-voice','higgs-emotion','higgs-prosody','higgs-style'].includes(event.target.id))clearExpansion();pendingKey=null;persist()});
-$('new-seed').onclick=()=>{pendingKey=null;$('seed').value=crypto.getRandomValues(new Uint32Array(1))[0];persist();announce('New seed selected')};
+function randomSeed(){let value;do{value=crypto.getRandomValues(new Uint32Array(1))[0]}while(value===Number($('seed').value));return value;}
+function updateSeedMode(){
+ const random=$('random-seed').checked;
+ $('seed').disabled=random;$('seed-label').textContent=random?'Last generated seed':'Seed';
+ $('seed').title=random?'Chosen automatically for each new generation. Turn off Random seed each generation to enter a fixed seed.':'';
+ $('seed-mode-hint').textContent=random?'Each Generate click chooses a fresh random seed. Each option shows its actual seed; retrying the same submission keeps it.':'This seed stays fixed for comparisons or repeatable requests. Batch options use consecutive seeds.';
+ $('new-seed').hidden=random;
+ $('seed-label').closest('.help-label-row')?.querySelector('.help-trigger')?.setAttribute('aria-label','Help: '+$('seed-label').textContent);
+}
+$('random-seed').onchange=()=>{pendingKey=null;controls();persist()};
+$('new-seed').onclick=()=>{pendingKey=null;$('seed').value=randomSeed();persist();announce('New random seed selected')};
 const transcriptDrafts=new Map();let transcriptVoice=null,transcriptSaving=false;
 function rememberTranscriptDraft(){if(mode==='saved'&&transcriptVoice)transcriptDrafts.set(transcriptVoice,$('ref-text').value);if(mode==='upload')uploadTranscriptDraft=$('ref-text').value;updateTranscriptActions()}
 function updateTranscriptActions(){
@@ -600,7 +612,14 @@ $('form').onsubmit=async event=>{
  if(mode==='upload'&&!request.reference_id){error('Choose an audio reference first.');return}
  submitting=true;controls();
  generationTiming('submitting',new Date().toISOString(),'Submitting request');
- try{await saveSelectedTranscript();pendingKey=pendingKey||crypto.randomUUID();const batch=await post('/api/candidates',{...request,idempotency_key:pendingKey});pendingKey=null;watchCandidates(batch.id,request.generate_immediately);await refreshQueue()}
+ try{
+  await saveSelectedTranscript();
+  if(!pendingKey){
+   if($('random-seed').checked){request.seed=randomSeed();$('seed').value=request.seed;persist()}
+   pendingKey=crypto.randomUUID();
+  }
+  const batch=await post('/api/candidates',{...request,idempotency_key:pendingKey});pendingKey=null;watchCandidates(batch.id,request.generate_immediately);await refreshQueue();
+ }
  catch(exc){if(generationClock?.identity==='submitting'){generationClock=null;updateElapsed()}error(exc.message)}finally{submitting=false;controls()}
 };
 document.addEventListener('keydown',event=>{if(!browsePage&&(event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();if(!$('generate').disabled)$('form').requestSubmit()}});
@@ -885,6 +904,7 @@ async function selectVoiceModel(backend){
   caps=await api('/api/capabilities?'+new URLSearchParams({model:backend}));
   awaitingSourceModel=false;modelChoiceReady=true;
   $('prompt-expansion-enabled').checked=!!caps.limits.prompt_expansion?.enabled;
+  $('random-seed').checked=true;
   storageKey=caps.service;
   $('model-badge').textContent=`${caps.sample_rate/1000} kHz · ${caps.quantization} · On your Mac`;
   $('model-footer').textContent=`${caps.name} · ${caps.quantization} · ${caps.limits.runtime||'MLX'} on Apple Silicon`;
@@ -1141,7 +1161,8 @@ const controlHelp={
  'index-emotion-mode':'Follow the speaker recording, transfer emotion from another recording, or mix named emotions. The original speaker reference still supplies the voice.',
  'emotion-reference':'A separate recording that supplies emotion for IndexTTS. It changes delivery while the original speaker recording remains the voice reference.',
  'rendered-preview':'Shows the text and any supported performance tags sent to the speech model. Your original dialogue is kept separately.',
- seed:'Controls random variation. Keep it fixed when comparing settings; the same seed alone does not preserve a voice across different lines.',
+ seed:'The random seed used for this take. By default the site chooses a new seed for each generation. Turn off Random seed each generation to enter a fixed number for comparisons. The same seed alone does not preserve a voice across different lines.',
+ 'random-seed':'Choose a fresh random 32-bit seed for each new Generate click, using the browser’s secure random generator. Turn off to enter a fixed seed. Retries keep the original seed so an uncertain response does not create duplicate work.',
  steps:'Vox generation steps, from 1–30. More steps take longer and do not always produce a better take; the default is 10.',
  guidance:'How strongly Vox follows its voice conditioning and directions, from 1–5. Higher is not always better; compare against the default of 2.',
  'max-tokens':()=>caps?.backend==='moss'?'A ceiling on generated audio frames, not a requested duration. MOSS can raise it to its text-based minimum.':'A safety limit on generated audio, not a requested duration. Reaching it can cut a line short; try a shorter passage or a higher limit.',

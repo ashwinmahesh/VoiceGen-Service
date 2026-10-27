@@ -216,6 +216,8 @@ Choose at most one of `voice_id`, `reference_id`, or `preset_voice`. Available s
 | `output_dir` | Configured output folder | Optional absolute folder on the server's Mac. The drive must be mounted and writable. |
 | `prompt_expansion_id` | Omitted | ID of a reviewed [prompt expansion](#voice-guidance-preview-and-application) applied to this request. |
 
+The **site** chooses a fresh random 32-bit base seed for each new Generate click using the browser's secure random generator. Batch options retain the API's consecutive-seed rule. Advanced settings offer **Random seed each generation**, on by default; turn it off to enter a fixed seed. Old browser drafts with seeds such as 42 or 43 do not disable this new default. The selected seed is saved with every output. Retrying an uncertain submission or retrying an admitted job keeps its original seed. API requests still default to `42`; send your own `seed` for repeatable requests or client-side randomization. The browser preference is not an API field.
+
 ### Acting and model-specific settings
 
 Some established controls are top-level fields: `emotion` (up to 1,000 characters), `accent` (up to 500), Vox's `clone_mode`/`steps`/`guidance`, and Qwen's `steering_emotion`/`steering_strength`.
