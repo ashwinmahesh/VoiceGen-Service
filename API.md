@@ -493,6 +493,8 @@ Requires a reference voice and exact transcript. Start without acting tags for a
 
 The service renders these controls before the unchanged dialogue. Manual local tags such as `<|prosody:pause|>` and `<|prosody:long_pause|>` can remain in `text`; they do not promise exact timings. Do not combine a structured control with a manual leading directive of the same category.
 
+These generation fields accept **catalog values**, not arbitrary prose. The UI offers searchable text inputs plus optional LLM suggestions for custom wording. Capabilities expose `values`, `free_text:false`, `searchable:true`, and a `custom_direction_preview` descriptor for each control. Choosing catalog values needs no LLM; translating a custom direction does. The UI keeps unresolved drafts across reloads. Turning expansion off pauses those drafts and uses the last selected native controls or Follow recording; turning it on restores them. Approved native selections remain usable with expansion off.
+
 Top-level prose `emotion`/`accent` fields and description-based voice design are unsupported. Native generation loads and releases the model per job, so `model_loaded: false` while idle is expected.
 
 **If a take reaches `max_tokens` before EOC:** the model did not produce its end-of-chunk marker within that audio budget. Different seeds can hit different lengths. Incomplete audio is not published. Keep any successful options, then submit one replacement with a new key and `"max_tokens":2000`. For longer passages, consider `"higgs":{"text_chunk_size":400}` or shorter dialogue; native chunking can change delivery. This reduces one cause of failure and cannot guarantee the model will stop correctly.
@@ -666,6 +668,23 @@ It does not receive dialogue, exact reference transcripts, recordings, file path
 ```
 
 `generation` is a normal request for the running model. Optional `guidance` adds up to 1,500 characters of written direction.
+
+For Higgs, target a particular control by adding a preview-only `higgs` object **beside** `generation`. This can replace that control while preserving the other native settings:
+
+```json
+{
+  "generation": {
+    "model": "higgs",
+    "voice_id": "VOICE_ID_HERE",
+    "text": "Welcome home.",
+    "higgs": {"emotion": "amusement", "prosody": "expressive_low"}
+  },
+  "guidance": "Speak in a hushed whisper.",
+  "higgs": {"control": "style"}
+}
+```
+
+`higgs.control` accepts `emotion`, `prosody`, or `style`. It restricts the LLM to that category's supported values; it does not add custom native tags. The response's `higgs.control` identifies the target, and `updates.higgs` retains the other controls. A no-match suggestion returns `changed:false` and unchanged settings. An unknown/out-of-category completion fails with 422 without creating a preview or speech job. Other models reject this Higgs-specific preview option. Omitting it lets the LLM choose one category to change while preserving the others, even when structured controls are already selected. Manual Higgs tags in spoken `text` must be cleared before either kind of suggestion; use the structured controls instead. Empty delivery guidance returns 422; the UI explains this and disables its preview button until guidance is entered.
 
 **Returns:** HTTP **200** with `id`, `original`, `updates`, `context`, `request_guidance`, and `llm`. This creates no speech job.
 

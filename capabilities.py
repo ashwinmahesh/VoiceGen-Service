@@ -41,7 +41,9 @@ def capabilities():
         caps.controls[backend]={'top_p':{'default':.7 if backend=='fish' else .8,'min':.1,'max':1},'top_k':{'default':30,'min':1,'max':100}}
         if backend=='fish':caps.controls[backend]['delivery_tags']={'max_items':4,'max_characters':60,'examples':['low voice','quietly amused']}
         else:
-            caps.controls[backend].update({key:{'values':values} for key,values in HIGGS_CATALOG.items()})
+            caps.controls[backend].update({key:{'values':values,'free_text':False,'searchable':True,
+                'custom_direction_preview':{'url':'/api/prompts/expand','higgs':{'control':key},'requires_llm':True}}
+                for key,values in HIGGS_CATALOG.items()})
             caps.controls[backend]['text_chunk_size']={'default':1024,'min':80,'max':1024}
             caps.controls['max_tokens'].update(ui_default=2000,recommended=2000)
             caps.limits['control_catalog_source']=HIGGS_CATALOG_SOURCE

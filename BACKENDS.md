@@ -39,6 +39,8 @@ Fish and Higgs do not expose natural-language description design through this wr
 
 Higgs's UI/recommended audio budget is 2,000 tokens per native text chunk; API omission retains 1,000. `higgs.text_chunk_size` controls the native `--text-chunk-size` argument (80–1,024 characters, default 1,024). A missing EOC at the cap returns an actionable failure read from a bounded native-log tail, removes temporary output, and preserves successful batch siblings. The wrapper does not enable `allow_incomplete_generation` or automatically retry with a larger budget.
 
+Higgs's Emotion, Prosody and Style inputs search its official catalog. Custom wording can be previewed through the existing local LLM, restricted to the selected category, then applied after review. Other native controls remain intact. The speech model still receives recognized tags only; this does not add arbitrary natural-language style or accent support. No model/runtime download is needed for this UI change; custom suggestions require the separately set-up prompt LLM.
+
 ## Installation and storage
 
 Prerequisites: Apple Silicon macOS and Git/Make; Higgs and MOSS also need Xcode command-line tools for the native C++ build. Setup chooses Python automatically. Use `VENV` for another internal speech environment location. Setup installs a complete pinned runtime lock with `--no-deps`, then checks dependencies; this prevents an upstream unpinned Git dependency from overriding the explicit Perth pin. The locks target macOS arm64 and are not CUDA/Linux recipes.

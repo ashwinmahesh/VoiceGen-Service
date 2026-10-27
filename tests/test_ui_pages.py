@@ -38,6 +38,10 @@ class SharedPageTests(unittest.TestCase):
         tag,attrs=page.catalog_links[0]
         self.assertEqual(tag,'a');self.assertEqual(attrs['target'],'_blank')
         self.assertEqual(attrs['href'],'/collection?tab=voices');self.assertIn('noopener',attrs['rel'])
+        switch=re.search(r'<input [^>]*id="generate-immediately"[^>]*>',markup).group()
+        self.assertIn('role="switch"',switch)
+        self.assertIn('checked',switch)
+        for identity in ('generate-label','generate-icon','immediate-hint'):self.assertIn(identity,page.ids)
 
     def test_every_page_has_the_generator_header_and_queue_controls(self):
         client=TestClient(server.app)

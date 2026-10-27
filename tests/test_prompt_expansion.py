@@ -163,6 +163,72 @@ class ExpansionTests(unittest.TestCase):
             self.assertIn('choose Emotion/Prosody/Style directly',rejected.json()['detail'])
             self.assertEqual(len([p for p in (self.f.root/'prompt-expansions').glob('*.json') if expansion.IDENTITY.fullmatch(p.stem)]),1)
             self.assertEqual(self.f.client.get('/api/queue').json()['total'],0)
+    def test_targeted_higgs_direction_preserves_other_controls_and_reviewed_provenance(self):
+        reference=self.f.upload().json()
+        profile=json.loads((server.PROJECT_ROOT/'backends/higgs/service.json').read_text())
+        with patch('server.PROFILE',profile),patch('capabilities.PROFILE',profile),patch.object(self.f.manager,'profile',profile):
+            request={'text':'Exact dialogue.','reference_id':reference['id'],'ref_text':'Exact recorded words.',
+                'higgs':{'emotion':'amusement','prosody':'expressive_low','top_p':.75,'text_chunk_size':400}}
+            self.completion='{"control":"style","value":"whispering"}'
+            response=self.preview(request,guidance='Speak in a hushed whisper.',higgs={'control':'style'})
+            self.assertEqual(response.status_code,200,response.text);record=response.json()
+            self.assertEqual(record['higgs']['control'],'style')
+            self.assertEqual(record['updates']['higgs'],{'emotion':'amusement','prosody':'expressive_low','style':'whispering'})
+            self.assertEqual(set(self.calls[-1]['plan']['allowed_values']),{'style'})
+            self.assertEqual(record['request_guidance'],'Speak in a hushed whisper.')
+            applied=expansion.apply(Generation(**request),record['updates'])
+            self.assertEqual(applied.higgs.top_p,.75);self.assertEqual(applied.higgs.text_chunk_size,400)
+            self.assertEqual(applied.text,request['text']);self.assertEqual(applied.ref_text,request['ref_text'])
+            self.assertEqual(self.f.client.get('/api/queue').json()['total'],0)
+            generation={**applied.model_dump(),'prompt_expansion_id':record['id'],'idempotency_key':'targeted-style'}
+            job=self.f.client.post('/api/generate',json=generation)
+            self.assertEqual(job.status_code,202,job.text)
+            result=self.f.finish(job.json())['result']
+            self.assertEqual(result['prompt_expansion']['id'],record['id'])
+            self.assertEqual(result['effective']['higgs']['emotion'],'amusement')
+            self.assertEqual(result['effective']['higgs']['style'],'whispering')
+            self.assertEqual(self.f.client.post('/api/generate',json=generation).json()['id'],job.json()['id'])
+            changed={**generation,'higgs':{**generation['higgs'],'emotion':'anger'}}
+            changed.pop('idempotency_key')
+            self.assertEqual(self.f.client.post('/api/generate',json=changed).status_code,422)
+    def test_targeted_higgs_no_match_and_wrong_category_never_replace_existing_controls(self):
+        reference=self.f.upload().json();profile=json.loads((server.PROJECT_ROOT/'backends/higgs/service.json').read_text())
+        with patch('server.PROFILE',profile),patch('capabilities.PROFILE',profile),patch.object(self.f.manager,'profile',profile):
+            request={'text':'Exact dialogue.','reference_id':reference['id'],'ref_text':'Exact recorded words.',
+                'higgs':{'emotion':'amusement','style':'whispering'}}
+            self.completion='{"control":"none","value":null}'
+            response=self.preview(request,guidance='Sound like polished velvet.',higgs={'control':'style'})
+            self.assertEqual(response.status_code,200,response.text);record=response.json()
+            self.assertFalse(record['changed']);self.assertEqual(record['original'],record['updates'])
+            self.assertEqual(record['updates']['higgs']['style'],'whispering')
+            before=list((self.f.root/'prompt-expansions').glob('*.json'))
+            for completion in ['{"control":"emotion","value":"anger"}','{"control":"style","value":"velvet"}']:
+                self.completion=completion
+                self.assertEqual(self.preview(request,guidance='A custom style.',higgs={'control':'style'}).status_code,422)
+            self.assertEqual(list((self.f.root/'prompt-expansions').glob('*.json')),before)
+            self.assertEqual(self.f.client.get('/api/queue').json()['total'],0)
+    def test_higgs_target_is_namespaced_validated_and_restricts_worker_labels(self):
+        from prompt_policy import higgs_completion,messages_for
+        for options in ({'control':'accent'},{'control':'style','extra':True},{}):
+            self.assertEqual(self.preview(higgs=options,guidance='Whisper.').status_code,422)
+        self.assertEqual(self.preview(higgs={'control':'style'},guidance='Whisper.').status_code,422)
+        self.assertEqual(self.calls,[])
+        with self.assertRaises(ValueError):higgs_completion('amusement',{'style':['whispering']})
+        self.assertEqual(json.loads(higgs_completion('whispering',{'style':['whispering']})),{'control':'style','value':'whispering'})
+        request=Generation(text='Exact dialogue.',reference_id='a'*32,ref_text='Exact reference.')
+        _,_,prompt=expansion.plan(request,request,'higgs','In a hushed whisper.',higgs_control='style')
+        messages=messages_for(prompt)
+        self.assertIn('only the requested style',messages[0]['content'])
+        for message in messages:
+            if message['role']=='assistant':self.assertIn(message['content'],['singing','shouting','whispering','none'])
+        with __import__('config').model_context('higgs'):
+            controls=capabilities.capabilities().controls['higgs']
+            for key in ('emotion','prosody','style'):
+                self.assertFalse(controls[key]['free_text']);self.assertTrue(controls[key]['searchable'])
+                self.assertEqual(controls[key]['custom_direction_preview']['higgs'],{'control':key})
+        schema=self.f.client.get('/openapi.json').json()['components']['schemas']
+        self.assertIn('higgs',schema['ExpandVoiceGuidance']['properties'])
+        self.assertEqual(schema['HiggsSuggestion']['properties']['control']['enum'],['emotion','prosody','style'])
     def test_busy_shared_lock_and_runtime_failures_preserve_original(self):
         import fcntl,subprocess
         with self.f.manager.lock_file.open('a+') as handle:
@@ -189,7 +255,30 @@ class ExpansionTests(unittest.TestCase):
                 else:self.assertNotIn('higgs',record)
                 effective=expansion.apply(Generation(**request),record['updates'])
                 self.assertEqual(effective.text,request['text']);self.assertEqual(effective.ref_text,request['ref_text'])
-                self.assertEqual(self.preview({**request,backend:record['updates'][backend]},guidance='More acting.').status_code,422)
+                repeat=self.preview({**request,backend:record['updates'][backend]},guidance='More acting.')
+                self.assertEqual(repeat.status_code,200 if backend=='higgs' else 422,repeat.text)
+                if backend=='higgs':self.assertFalse(repeat.json()['changed'])
+    def test_general_higgs_preview_accepts_selected_controls_and_preserves_other_categories(self):
+        reference=self.f.upload().json();profile=json.loads((server.PROJECT_ROOT/'backends/higgs/service.json').read_text())
+        with patch('server.PROFILE',profile),patch('capabilities.PROFILE',profile),patch.object(self.f.manager,'profile',profile):
+            request={'text':'Exact dialogue.','reference_id':reference['id'],'ref_text':'Exact recorded words.',
+                'higgs':{'emotion':'amusement','prosody':'expressive_low','style':'shouting','top_p':.75}}
+            self.completion='{"control":"style","value":"whispering"}'
+            response=self.preview(request,guidance='Speak in a hushed whisper.')
+            self.assertEqual(response.status_code,200,response.text);record=response.json()
+            self.assertEqual(record['original']['higgs'],{'emotion':'amusement','prosody':'expressive_low','style':'shouting'})
+            self.assertEqual(record['updates']['higgs'],{'emotion':'amusement','prosody':'expressive_low','style':'whispering'})
+            self.assertNotIn('control',record['higgs'])
+            self.assertEqual(expansion.apply(Generation(**request),record['updates']).higgs.top_p,.75)
+            self.completion='{"control":"none","value":null}'
+            unchanged=self.preview(request,guidance='No matching direction.').json()
+            self.assertFalse(unchanged['changed']);self.assertEqual(unchanged['updates'],unchanged['original'])
+            calls=len(self.calls)
+            self.assertEqual(self.preview(request,guidance='').status_code,422)
+            manual={**request,'text':'<|style:shouting|> Exact dialogue.'}
+            self.assertEqual(self.preview(manual,guidance='Whisper.').status_code,422)
+            self.assertEqual(len(self.calls),calls)
+            self.assertEqual(self.f.client.get('/api/queue').json()['total'],0)
     def test_previous_single_and_candidate_fingerprints_ignore_new_omitted_field(self):
         from jobs import JobManager
         for request in [Generation(text='Hello.',description='A voice.'),CandidateGeneration(text='Hello.',description='A voice.')]:

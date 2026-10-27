@@ -593,17 +593,17 @@ class JobManager:
                     self._wake.set()
         return self.executor.submit(work)
 
-    def preview_expansion(self,request,effective,guidance,transcript=''):
+    def preview_expansion(self,request,effective,guidance,transcript='',higgs_control=None):
         from prompt_expansion import plan,expand
         backend=self.current_profile['backend']
-        plan(request,effective,backend,guidance)
+        plan(request,effective,backend,guidance,higgs_control=higgs_control)
         with self.guard:
             handle=self.reserve();self.expanding=True;self.stage='expanding'
         def work():
             try:
                 with model_context(backend),inherit_reservations(self._owner,handle,self.data_owner):
                     self.engine.unload()
-                    return expand(request,effective,backend,guidance,self.root,transcript)
+                    return expand(request,effective,backend,guidance,self.root,transcript,higgs_control=higgs_control)
             finally:
                 handle.close()
                 with self.guard:

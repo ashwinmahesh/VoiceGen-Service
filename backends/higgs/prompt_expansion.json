@@ -1,7 +1,7 @@
 {
   "id": "higgs-voice-guidance",
   "backend": "higgs",
-  "version": 2,
+  "version": 3,
   "name": "Higgs TTS 3",
   "summary": "One supported emotion, prosody or style control, with an untagged baseline available.",
   "sources": [

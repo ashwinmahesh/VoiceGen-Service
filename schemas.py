@@ -153,15 +153,22 @@ class CandidateGeneration(Generation):
     candidate_use_llm: bool = True
 
 
+class HiggsSuggestion(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    control: Literal['emotion','prosody','style']
+
+
 class ExpandVoiceGuidance(BaseModel):
     model_config = ConfigDict(extra='forbid')
     generation: Generation
     guidance: str = Field(default='',max_length=1500)
+    higgs: HiggsSuggestion | None = None
 
 
 class HiggsExpansionFeedback(BaseModel):
     model_config = ConfigDict(extra='forbid')
     message: str
+    control: Literal['emotion','prosody','style'] | None = None
 
 
 class PromptExpansion(BaseModel):

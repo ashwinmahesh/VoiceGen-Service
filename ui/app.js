@@ -23,11 +23,18 @@ let currentCandidates=null, candidateCards=new Map();
 let appliedExpansion=null,pendingExpansion=null,enhancing=false,expansionChoice=null;
 let catalogOffset = 0, searchTimer = null, catalogRequest = 0, refreshRequest=0, voiceEditor = null, voiceSaving = false;
 let collectionDeleteTarget=null,collectionChanging=false;
+let monitoredImmediate=false,higgsSelectedControls={},suspendedHiggsDirections={};
 const presets={natural:'Natural, conversational delivery with relaxed pacing.',joy:'Excited and joyful, with an audible smile and lively pacing.',sadness:'Quiet sadness and disappointment, speaking slowly with a trembling voice.',anger:'Angry and frustrated, with firm emphasis and a tense, forceful delivery.',fear:'Frightened and anxious, with a trembling voice and urgent, uneven pacing.',relief:'Deeply relieved, softening into warmth with a gentle exhale.',sarcasm:'Dry, understated sarcasm with deliberate pauses and restrained emphasis.',whisper:'A soft, intimate whisper, speaking gently and slowly.',custom:''};
 async function api(path,options={}){const response=await fetch(path,options);if(!response.ok){let body;try{body=await response.json()}catch{}throw Error(typeof body?.detail==='string'?body.detail:body?.detail?.[0]?.msg||`Request failed (${response.status})`)}return response.json()}
 function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
 function error(message){const target=$($('queue-dialog').open?'queue-error':browsePage?'page-error':'error');target.textContent=message;target.hidden=false}function announce(text){$('announcement').textContent=text}
-function controls(){ $('generate').disabled=!online||!queueWritable||submitting||uploading||enhancing||changingModel||transcriptSaving||!modelChoiceReady;$('unload').disabled=!online||busy||enhancing;$('new-seed').disabled=busy;updatePromptExpansion() }
+function immediateInProgress(){return !!watching&&monitoredImmediate&&$('generate-immediately').checked}
+function controls(){
+ const loading=immediateInProgress();$('generate').disabled=!online||!queueWritable||submitting||uploading||enhancing||changingModel||transcriptSaving||!modelChoiceReady||unresolvedHiggsControls().length>0||loading;
+ $('generate').setAttribute('aria-busy',String(submitting||loading));$('generate-label').textContent=submitting?'Submitting…':loading?'Generating speech…':'Generate speech';
+ $('generate-icon').className=submitting||loading?'button-spinner':'';$('generate-icon').textContent=submitting||loading?'':'↗';
+ $('unload').disabled=!online||busy||enhancing;$('new-seed').disabled=busy;updatePromptExpansion();
+}
 function clearExpansion(){appliedExpansion=null;pendingExpansion=null;updatePromptExpansion();}
 let generationClock=null;
 function elapsedTime(milliseconds){const seconds=Math.max(0,Math.floor(milliseconds/1000)),minutes=Math.floor(seconds/60);return minutes>=60?`${Math.floor(minutes/60)}:${String(minutes%60).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`:`${minutes}:${String(seconds%60).padStart(2,'0')}`}
@@ -54,27 +61,30 @@ function updatePromptExpansion(){
  const profile=caps.models[backend]?.prompt_expansion,profileMode=['saved','upload'].includes(mode)?'reference':mode;
  const spec=profile?.modes[profileMode];
  const clone=resolvedReferenceMode(),supported=!!spec?.available&&(!spec.clone_modes||spec.clone_modes.includes(clone));
- const emptyOriginal=spec?.kind==='prose'&&!$(spec.target).value.trim();
- const emptyReason=profileMode==='design'?'Enter a voice description above before previewing its expansion.':'Enter an Emotion & delivery direction above to expand it. The accent direction and spoken words stay unchanged.';
+ const catalogDirection=['fish','higgs'].includes(backend);
+ const emptyOriginal=spec?.kind==='prose'?!$(spec.target).value.trim():catalogDirection&&!$('expansion-guidance').value.trim();
+ const emptyReason=catalogDirection?(backend==='higgs'?'Enter a Delivery direction below to preview a suggestion. Selected controls are kept unless the suggestion changes that category.':'Enter a Delivery direction below for Fish tag suggestions. Clear existing tags first.'):profileMode==='design'?'Enter a voice description above before previewing its expansion.':'Enter an Emotion & delivery direction above to expand it. The accent direction and spoken words stay unchanged.';
  const unsupportedReason=spec?.clone_modes&&$('clone-mode').value==='auto'?'Auto is following the transcribed recording because no new delivery or accent direction is entered. Enter an Emotion & delivery direction above, or choose Voice reference, to preview new delivery guidance.':'This reference mode follows recorded performance. Choose Auto with a delivery direction, or Voice reference, to use delivery instructions.';
  $('expansion-profile').hidden=!profile||!modelChoiceReady;
  $('expansion-profile-info').textContent=profile?`${profile.name} · ${spec?.label||profileMode} · Profile v${profile.version}`:'';
  $('expansion-profile-rules').textContent=spec?.available?(supported?spec.instructions:unsupportedReason):spec?.reason||'No expansion specification for this mode.';
  $('expansion-guidance-field').hidden=!enabled||!supported;
  $('expand-guidance').disabled=!online||!enabled||!supported||emptyOriginal||busy||enhancing||uploading||submitting||!!appliedExpansion;
+ if(unresolvedHiggsControls().length)$('expand-guidance').disabled=true;
+ updateHiggsSuggestions();
  const catalog=backend==='higgs';
  $('expand-guidance').textContent=enhancing?'Preparing suggestion…':catalog?'Suggest delivery control':'Preview expanded guidance';
  $('expansion-guidance-label').textContent=['fish','higgs'].includes(backend)?'Delivery direction':'Additional delivery direction (optional)';
  $('expansion-guidance').placeholder=catalog?'For example: Keep the reference voice and accent, but use more expressive intonation.':'Describe the delivery you want to explore. Required for Fish tag suggestions.';
- $('prompt-expansion-hint').textContent=!modelChoiceReady?'Choose a model to see prompt-expansion support.':!available?'LLM disabled at startup. Restart with make serve without NO_LLM=1 to enable.':!enabled?'Off. No LLM previews or per-option planning; distinct designs use built-in directions.':!supported?(spec?.reason||unsupportedReason):emptyOriginal?emptyReason:catalog?'On. Describe the acting below; the LLM suggests one supported Emotion, Prosody, or Style control. Higgs uses these controls, rather than expanded prose. Accent comes from your reference.':'On. Design batches use LLM contrast planning. For a single take or reference delivery, preview and apply guidance below. Dialogue and transcripts stay unchanged.';
+ $('prompt-expansion-hint').textContent=!modelChoiceReady?'Choose a model to see prompt-expansion support.':!available?'LLM disabled at startup. Restart with make serve without NO_LLM=1 to enable.':!enabled?(catalog?'Off. Selected Higgs controls still apply; no new LLM suggestions.':'Off. No LLM previews or per-option planning; distinct designs use built-in directions.'):!supported?(spec?.reason||unsupportedReason):emptyOriginal?emptyReason:catalog?'On. Describe the acting below; the LLM suggests one supported Emotion, Prosody, or Style control and keeps your other selected controls. Accent comes from your reference.':'On. Design batches use LLM contrast planning. For a single take or reference delivery, preview and apply guidance below. Dialogue and transcripts stay unchanged.';
  $('expansion-applied').hidden=!appliedExpansion;$('restore-guidance').hidden=!appliedExpansion;
  renderExpansion(appliedExpansion,'applied-expansion-details','Applied to your next generation');
  if(appliedExpansion)$('expansion-applied').textContent='Expanded guidance applied · '+appliedExpansion.llm.model+' · '+appliedExpansion.llm.seconds+'s. Original retained.';
 }
-function applyGuidanceValues(values){
+function applyGuidanceValues(values,higgsControl=null){
  for(const [key,value] of Object.entries(values)){
   if(key==='fish')$('fish-delivery-tags').value=value.delivery_tags.join('\n');
-  else if(key==='higgs')for(const name of ['emotion','prosody','style'])$('higgs-'+name).value=value[name]||'';
+  else if(key==='higgs')for(const name of higgsControl?[higgsControl]:['emotion','prosody','style'])$('higgs-'+name).value=value[name]||'';
   else if(['description','emotion'].includes(key))$(key).value=value;
  }
  updatePerformancePreview();
@@ -103,11 +113,12 @@ function renderExpansion(record,id,caption){
    (record.llm[record.context.backend]?` · ${record.llm[record.context.backend].label} · Profile v${record.llm[record.context.backend].version}`:''),'hint'));
  if(record.higgs?.message)content.append(el('p',record.higgs.message,'hint'));
 }
-$('expand-guidance').onclick=async()=>{
+async function previewGuidance(higgsControl=null){
  if(enhancing)return;enhancing=true;controls();$('error').hidden=true;
  try{
-  const {candidate_count,candidate_variation,candidate_use_llm,...generation}=settings();generation.prompt_expansion_id=null;
-  pendingExpansion=await post('/api/prompts/expand',{generation,guidance:$('expansion-guidance').value});
+  const {candidate_count,candidate_variation,candidate_use_llm,...generation}=settings(!!higgsControl);generation.prompt_expansion_id=null;
+  pendingExpansion=await post('/api/prompts/expand',{generation,guidance:higgsControl?$('higgs-'+higgsControl).value.trim():$('expansion-guidance').value,
+   ...(higgsControl?{higgs:{control:higgsControl}}:{})});
   const catalog=['fish','higgs'].includes(pendingExpansion.context.backend),changed=expansionChanged(pendingExpansion);
   $('expansion-title').textContent=caps.backend==='higgs'?'Suggested Higgs delivery control':'Expanded voice guidance';
   $('expansion-original-title').textContent=catalog?'Your delivery direction':'Original guidance';
@@ -122,15 +133,25 @@ $('expand-guidance').onclick=async()=>{
   $('expansion-model').textContent=`${pendingExpansion.llm.model} · ${pendingExpansion.llm.seconds}s · ${pendingExpansion.llm.policy_version}`+(selected?` · ${selected.label} · Profile v${selected.version}`:'');
   $('expansion-preview').showModal();
  }catch(exc){error(exc.message)}finally{enhancing=false;controls()}
-};
+}
+$('expand-guidance').onclick=()=>previewGuidance();
 $('cancel-expansion').onclick=()=>{$('expansion-preview').close();pendingExpansion=null};
 $('apply-expansion').onclick=()=>{
  if(!pendingExpansion||!expansionChanged(pendingExpansion))return;
- applyGuidanceValues(pendingExpansion.updates);appliedExpansion=pendingExpansion;pendingExpansion=null;
- $('expansion-preview').close();pendingKey=null;updatePromptExpansion();persist();announce('Expanded guidance applied. Dialogue and reference transcript kept.');
+ applyGuidanceValues(pendingExpansion.updates,pendingExpansion.higgs?.control);appliedExpansion=pendingExpansion;pendingExpansion=null;
+ $('expansion-preview').close();pendingKey=null;controls();persist();announce('Expanded guidance applied. Dialogue and reference transcript kept.');
 };
-$('prompt-expansion-enabled').onchange=()=>{expansionChoice=$('prompt-expansion-enabled').checked;if(!expansionChoice&&appliedExpansion){applyGuidanceValues(appliedExpansion.original);clearExpansion()}pendingKey=null;updatePromptExpansion();persist()};
-$('restore-guidance').onclick=()=>{if(appliedExpansion)applyGuidanceValues(appliedExpansion.original);clearExpansion();pendingKey=null;persist();};
+function restoreAppliedGuidance(){const target=appliedExpansion?.higgs?.control;if(target){$('higgs-'+target).value=appliedExpansion.request_guidance;updatePerformancePreview()}else if(appliedExpansion)applyGuidanceValues(appliedExpansion.original);}
+$('prompt-expansion-enabled').onchange=()=>{
+ expansionChoice=$('prompt-expansion-enabled').checked;
+ if(caps?.backend==='higgs'){
+  if(!expansionChoice){suspendHiggsDirections();clearExpansion()}
+  else{for(const [key,direction] of Object.entries(suspendedHiggsDirections))$('higgs-'+key).value=direction;suspendedHiggsDirections={};clearExpansion()}
+  updatePerformancePreview();
+ }else if(!expansionChoice&&appliedExpansion){restoreAppliedGuidance();clearExpansion()}
+ pendingKey=null;controls();persist();
+};
+$('restore-guidance').onclick=()=>{restoreAppliedGuidance();clearExpansion();pendingKey=null;controls();persist();};
 function setMode(next){
  if(next==='record')next=readySourceModels(recordSource).length?recordSource:recordSources.find(([source])=>readySourceModels(source).length)?.[0];
  if(!next)return;
@@ -166,7 +187,7 @@ function candidateExpansion(row){
  return {id:row.id+'-candidate',context:{backend:row.backend},original:row.prompt_expansion?.original||{description:variant.base_description},updates:{description:variant.description},
   llm:{...(variant.llm||{model:'Built-in contrast directions',seconds:0}),policy_version:variant.version,[row.backend]:variant.profile_spec}};
 }
-function settings(){
+function settings(allowCustomHiggs=false){
  const referenceMode=mode==='saved'||mode==='upload';
  const direction=!awaitingSourceModel&&acceptsTextDirections();
  const result={model:caps?.backend,prompt_expansion_id:appliedExpansion?.id||null,candidate_count:Number($('candidate-count').value),candidate_use_llm:!!caps?.limits.prompt_expansion?.enabled&&$('prompt-expansion-enabled').checked,candidate_variation:mode==='design'?$('candidate-variation').value:'auto',generate_immediately:$('generate-immediately').checked,text:$('text').value,description:mode==='design'?$('description').value:'',
@@ -190,7 +211,7 @@ function settings(){
  }
  if(caps?.backend==='fish'){options.delivery_tags=$('fish-delivery-tags').value.split('\n').map(x=>x.trim()).filter(Boolean);}
  if(caps?.backend==='higgs'){
-  for(const key of ['emotion','prosody','style'])if($('higgs-'+key).value)options[key]=$('higgs-'+key).value;
+  for(const key of ['emotion','prosody','style']){const value=higgsControlValue(key);if(value===undefined&&!allowCustomHiggs)throw Error('Choose a suggested '+key+' or use Suggest control to preview your custom direction.');if(value)options[key]=value;}
   options.text_chunk_size=Number($('higgs-text-chunk-size').value);
  }
  if(modelControls.top_p){options.top_p=Number($('model-top-p').value);options.top_k=Number($('model-top-k').value);}
@@ -198,7 +219,7 @@ function settings(){
  if(Object.keys(options).length)result[caps.backend]=options;
  return result;
 }
-function persist(){if(caps&&!awaitingSourceModel)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(),ref_text:$('ref-text').value,prompt_expansion_choice:expansionChoice,prompt_expansion:appliedExpansion,description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
+function persist(){if(caps&&!awaitingSourceModel)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(true),...(caps.backend==='higgs'?{higgs_direction_drafts:Object.fromEntries(['emotion','prosody','style'].map(key=>[key,$('higgs-'+key).value])),higgs_selected_controls:higgsSelectedControls,higgs_suspended_directions:suspendedHiggsDirections}:{}),ref_text:$('ref-text').value,expansion_guidance:$('expansion-guidance').value,prompt_expansion_choice:expansionChoice,prompt_expansion:appliedExpansion,description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
 function updateCapabilities(){
  if(!caps)return;
  const referenceMode=mode==='saved'||mode==='upload';
@@ -266,6 +287,8 @@ function restore(row){
  expansionChoice=row.candidate_variant?false:row.prompt_expansion_choice??null;
  $('prompt-expansion-enabled').checked=!!caps.limits.prompt_expansion?.enabled&&(expansionChoice??true);
  $('candidate-variation').value=row.candidate_variant?'seed_only':row.candidate_variation||'auto';
+ $('expansion-guidance').value=row.expansion_guidance||'';
+ $('generate-immediately').checked=row.generate_immediately??true;
  $('text').value=row.text||'';$('description').value=row.description||'';$('emotion').value=row.preset_voice&&!row.mode?[row.description,row.emotion].filter(Boolean).map(x=>x.trim().replace(/\.+$/,'')).join('. '):row.emotion||'';
  $('accent').value=row.accent||'';$('emotion-preset').value='custom';
  $('clone-mode').value=row.clone_mode||'reference';$('steering-emotion').value=row.steering_emotion||'';
@@ -279,9 +302,9 @@ function restore(row){
  for(const key of ['exaggeration','cfg_weight','duration_factor','interval_silence','emotion_alpha'])if($(key))$(key).value=row[caps.backend]?.[key]??row[key]??caps.controls[caps.backend]?.[key]?.default??1;
  $('emotion-reference-id').value=row[caps.backend]?.emotion_reference_id||row.emotion_reference_id||'';$('emotion-vector').value=(row[caps.backend]?.emotion_vector||row.emotion_vector)?.join(',')||'';
  $('emotion-reference-info').textContent=(row[caps.backend]?.emotion_reference_id||row.emotion_reference_id)?'Using the saved emotion recording.':'';
- restorePerformance(row);$('ref-text').value=row.ref_text??(mode==='saved'?voiceRows.find(v=>v.id===$('voice').value)?.transcript:reference?.transcript)??'';rememberTranscriptDraft();appliedExpansion=row.candidate_variant?null:row.prompt_expansion||null;updateCapabilities();updatePromptExpansion();count();persist();
+ restorePerformance(row);$('ref-text').value=row.ref_text??(mode==='saved'?voiceRows.find(v=>v.id===$('voice').value)?.transcript:reference?.transcript)??'';rememberTranscriptDraft();appliedExpansion=row.candidate_variant||caps.backend==='higgs'&&!$('prompt-expansion-enabled').checked?null:row.prompt_expansion||null;updateCapabilities();updatePromptExpansion();count();persist();
 }
-$('form').addEventListener('input',event=>{if(['description','emotion','accent','voice','reference','ref-text','clone-mode','preset-voice','fish-delivery-tags','higgs-emotion','higgs-prosody','higgs-style'].includes(event.target.id))clearExpansion();pendingKey=null;count();updatePerformancePreview();persist()});$('form').addEventListener('change',event=>{if(['voice','reference','clone-mode','preset-voice','higgs-emotion','higgs-prosody','higgs-style'].includes(event.target.id))clearExpansion();pendingKey=null;persist()});
+$('form').addEventListener('input',event=>{if(['description','emotion','accent','voice','reference','ref-text','clone-mode','preset-voice','fish-delivery-tags','higgs-emotion','higgs-prosody','higgs-style','expansion-guidance'].includes(event.target.id))clearExpansion();pendingKey=null;count();updatePerformancePreview();controls();persist()});$('form').addEventListener('change',event=>{if(['voice','reference','clone-mode','preset-voice','higgs-emotion','higgs-prosody','higgs-style'].includes(event.target.id))clearExpansion();pendingKey=null;persist()});
 $('new-seed').onclick=()=>{pendingKey=null;$('seed').value=crypto.getRandomValues(new Uint32Array(1))[0];persist();announce('New seed selected')};
 const transcriptDrafts=new Map();let transcriptVoice=null,transcriptSaving=false;
 function rememberTranscriptDraft(){if(mode==='saved'&&transcriptVoice)transcriptDrafts.set(transcriptVoice,$('ref-text').value);if(mode==='upload')uploadTranscriptDraft=$('ref-text').value;updateTranscriptActions()}
@@ -537,25 +560,27 @@ function renderCandidates(batch){
   candidateCards.set(job.id,{signature,element:card});
  }
 }
-async function watchCandidates(identity){
+async function watchCandidates(identity,immediate=null){
  if(browsePage){location.href='/?candidates='+encodeURIComponent(identity);return}
  const token='candidates:'+identity;if(watching===token)return;
  if(latest?.candidate_batch_id!==identity){latest=null;$('result').hidden=true;}
- watching=token;controls();$('error').hidden=true;$('empty').hidden=true;$('working').hidden=true;
+ watching=token;monitoredImmediate=immediate??true;controls();$('error').hidden=true;$('empty').hidden=true;$('working').hidden=true;
  localStorage.setItem(storageKey+'-candidates',identity);localStorage.removeItem(storageKey+'-job');
  try{while(watching===token){
   const batch=await api('/api/candidates/'+identity);if(watching!==token)return;
+  monitoredImmediate=['queued','running'].includes(batch.status)&&batch.jobs.some(job=>job.generate_immediately);controls();
   renderCandidates(batch);
   if(!latest){const first=batch.jobs.find(job=>job.result);if(first)showResult(first.result)}
   if(!['queued','running'].includes(batch.status)){await refresh();announce(`${batch.done_count} of ${batch.candidate_count} voice options ready.`);break}
   await new Promise(resolve=>setTimeout(resolve,1500));
  }}catch(exc){if(watching===token)error(exc.message+' Your accepted options remain in Queue; reload to reconnect.')}
- finally{if(watching===token){watching=null;controls();refreshQueue().catch(()=>{})}}
+ finally{if(watching===token){watching=null;monitoredImmediate=false;controls();refreshQueue().catch(()=>{})}}
 }
 async function watch(identity){
- if(browsePage){location.href='/?job='+encodeURIComponent(identity);return}if(watching===identity)return;localStorage.removeItem(storageKey+'-candidates');$('candidate-results').hidden=true;watching=identity;controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
+ if(browsePage){location.href='/?job='+encodeURIComponent(identity);return}if(watching===identity)return;localStorage.removeItem(storageKey+'-candidates');$('candidate-results').hidden=true;watching=identity;monitoredImmediate=true;controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
  localStorage.setItem(storageKey+'-job',identity);
  try{while(watching===identity){const job=await api('/api/jobs/'+identity);if(watching!==identity)return;
+  monitoredImmediate=['queued','running'].includes(job.status)&&job.generate_immediately;controls();
   $('stage').textContent=job.stage;
   $('working-job-resources').href='/observability?job='+encodeURIComponent(identity);
   generationTiming(identity,job.created_at,job.stage,job.completed_at);
@@ -563,16 +588,16 @@ async function watch(identity){
   if(job.status==='error'||job.status==='deleted'){localStorage.removeItem(storageKey+'-job');throw Error(job.error||'This pending take was removed.');}
   await new Promise(resolve=>setTimeout(resolve,1500));
  }}catch(exc){if(watching===identity){error(exc.message);$('working').hidden=true;$('empty').hidden=!latest;if(latest)showResult(latest)}}
- finally{if(watching===identity){watching=null;controls();refreshQueue().catch(()=>{})}}
+ finally{if(watching===identity){watching=null;monitoredImmediate=false;controls();refreshQueue().catch(()=>{})}}
 }
 $('form').onsubmit=async event=>{
- event.preventDefault();if(!modelChoiceReady){error('Choose a set-up model that supports this voice source.');return}if(submitting||uploading)return;let request;try{request=settings()}catch(exc){error(exc.message);return}
+ event.preventDefault();if(!modelChoiceReady){error('Choose a set-up model that supports this voice source.');return}if(submitting||uploading||immediateInProgress())return;let request;try{request=settings()}catch(exc){error(exc.message);return}
  if(mode==='preset'&&!request.preset_voice){error('Choose an expressive preset voice first.');return}
  if(mode==='saved'&&!request.voice_id){error('Choose a saved voice first.');return}
  if(mode==='upload'&&!request.reference_id){error('Choose an audio reference first.');return}
  submitting=true;controls();
  generationTiming('submitting',new Date().toISOString(),'Submitting request');
- try{await saveSelectedTranscript();pendingKey=pendingKey||crypto.randomUUID();const batch=await post('/api/candidates',{...request,idempotency_key:pendingKey});pendingKey=null;watchCandidates(batch.id);await refreshQueue()}
+ try{await saveSelectedTranscript();pendingKey=pendingKey||crypto.randomUUID();const batch=await post('/api/candidates',{...request,idempotency_key:pendingKey});pendingKey=null;watchCandidates(batch.id,request.generate_immediately);await refreshQueue()}
  catch(exc){if(generationClock?.identity==='submitting'){generationClock=null;updateElapsed()}error(exc.message)}finally{submitting=false;controls()}
 };
 document.addEventListener('keydown',event=>{if(!browsePage&&(event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();if(!$('generate').disabled)$('form').requestSubmit()}});
@@ -917,7 +942,57 @@ function updateIndexEmotion(chosen=false){
  const sum=readIndexVector().reduce((a,b)=>a+b,0);$('emotion-vector-sum').textContent=`Total ${sum.toFixed(2)} / 1${sum>1?' — reduce the mixture':''}`;
 }
 $('index-emotion-mode').onchange=()=>{updateIndexEmotion(true);pendingKey=null;persist()};
+function normalizedControl(value){return value.trim().toLowerCase().replaceAll('_',' ').replace(/\s+/g,' ')}
+function higgsControlValue(key){
+ const input=$('higgs-'+key);if(!input)return '';
+ const value=normalizedControl(input.value);if(!value||value==='follow recording')return '';
+ return caps.controls.higgs[key].values.find(option=>normalizedControl(option)===value);
+}
+function unresolvedHiggsControls(){return caps?.backend==='higgs'?['emotion','prosody','style'].filter(key=>$('higgs-'+key)&&higgsControlValue(key)===undefined):[]}
+function suspendHiggsDirections(){for(const key of unresolvedHiggsControls()){suspendedHiggsDirections[key]=$('higgs-'+key).value;$('higgs-'+key).value=higgsSelectedControls[key]||'';}}
+function updateHiggsSuggestions(){
+ if(caps?.backend!=='higgs')return;
+ const llm=!!caps.limits.prompt_expansion?.enabled,enabled=llm&&$('prompt-expansion-enabled').checked;
+ for(const key of ['emotion','prosody','style']){
+  const input=$('higgs-'+key),button=$('higgs-'+key+'-suggest'),hint=$('higgs-'+key+'-hint');if(!button)continue;
+  const custom=higgsControlValue(key)===undefined;
+  if(!custom)higgsSelectedControls[key]=higgsControlValue(key);
+  button.hidden=!custom;button.disabled=!online||!enabled||!modelChoiceReady||busy||enhancing||uploading||submitting||changingModel;
+  input.setAttribute('aria-invalid',String(custom));
+  hint.textContent=custom?(!llm?'Custom wording needs the local LLM. Enable it at startup, or choose a matching option from the list.':!enabled?'Turn on Prompt expansion to suggest a control for this direction, or choose an option from the list.':'Custom direction: preview a supported '+key+' with Suggest control, then apply it before generating.'):'Search options or type a direction. Leave empty to follow the recording.';
+ }
+ if($('higgs-directions-notice'))$('higgs-directions-notice').hidden=!Object.keys(suspendedHiggsDirections).length;
+}
+function higgsControlPicker(key,spec){
+ const id='higgs-'+key,field=el('div',null,'control-field'),label=el('label',key[0].toUpperCase()+key.slice(1));label.htmlFor=id;
+ const wrapper=el('div',null,'control-picker'),input=el('input');input.id=id;input.type='text';input.maxLength=500;input.autocomplete='off';input.placeholder='Follow recording';
+ input.setAttribute('role','combobox');input.setAttribute('aria-autocomplete','list');input.setAttribute('aria-expanded','false');input.setAttribute('aria-controls',id+'-options');input.setAttribute('aria-describedby',id+'-hint');
+ const toggle=el('button','⌄','control-picker-toggle');toggle.type='button';toggle.setAttribute('aria-label','Show '+key+' options');toggle.setAttribute('aria-controls',id+'-options');toggle.setAttribute('aria-expanded','false');
+ const list=el('ul',null,'control-picker-options');list.id=id+'-options';list.hidden=true;list.setAttribute('role','listbox');list.setAttribute('aria-label',label.textContent+' options');
+ const items=[{value:'',label:'Follow recording'},...spec.values.map(value=>({value,label:value.replaceAll('_',' ')}))];let shown=[],active=-1;
+ function close(){list.hidden=true;input.setAttribute('aria-expanded','false');toggle.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant');active=-1;}
+ function highlight(){const options=[...list.querySelectorAll('[role="option"]')];options.forEach((node,index)=>node.setAttribute('aria-selected',String(index===active)));if(active>=0){input.setAttribute('aria-activedescendant',options[active].id);options[active].scrollIntoView({block:'nearest'})}else input.removeAttribute('aria-activedescendant');}
+ function choose(value){input.value=value;close();input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();close();}
+ function open(all=false){
+  const query=all?'':normalizedControl(input.value);shown=items.filter(item=>normalizedControl(item.label).includes(query));active=-1;list.replaceChildren();
+  shown.forEach((item,index)=>{const option=el('li',item.label);option.id=id+'-option-'+index;option.setAttribute('role','option');option.setAttribute('aria-selected','false');option.onpointerdown=event=>event.preventDefault();option.onclick=()=>choose(item.value);list.append(option)});
+  if(!shown.length)list.append(el('li','No matching controls. Preview a suggestion below.','control-picker-empty'));
+  list.hidden=false;input.setAttribute('aria-expanded','true');toggle.setAttribute('aria-expanded','true');input.removeAttribute('aria-activedescendant');
+ }
+ input.oninput=()=>open();input.onfocus=()=>open(!input.value||higgsControlValue(key)!==undefined);
+ input.onkeydown=event=>{
+  if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();if(list.hidden)open();if(shown.length){active=active<0?(event.key==='ArrowDown'?0:shown.length-1):(active+(event.key==='ArrowDown'?1:-1)+shown.length)%shown.length;highlight()}}
+  else if(event.key==='Enter'&&!list.hidden){event.preventDefault();if(active>=0)choose(shown[active].value);else if(shown.length===1)choose(shown[0].value);else close();}
+  else if(event.key==='Escape'&&!list.hidden){event.preventDefault();event.stopPropagation();close();}
+ };
+ toggle.onclick=()=>{if(list.hidden){input.focus();open(true)}else close()};
+ wrapper.addEventListener('focusout',event=>{if(!wrapper.contains(event.relatedTarget))close()});
+ const hint=el('p',null,'hint');hint.id=id+'-hint';
+ const suggest=el('button','Suggest control','secondary control-suggest');suggest.type='button';suggest.id=id+'-suggest';suggest.setAttribute('aria-label','Suggest '+key+' control');suggest.hidden=true;suggest.onclick=()=>previewGuidance(key);
+ wrapper.append(input,toggle,list);field.append(label,wrapper,hint,suggest);return field;
+}
 function buildPerformanceControls(){
+ higgsSelectedControls={};suspendedHiggsDirections={};
  $('performance-guidance').textContent=caps.limits.performance_guidance||'';
  $('performance-controls').replaceChildren();$('backend-presets').replaceChildren();
  $('pacing-settings').replaceChildren();
@@ -941,11 +1016,8 @@ function buildPerformanceControls(){
   const label=el('label','Delivery tags · one per line');label.htmlFor='fish-delivery-tags';const input=el('textarea');input.id=label.htmlFor;input.maxLength=244;input.placeholder='low voice';
   const field=el('div',null,'control-field');field.append(label,input,el('p','Up to four short directions. Brackets are added for you. Leave empty to follow the reference; acting can change the accent.','hint'));$('performance-controls').append(field);
  }
- if(caps.backend==='higgs')for(const key of ['emotion','prosody','style']){
-  const label=el('label',key[0].toUpperCase()+key.slice(1));label.htmlFor='higgs-'+key;const select=el('select');select.id=label.htmlFor;select.append(new Option('Follow recording',''));
-  for(const value of caps.controls.higgs[key].values)select.append(new Option(value.replaceAll('_',' '),value));
-  const field=el('div',null,'control-field');field.append(label,select);$('performance-controls').append(field);
- }
+ if(caps.backend==='higgs')for(const key of ['emotion','prosody','style'])$('performance-controls').append(higgsControlPicker(key,caps.controls.higgs[key]));
+ if(caps.backend==='higgs'){const notice=el('p','Custom directions are paused while Prompt expansion is off. The selected controls or Follow recording will be used. Turn it on to return to your drafts.','hint');notice.id='higgs-directions-notice';notice.hidden=true;$('performance-controls').append(notice);}
  if(caps.controls[caps.backend]?.top_p){
   const details=el('details'),summary=el('summary','Advanced sampling');details.append(summary);
   const fields=el('div',null,'sampling-fields control-stack');
@@ -979,7 +1051,10 @@ function restorePerformance(row){
  if($('punctuation-pauses')){$('punctuation-pauses').checked=options.punctuation_pauses??true;for(const key of ['sentence_pause_ms','comma_pause_ms'])$(key).value=options[key]??caps.controls[caps.backend][key].default;updatePacingControls();}
  if(caps.backend==='fish')$('fish-delivery-tags').value=(options.delivery_tags||[]).join('\n');
  if(caps.backend==='higgs'){
-  for(const key of ['emotion','prosody','style'])$('higgs-'+key).value=options[key]||'';
+  higgsSelectedControls={...Object.fromEntries(['emotion','prosody','style'].map(key=>[key,options[key]||''])),...row.higgs_selected_controls};
+  suspendedHiggsDirections={...row.higgs_suspended_directions};
+  for(const key of ['emotion','prosody','style'])$('higgs-'+key).value=row.higgs_direction_drafts?.[key]??options[key]??'';
+  if(!caps.limits.prompt_expansion?.enabled||!$('prompt-expansion-enabled').checked)suspendHiggsDirections();
   $('higgs-text-chunk-size').value=options.text_chunk_size??caps.controls.higgs.text_chunk_size.default;
  }
  if(caps.controls[caps.backend]?.top_p){$('model-top-p').value=options.top_p??caps.controls[caps.backend].top_p.default;$('model-top-k').value=options.top_k??caps.controls[caps.backend].top_k.default;}
@@ -993,6 +1068,7 @@ function restorePerformance(row){
 }
 function updatePerformancePreview(){
  updatePacingControls();
+ updateHiggsSuggestions();
  if(!caps||!['fish','higgs'].includes(caps.backend))return;
  let text=$('text').value;
  try{
@@ -1005,7 +1081,7 @@ function updatePerformancePreview(){
    text=tags.map(x=>'['+x+'] ').join('')+text;
   }else{
    const leading=text.match(/^\s*((?:<\|[^|>]+\|>\s*)+)/)?.[0]||'';let prefix='';
-   for(const category of ['emotion','prosody','style']){const value=$('higgs-'+category).value;if(value){if(leading.includes('<|'+category+':'))throw Error('Choose a structured or manual leading '+category+' directive, not both.');prefix+='<|'+category+':'+value+'|>';}}
+   for(const category of ['emotion','prosody','style']){const value=higgsControlValue(category);if(value===undefined)throw Error('Custom '+category+' direction: choose an option or preview and apply Suggest control before generating.');if(value){if(leading.includes('<|'+category+':'))throw Error('Choose a structured or manual leading '+category+' directive, not both.');prefix+='<|'+category+':'+value+'|>';}}
    if(prefix)text=prefix+' '+text;
   }
   $('rendered-preview').textContent=text;
@@ -1022,6 +1098,7 @@ $('apply-recommended').onclick=()=>{
  if(caps.backend==='chatterbox')$('chatterbox-delivery-preset').value='default';
  if(caps.backend==='fish')$('fish-delivery-tags').value='';
  if(caps.backend==='higgs'){
+  higgsSelectedControls={};suspendedHiggsDirections={};
   for(const key of ['emotion','prosody','style'])$('higgs-'+key).value='';
   $('higgs-text-chunk-size').value=scoped.text_chunk_size.default;
  }
@@ -1097,9 +1174,9 @@ const controlHelp={
  emotion_alpha:'How strongly IndexTTS blends the chosen emotion recording or mixture. Requires an emotion source; stronger settings may change the performance more.',
  'chatterbox-delivery-preset':'Starting combinations of Chatterbox expression and guidance. The more expressive option is experimental and may weaken the accent.',
  'fish-delivery-tags':'Up to four short acting cues, one per line. Brackets are added for you. Leave empty to follow the reference; extra acting can change its accent.',
- 'higgs-emotion':'An optional Higgs emotion for this take. Follow recording adds no emotion tag and is a useful baseline for keeping the reference performance.',
- 'higgs-prosody':'An optional Higgs control for speaking speed, pitch or expression. It guides the performance rather than setting an exact audio duration.',
- 'higgs-style':'An optional Higgs style: singing, shouting or whispering. Follow recording adds no style tag.',
+ 'higgs-emotion':'Search the supported emotions or type your own acting direction. Suggest control uses the local LLM to preview a recognized emotion; Apply confirms it. Empty follows the recording. Arbitrary text is never inserted as a Higgs tag.',
+ 'higgs-prosody':'Search speed, pitch and expression controls, or type a direction and preview a supported control with the local LLM. These guide performance rather than setting an exact duration.',
+ 'higgs-style':'Search singing, shouting and whispering, or type a style direction. Suggest control previews a supported style with the local LLM. Empty follows the recording; unsupported styles can return no suggestion.',
  'higgs-text-chunk-size':'The native runtime divides long text near this character budget, up to 1024. Smaller chunks need fewer audio frames per chunk, but may change pacing, expression and how global tags apply. Start with 1024; try 300–500 if longer text cannot finish.',
  'model-top-p':'How broad a range of likely next sounds the model considers. Lower values narrow the choices; higher values allow more variety.',
  'model-top-k':'Limits the number of likely next choices considered at each step. Start with the model’s default and change one sampling setting at a time.',

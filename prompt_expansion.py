@@ -32,7 +32,9 @@ def context(request,effective,backend):
                 delivery_context=request.emotion if not (request.voice_id or request.reference_id or request.preset_voice) else None)
 
 
-def plan(request,effective,backend,guidance=''):
+def plan(request,effective,backend,guidance='',higgs_control=None):
+    if higgs_control is not None and (backend!='higgs' or higgs_control not in HIGGS_CATALOG):
+        raise ValueError('A Higgs control suggestion requires the Higgs model and emotion, prosody or style.')
     if request.prompt_expansion_id:raise ValueError('Restore the original guidance before expanding again.')
     ctx=context(request,effective,backend);mode=ctx['mode']
     profile,spec=mode_spec(backend,mode,effective.clone_mode)
@@ -49,11 +51,13 @@ def plan(request,effective,backend,guidance=''):
             if '[' in request.text or (options and options.delivery_tags):raise ValueError('Keep existing Fish tags or clear them before requesting suggestions.')
             original={backend:{'delivery_tags':[]}}
         else:
-            if '<|' in request.text or (options and any(getattr(options,key) for key in HIGGS_CATALOG)):
-                raise ValueError('Keep existing Higgs tags or clear them before requesting suggestions.')
-            original={backend:{key:None for key in HIGGS_CATALOG}}
+            if '<|' in request.text:
+                raise ValueError('Remove manual Higgs tags from Words to speak before requesting suggestions. Selected Emotion, Prosody and Style controls can stay.')
+            original={backend:{key:getattr(options,key) if options else None for key in HIGGS_CATALOG}}
         prompt=dict(kind=backend,backend=backend,guidance=guidance,profile_spec=selected)
-        if backend=='higgs':prompt['allowed_values']=HIGGS_CATALOG
+        if backend=='higgs':
+            prompt['allowed_values']={higgs_control:HIGGS_CATALOG[higgs_control]} if higgs_control else HIGGS_CATALOG
+            if higgs_control:prompt['control']=higgs_control
         return ctx,original,prompt
     if backend not in ('voxcpm2','qwen3','moss'):raise ValueError('Prompt expansion is unsupported for this backend.')
     target='description' if mode=='design' else 'emotion'
@@ -95,9 +99,10 @@ def updates_for(prompt,original,completion):
         return {'fish':{'delivery_tags':FishOptions(delivery_tags=value['delivery_tags']).delivery_tags}}
     if set(value)!={'control','value'}:raise ValueError('Suggest one catalog control and value')
     control,selected=value['control'],value['value']
-    if control=='none' and selected is None:return {'higgs':{key:None for key in HIGGS_CATALOG}}
-    if control not in HIGGS_CATALOG or selected not in HIGGS_CATALOG[control]:raise ValueError('Unknown Higgs control')
-    return {'higgs':{key:selected if key==control else None for key in HIGGS_CATALOG}}
+    if control=='none' and selected is None:return original or {'higgs':{key:None for key in HIGGS_CATALOG}}
+    allowed=prompt.get('allowed_values',HIGGS_CATALOG)
+    if control not in allowed or selected not in allowed[control]:raise ValueError('Unknown or out-of-category Higgs control')
+    return {'higgs':{**original.get('higgs',{key:None for key in HIGGS_CATALOG}),control:selected}}
 
 
 def apply(request,updates):
@@ -114,8 +119,8 @@ def apply(request,updates):
     return result
 
 
-def expand(request,effective,backend,guidance='',root=ROOT,transcript=''):
-    ctx,original,prompt=plan(request,effective,backend,guidance)
+def expand(request,effective,backend,guidance='',root=ROOT,transcript='',higgs_control=None):
+    ctx,original,prompt=plan(request,effective,backend,guidance,higgs_control=higgs_control)
     folder=check_assets();python=check_runtime();started=time.monotonic()
     environment={**os.environ,'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1','TOKENIZERS_PARALLELISM':'false'}
     try:
@@ -145,6 +150,7 @@ def expand(request,effective,backend,guidance='',root=ROOT,transcript=''):
         message=('Higgs uses catalog controls rather than expanded prose. Compare this control with the original take.' if record['changed'] else
                  'No supported delivery control was suggested. Try an acting direction such as quietly amused, more expressive, or slower, or choose a native control yourself.')
         record['higgs']={'message':message+' Accent and voice identity come from the reference recording; there is no Higgs accent control.'}
+        if higgs_control:record['higgs']['control']=higgs_control
     record['llm'][backend]=prompt['profile_spec']
     target=validate_mount(Path(root)/'prompt-expansions'/f'{identity}.json');target.parent.mkdir(parents=True,exist_ok=True)
     atomic_json(target,record)

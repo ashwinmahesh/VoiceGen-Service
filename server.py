@@ -268,7 +268,8 @@ async def expand_voice_guidance(payload: ExpandVoiceGuidance):
     try:
         with request_context(payload.generation.model):
             effective,reference,transcript,info=prepare_generation(payload.generation)
-            future=manager.preview_expansion(payload.generation,effective,payload.guidance,transcript)
+            future=manager.preview_expansion(payload.generation,effective,payload.guidance,transcript,
+                higgs_control=payload.higgs.control if payload.higgs else None)
         return await asyncio.shield(asyncio.wrap_future(future))
     except BusyError as exc:raise HTTPException(409,str(exc)) from None
     except (ValueError,OSError,RuntimeError) as exc:raise HTTPException(422,str(exc)) from None
