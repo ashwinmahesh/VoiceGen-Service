@@ -24,6 +24,17 @@ let appliedExpansion=null,pendingExpansion=null,enhancing=false,expansionChoice=
 let catalogOffset = 0, searchTimer = null, catalogRequest = 0, refreshRequest=0, voiceEditor = null, voiceSaving = false;
 let collectionDeleteTarget=null,collectionChanging=false;
 let monitoredImmediate=false,higgsSelectedControls={},suspendedHiggsDirections={};
+const enabledPlaceholders=new WeakMap();
+function disabledPlaceholder(input,reason){
+ if(input.disabled){
+  if(!enabledPlaceholders.has(input))enabledPlaceholders.set(input,input.getAttribute('placeholder'));
+  input.placeholder=reason;
+ }else if(enabledPlaceholders.has(input)){
+  const original=enabledPlaceholders.get(input);
+  if(original===null)input.removeAttribute('placeholder');else input.placeholder=original;
+  enabledPlaceholders.delete(input);
+ }
+}
 const presets={natural:'Natural, conversational delivery with relaxed pacing.',joy:'Excited and joyful, with an audible smile and lively pacing.',sadness:'Quiet sadness and disappointment, speaking slowly with a trembling voice.',anger:'Angry and frustrated, with firm emphasis and a tense, forceful delivery.',fear:'Frightened and anxious, with a trembling voice and urgent, uneven pacing.',relief:'Deeply relieved, softening into warmth with a gentle exhale.',sarcasm:'Dry, understated sarcasm with deliberate pauses and restrained emphasis.',whisper:'A soft, intimate whisper, speaking gently and slowly.',custom:''};
 async function api(path,options={}){const response=await fetch(path,options);if(!response.ok){let body;try{body=await response.json()}catch{}throw Error(typeof body?.detail==='string'?body.detail:body?.detail?.[0]?.msg||`Request failed (${response.status})`)}return response.json()}
 function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
@@ -272,9 +283,11 @@ function updateCapabilities(){
  $('performance-controls').hidden=awaitingSourceModel;$('backend-settings').hidden=awaitingSourceModel;
  $('apply-recommended').closest('details').hidden=awaitingSourceModel;
  if(awaitingSourceModel){$('emotion-hint').textContent=$('accent-hint').textContent='Disabled until you choose a model that supports this voice source.';$('performance-guidance').hidden=true;$('inline-hint').hidden=true;$('expansion-profile').hidden=true;$('performance-controls').hidden=true;$('backend-settings').hidden=true;$('rendered-preview-field').hidden=true;$('license-notice').hidden=true;$('model-badge').textContent='Choose a model for this voice source';}
+ const followsPerformance=referenceMode&&caps.backend==='voxcpm2'&&['continuation','combined'].includes($('clone-mode').value);
+ const placeholders={emotion:awaitingSourceModel?'Choose a model first':followsPerformance?'Follows recorded delivery':structured?'Use model delivery controls':'Text directions unsupported',
+                     accent:awaitingSourceModel?'Choose a model first':followsPerformance?'Follows recorded accent':'Accent comes from recording'};
  for(const [id,hint] of [['emotion','emotion-hint'],['accent','accent-hint']]){
-  const input=$(id);if(!input.dataset.placeholder)input.dataset.placeholder=input.placeholder;
-  input.placeholder=input.disabled?$(hint).textContent:input.dataset.placeholder;
+  const input=$(id);disabledPlaceholder(input,placeholders[id]);
   input.title=input.disabled?$(hint).textContent:'';
  }
  $('emotion-preset').title=$('emotion-preset').disabled?$('emotion-hint').textContent:'';
@@ -314,6 +327,7 @@ function randomSeed(){let value;do{value=crypto.getRandomValues(new Uint32Array(
 function updateSeedMode(){
  const random=$('random-seed').checked;
  $('seed').disabled=random;$('seed-label').textContent=random?'Last generated seed':'Seed';
+ disabledPlaceholder($('seed'),'Automatic seed');
  $('seed').title=random?'Chosen automatically for each new generation. Turn off Random seed each generation to enter a fixed seed.':'';
  $('seed-mode-hint').textContent=random?'Each Generate click chooses a fresh random seed. Each option shows its actual seed; retrying the same submission keeps it.':'This seed stays fixed for comparisons or repeatable requests. Batch options use consecutive seeds.';
  $('new-seed').hidden=random;
@@ -538,9 +552,10 @@ $('pause-editor-form').onsubmit=async event=>{
  if(!pauseSpans.length){pauseError('Add at least one gap after reviewing the playback.');return}
  if(!$('pause-reviewed').checked){pauseError('Review every selected gap before creating a version.');return}
  const minimum=Number($('pause-minimum').value);if(!Number.isInteger(minimum)||minimum<100||minimum>5000){pauseError('Choose a total gap from 100 to 5000 milliseconds.');return}
- pauseSaving=true;for(const id of ['pause-create','pause-cancel','pause-add','pause-minimum','pause-output-dir','pause-reviewed'])$(id).disabled=true;renderPauseSpans();
+ pauseSaving=true;for(const id of ['pause-create','pause-cancel','pause-add','pause-minimum','pause-output-dir','pause-reviewed'])$(id).disabled=true;
+ for(const id of ['pause-minimum','pause-output-dir'])disabledPlaceholder($(id),'Saving audio…');renderPauseSpans();
  try{pausePendingKey=pausePendingKey||crypto.randomUUID();const row=await post('/api/artifacts/'+pauseSource.id+'/pauses',{spans:pauseSpans,reviewed:true,minimum_gap_ms:minimum,output_dir:$('pause-output-dir').value.trim()||null,idempotency_key:pausePendingKey});pausePendingKey=null;$('pause-editor').close();showResult(row);await refresh();announce('Separate pause-adjusted version ready. Original recording preserved.')}
- catch(exc){pauseError(exc.message)}finally{pauseSaving=false;for(const id of ['pause-create','pause-cancel','pause-add','pause-minimum','pause-output-dir','pause-reviewed'])$(id).disabled=false;renderPauseSpans()}
+ catch(exc){pauseError(exc.message)}finally{pauseSaving=false;for(const id of ['pause-create','pause-cancel','pause-add','pause-minimum','pause-output-dir','pause-reviewed'])$(id).disabled=false;for(const id of ['pause-minimum','pause-output-dir'])disabledPlaceholder($(id),'');renderPauseSpans()}
 };
 $('reuse').onclick=()=>{if(latest){restore(latest);$('text').focus()}};
 function renderCandidates(batch){
@@ -1066,7 +1081,8 @@ function updatePacingControls(){
  if(!$('punctuation-pauses'))return;
  const available=pacingAvailable();$('punctuation-pauses').disabled=!available;
  const reason=!available?(mode==='design'?'Disabled because this model uses whole-line delivery for voice design. Record lines with a saved voice or recording to configure pauses.':'Disabled because manual Fish tags use whole-line delivery. Remove the manual tags to configure punctuation pauses.'):!$('punctuation-pauses').checked?'Disabled because Longer punctuation pauses is off. Turn it on to edit sentence and comma waits.':'';
- for(const key of ['sentence_pause_ms','comma_pause_ms']){$(key).disabled=!!reason;$(key).title=reason;}
+ const placeholder=!available?(mode==='design'?'Design mode':'Manual tags active'):'Enable pauses';
+ for(const key of ['sentence_pause_ms','comma_pause_ms']){$(key).disabled=!!reason;$(key).title=reason;disabledPlaceholder($(key),placeholder);}
  $('pacing-disabled-hint').textContent=reason;$('pacing-disabled-hint').hidden=!reason;
 }
 function restorePerformance(row){

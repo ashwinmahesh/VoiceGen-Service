@@ -75,7 +75,7 @@ The optional prompt expander uses **Qwen3.5-2B, a 4-bit local language model**. 
 
 Expansion follows different rules for each supported model and mode. The studio shows the original and expanded guidance. The LLM receives written voice and delivery directions, while dialogue, reference transcripts, and recordings stay out of its input. Suggestions still need listening checks; extra wording does not always produce a better performance.
 
-With a saved or uploaded voice in **Vox Auto**, enter an Emotion & delivery direction to preview its expansion. Auto then uses flexible voice conditioning. With no new directions and an exact transcript, Auto follows the recorded performance; the preview explains that choice. Disabled fields show why they are unavailable and how to enable a supported alternative.
+With a saved or uploaded voice in **Vox Auto**, enter an Emotion & delivery direction to preview its expansion. Auto then uses flexible voice conditioning. With no new directions and an exact transcript, Auto follows the recorded performance; the preview explains that choice. Empty disabled fields show a short reason inside the box; helper text explains how to enable a supported alternative. Existing typed values are kept.
 
 For **Higgs**, enter a short acting direction and select **Suggest delivery control**. The LLM chooses one supported Emotion, Prosody, or Style setting; it does not write a longer prose prompt. For example, “more expressive intonation” can suggest `expressive_high`. The preview shows what you typed and makes **No change suggested** explicit. Accent comes from the reference recording, and can still drift.
 
