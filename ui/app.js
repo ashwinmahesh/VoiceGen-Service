@@ -470,6 +470,8 @@ function renderCards() {
   for (const row of rows) {
     const card = el('article', null, 'card');
     card.dataset.collectionId=row.id;card.dataset.collectionKind=isVoices?'voices':'outputs';
+    card.dataset.deleted=String(deleted);
+    if(deleted){const badge=el('span',null,'deleted-badge');badge.append(queueIcon('remove'),el('span','Deleted'));card.append(badge)}
     const head = el('div', null, 'card-title');
     head.append(el('strong', isVoices ? row.name : new Date(row.created_at).toLocaleString()),
       el('span', `${row.duration.toFixed(1)}s`, 'tiny'));
