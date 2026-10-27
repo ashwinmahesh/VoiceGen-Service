@@ -18,7 +18,7 @@ SHARED += ['setup_lifecycle.py','tests/test_setup_lifecycle.py','tests/test_star
 SHARED += ['backend_protocol.py','backend_worker.py','runtime_engine.py','model_readiness.py','tests/test_runtime_models.py']
 SHARED += ['resource_probe.py','resource_schemas.py','observability.py','tests/test_observability.py','ui/observability.html','ui/observability.css','ui/observability.js','docs/observability.md']
 SHARED += ['ui/icon.svg','ui/apple-touch-icon.png','ui/favicon.ico']
-SHARED += ['job_logs.py','tests/test_job_logs.py','tests/test_ui_pages.py']
+SHARED += ['job_logs.py','tests/test_job_logs.py','tests/test_ui_pages.py','tests/test_higgs_limits.py']
 SHARED += [str(path.relative_to(PROJECT_ROOT)) for folder in ('backends','third_party')
            for path in sorted((PROJECT_ROOT/folder).rglob('*')) if path.is_file()]
 

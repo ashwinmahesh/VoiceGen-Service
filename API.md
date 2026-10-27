@@ -209,7 +209,7 @@ Choose at most one of `voice_id`, `reference_id`, or `preset_voice`. Available s
 | Field | Default | Meaning and limits |
 | --- | --- | --- |
 | `seed` | `42` | Integer from 0–4,294,967,295. Selects random variation. |
-| `max_tokens` | `1000` | Output limit, generally 50–2,000. Chatterbox is fixed at 1,000; IndexTTS is capped at 1,500. This is not a requested audio duration. |
+| `max_tokens` | `1000` | API output limit, generally 50–2,000. Higgs's UI/recommended setting is 2,000. Chatterbox is fixed at 1,000; IndexTTS is capped at 1,500. This is not a requested audio duration. |
 | `temperature` | Model-dependent | Sampling variation where supported. See [model settings](#model-settings). Vox does not accept it. |
 | `generate_immediately` | `false` | Run ahead of normal waiting work, without interrupting the current job. |
 | `idempotency_key` | Omitted | Retry key, 1–128 characters. Reuse only for an identical request. |
@@ -463,11 +463,17 @@ Requires a reference voice and exact transcript. Start without acting tags for a
 | `higgs.style` | None | `singing`, `shouting`, `whispering`. |
 | `higgs.top_p` | `0.8` | 0.1–1. |
 | `higgs.top_k` | `30` | Integer 1–100. |
+| `higgs.text_chunk_size` | `1024` | 80–1,024 characters for native long-text chunking. Smaller chunks can change pacing and expression. |
+| `max_tokens` | API: `1000`; UI/recommended: `2000` | 50–2,000 generated audio tokens per text chunk. Explicit values and admitted jobs keep their limits. |
 | `temperature` | `0.8` | 0.05–2. |
 
 The service renders these controls before the unchanged dialogue. Manual local tags such as `<|prosody:pause|>` and `<|prosody:long_pause|>` can remain in `text`; they do not promise exact timings. Do not combine a structured control with a manual leading directive of the same category.
 
 Top-level prose `emotion`/`accent` fields and description-based voice design are unsupported. Native generation loads and releases the model per job, so `model_loaded: false` while idle is expected.
+
+**If a take reaches `max_tokens` before EOC:** the model did not produce its end-of-chunk marker within that audio budget. Different seeds can hit different lengths. Incomplete audio is not published. Keep any successful options, then submit one replacement with a new key and `"max_tokens":2000`. For longer passages, consider `"higgs":{"text_chunk_size":400}` or shorter dialogue; native chunking can change delivery. This reduces one cause of failure and cannot guarantee the model will stop correctly.
+
+The UI's **Use higher audio limit** action loads the failed option's settings with a 2,000-token limit and one option selected for review. **Retry this option** keeps its original frozen limit. Existing saved UI drafts keep their chosen limit; **Apply recommended defaults** selects 2,000. Capabilities distinguish `controls.max_tokens.default` (API), `ui_default`, and `recommended`.
 
 ### VoxCPM2 — `voxcpm2`
 

@@ -173,6 +173,8 @@ class JobManager:
             options=getattr(request,backend)
             if options is not None and backend not in exclusions:
                 exclusions[backend]={key for key in PACING_FIELDS if getattr(options,key) is None}
+        if request.higgs is not None and 'higgs' not in exclusions and request.higgs.text_chunk_size is None:
+            exclusions['higgs']={'text_chunk_size'}
         return hashlib.sha256(request.model_dump_json(exclude=exclusions).encode()).hexdigest()
 
     def existing(self, request):
@@ -291,7 +293,10 @@ class JobManager:
         if request.model is None:excluded.add('model')
         if request.candidate_variation=='auto':excluded.add('candidate_variation')
         if request.candidate_use_llm:excluded.add('candidate_use_llm')
-        return hashlib.sha256(request.model_dump_json(exclude=excluded).encode()).hexdigest()
+        exclusions={key:True for key in excluded}
+        if request.higgs is not None and request.higgs.text_chunk_size is None:
+            exclusions['higgs']={'text_chunk_size'}
+        return hashlib.sha256(request.model_dump_json(exclude=exclusions).encode()).hexdigest()
 
     def public_candidates(self, batch):
         jobs = [self.public(row) for row in batch['jobs']]

@@ -70,6 +70,7 @@ class HiggsOptions(BaseModel):
     style: Literal['singing','shouting','whispering'] | None = None
     top_p: float | None = Field(default=None,ge=.1,le=1)
     top_k: int | None = Field(default=None,ge=1,le=100)
+    text_chunk_size: int | None = Field(default=None,ge=80,le=1024,description='Native text chunk size in characters. Smaller chunks reduce the per-chunk audio budget needed, but can change delivery.')
 
 
 PACING_FIELDS=set(PacingOptions.model_fields)
@@ -109,7 +110,7 @@ class Generation(BaseModel):
     emotion_alpha: float | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0, le=1)
     duration_factor: float | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0.7, le=1.5)
     interval_silence: int | None = Field(default=None, json_schema_extra={'deprecated':True}, ge=0, le=2000)
-    max_tokens: int = Field(default=1000, ge=50, le=2000)
+    max_tokens: int = Field(default=1000, ge=50, le=2000,description='Per-chunk audio budget. The API defaults to 1000; Higgs UI/recommended settings use 2000. Explicit values are honored.')
     output_dir: str | None = Field(default=None, max_length=4096)
     generate_immediately: bool = False
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)

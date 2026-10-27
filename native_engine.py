@@ -36,7 +36,7 @@ class NativeEngine:
               '--backend','metal','--task','vdes' if moss else 'clon','--text',rendered_text(request,PROFILE['backend']),
               '--out',str(destination),'--metrics','--temperature',str(request.temperature),
               '--request-option','seed='+str(request.seed if not moss or request.seed<2**31 else request.seed-2**32),
-              '--text-chunk-size','1000' if moss else '1024']
+              '--text-chunk-size','1000' if moss else str(request.higgs.text_chunk_size if request.higgs and request.higgs.text_chunk_size is not None else 1024)]
         if moss:
             args+=['--language',request.language,'--request-option','instruct='+moss_instructions(request),
                    '--request-option','max_frames='+str(request.max_tokens)]
@@ -60,7 +60,15 @@ class NativeEngine:
             with log.open('w') as stream:
                 result=subprocess.run(['/usr/bin/time','-l',*args],stdout=stream,stderr=subprocess.STDOUT,
                                       cwd=PROJECT_ROOT,check=False,pass_fds=reservation_descriptors())
-            if result.returncode:raise RuntimeError(f'Native runtime exited {result.returncode}; inspect {log}')
+            if result.returncode:
+                with log.open('rb') as stream:
+                    stream.seek(max(0,log.stat().st_size-16384));tail=stream.read(16384).decode(errors='replace')
+                limit=re.search(r'Higgs TTS generation reached max_tokens \((\d+)\) before EOC',tail)
+                if PROFILE['backend']=='higgs' and limit:
+                    raise RuntimeError(f'Higgs TTS generation reached max_tokens ({limit[1]}) before EOC. '
+                        'This take did not finish. Use a higher Audio limit in Advanced settings, or a smaller Higgs text chunk size. '
+                        f'Completed options are kept. Native log: {log}')
+                raise RuntimeError(f'Native runtime exited {result.returncode}; inspect {log}')
             data,sr=sf.read(temporary,dtype='float32')
             if data.ndim!=1 or not data.size or not np.isfinite(data).all() or float(np.max(np.abs(data)))<1e-5:
                 raise RuntimeError('Native runtime returned invalid/silent audio')

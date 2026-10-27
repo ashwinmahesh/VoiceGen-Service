@@ -37,6 +37,8 @@ The pinned Fish 8-bit conversion quantizes embeddings and fast-decoder layers ex
 
 Fish and Higgs do not expose natural-language description design through this wrapper. Select a reference and exact transcript. Keep inline tags explicitly in text: Fish `[whisper]`, `[pause]`, `[with strong accent]`; Higgs `<|emotion:amusement|>`, `<|prosody:expressive_high|>`, `<|prosody:pause|>`, `<|prosody:long_pause|>`. Higgs sound events also require matching written onomatopoeia. Text is not automatically rewritten or embellished. The wrapper offers one reference per request, even though upstream Higgs supports more. No backend here exposes the upstream streaming transport; all return durable WAV jobs.
 
+Higgs's UI/recommended audio budget is 2,000 tokens per native text chunk; API omission retains 1,000. `higgs.text_chunk_size` controls the native `--text-chunk-size` argument (80–1,024 characters, default 1,024). A missing EOC at the cap returns an actionable failure read from a bounded native-log tail, removes temporary output, and preserves successful batch siblings. The wrapper does not enable `allow_incomplete_generation` or automatically retry with a larger budget.
+
 ## Installation and storage
 
 Prerequisites: Apple Silicon macOS and Git/Make; Higgs and MOSS also need Xcode command-line tools for the native C++ build. Setup chooses Python automatically. Use `VENV` for another internal speech environment location. Setup installs a complete pinned runtime lock with `--no-deps`, then checks dependencies; this prevents an upstream unpinned Git dependency from overriding the explicit Perth pin. The locks target macOS arm64 and are not CUDA/Linux recipes.

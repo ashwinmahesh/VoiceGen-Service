@@ -40,7 +40,11 @@ def capabilities():
     if backend in ('fish','higgs'):
         caps.controls[backend]={'top_p':{'default':.7 if backend=='fish' else .8,'min':.1,'max':1},'top_k':{'default':30,'min':1,'max':100}}
         if backend=='fish':caps.controls[backend]['delivery_tags']={'max_items':4,'max_characters':60,'examples':['low voice','quietly amused']}
-        else:caps.controls[backend].update({key:{'values':values} for key,values in HIGGS_CATALOG.items()});caps.limits['control_catalog_source']=HIGGS_CATALOG_SOURCE
+        else:
+            caps.controls[backend].update({key:{'values':values} for key,values in HIGGS_CATALOG.items()})
+            caps.controls[backend]['text_chunk_size']={'default':1024,'min':80,'max':1024}
+            caps.controls['max_tokens'].update(ui_default=2000,recommended=2000)
+            caps.limits['control_catalog_source']=HIGGS_CATALOG_SOURCE
     if backend=='chatterbox':
         caps.controls[backend]['delivery_candidates']=[{'name':'Recommended · provisional','exaggeration':.3,'cfg_weight':.5,'temperature':.8},{'name':'Upstream neutral','exaggeration':.5,'cfg_weight':.5,'temperature':.8},{'name':'More deliberate','exaggeration':.5,'cfg_weight':.3,'temperature':.8},{'name':'More expressive · experimental','exaggeration':.7,'cfg_weight':.3,'temperature':.8}]
     if backend=='indextts':caps.controls[backend]['delivery_candidates']=[{'name':'Slightly slower','duration_factor':1.1,'experimental':True}]
@@ -243,6 +247,7 @@ def validate_additional_controls(request,caps):
     if backend in ('fish','higgs'):
         options=getattr(request,backend) or MODEL_OPTIONS[backend]()
         values=options.model_dump();values['top_p']=values['top_p'] if values['top_p'] is not None else caps.controls[backend]['top_p']['default'];values['top_k']=values['top_k'] if values['top_k'] is not None else 30
+        if backend=='higgs' and values['text_chunk_size'] is None:values['text_chunk_size']=caps.controls[backend]['text_chunk_size']['default']
         effective=effective.model_copy(update={backend:MODEL_OPTIONS[backend](**values)})
         from performance_controls import rendered_text
         rendered_text(effective,backend)

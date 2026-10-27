@@ -73,6 +73,8 @@ To create a new voice from a description, choose a set-up VoxCPM2, Qwen3-TTS, or
 6. **Choose 1–5 options** and select **Generate speech**. The default is two. With Higgs or another recorded voice, these are alternative takes of the same speaker. Supported voice-design modes can explore different descriptions.
 7. **Listen and save.** The listening room shows elapsed time, including waiting, and keeps the completed duration after a reload. Download a take or choose **Save voice** to reuse it for more lines. Complete takes of at most 30 seconds automatically supply their spoken line as the saved transcript, without performance tags. Longer or potentially cut-off takes need the exact words in the saved excerpt.
 
+For Higgs, new UI settings use a **2,000-token Audio limit**. Existing saved settings keep their value; use **Advanced settings → Apply recommended defaults** to update them. If one option reports “reached max_tokens before EOC,” its audio did not finish. Keep the successful option and choose **Use higher audio limit** on the failed card to prepare one replacement. Retry alone keeps the old limit. For longer passages, a smaller **Higgs text chunk size**, such as 400 characters, can reduce the budget needed per chunk; it can also change delivery.
+
 Prompt expansion uses the separate local Qwen3.5-2B LLM, with rules tailored to each speech model. It sees written voice and delivery directions, not your dialogue, reference transcript, or audio. Some modes do not support it. See [voice quality tips](VOICE_QUALITY.md) for choosing references and balancing expression against accent and voice consistency.
 
 Open **Collection** for generated History and the saved voice library. Name, describe, tag, and search your voices there. **Upload voice** imports a recording directly into the library.
@@ -116,6 +118,7 @@ curl --fail-with-body http://localhost:5743/api/generate \
   -d '{
     "voice_id": "VOICE_ID_HERE",
     "text": "Welcome home. Sit, please.",
+    "max_tokens": 2000,
     "seed": 42,
     "generate_immediately": true,
     "idempotency_key": "quickstart-line-1"

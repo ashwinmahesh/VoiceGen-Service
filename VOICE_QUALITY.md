@@ -13,7 +13,7 @@ Numbers below mean temperature / top-p / top-k unless stated otherwise. API over
 | `chatterbox` | Exaggeration .3, CFG .5, temperature .8 | Conservative **provisional** Original-model character default. Upstream neutral .5/.5 remains selectable. Lower CFG .3 is a separate pacing experiment; stronger exaggeration is opt-in. |
 | `indextts` | Follow recording, duration factor 1, temperature .8, internal segment gap 400 ms | Preserve the original speaker anchor; no forced emotion vector or emotion audio. Segment gaps are not a guarantee about every sentence boundary. |
 | `fish` | .7 / .7 / 30, no delivery tags | Exact reference transcript and a recording with the desired accent. Short structured tags and supported local bracket tags are optional. |
-| `higgs` | .8 / .8 / 30, no emotion/prosody/style tags | Exact reference transcript. Keep the baseline identity before experimenting with one official control; do not stack strong global acting by default. |
+| `higgs` | .8 / .8 / 30, no emotion/prosody/style tags; UI audio limit 2,000 | Exact reference transcript. Keep the baseline identity before experimenting with one official control; do not stack strong global acting by default. |
 | `moss` | Audio sampler 1.5 / .6 / 50, repetition penalty 1.1 | VoiceGenerator designs from an audible description in English or Chinese. A description and repeated seed do not lock the speaker across different lines. |
 
 For Vox `auto`, requested metadata retains `auto`; effective metadata and the durable queue freeze the concrete mode before execution. Existing queued reference jobs are not upgraded. Historical omitted-mode keyed retries recover their old jobs through narrowly versioned compatibility checks. New auto requests and explicit reference requests have distinct fingerprints. Other backends resolve auto to reference without acquiring Vox conditioning capabilities.
@@ -21,6 +21,8 @@ For Vox `auto`, requested metadata retains `auto`; effective metadata and the du
 In the UI and API, Auto follows the recording when new emotion/accent directions are empty. The fields remain editable: entering new directions resolves Auto to flexible reference conditioning. Combined and Continue performance disable those fields, with a lighter grey background and an explanation. No private voice or character preset is shipped.
 
 Higgs exposes its native Emotion, Prosody and Style selectors in the delivery section. Its reference recording supplies the accent cue; it has no free-text accent control here, and the accent can still drift. Keep an exact saved transcript and compare the default Follow recording settings with one acting control at a time. A UI or transcript fix alone does not establish improved accent fidelity.
+
+Higgs can also hit its audio budget without generating EOC, its end marker. The pinned runtime defaults to 2,048 tokens; this service keeps its existing 2,000-token maximum and uses 2,000 for new UI settings. API requests retain the 1,000-token default; explicitly send `max_tokens:2000` for the recommended larger budget. Higher limits allow a longer take rather than improving quality, and do not guarantee EOC. The default native text chunk size remains 1,024 characters to preserve existing short-line delivery. `higgs.text_chunk_size` can be reduced for longer passages, with possible changes in pacing and how acting tags apply across chunks. Incomplete output remains a failure; successful sibling options stay available.
 
 ## Why these choices
 

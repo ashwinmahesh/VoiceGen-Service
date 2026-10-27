@@ -16,6 +16,8 @@ Screenshots use benign demonstration records and fake inference; displayed timin
 
 An elapsed timer follows each request through waiting and generation. Reference transcripts stay with saved voices; you can save an edit directly or let Generate save it before submitting. Higgs shows its Emotion, Prosody, and Style controls in the delivery section, with accent supplied by the reference recording.
 
+Higgs starts new UI settings with a 2,000-token audio limit. If one option cannot finish within its limit, the others stay available; the failed card can prepare a single replacement with a higher limit. Advanced settings also offer native text chunk size for longer passages.
+
 **Design a voice** stays visible when the current model needs a recording, such as Higgs. Open it and choose a set-up VoxCPM2, Qwen3-TTS, or MOSS VoiceGenerator from the model menu. If none is set up, the tab stays disabled and its tooltip lists those alternatives.
 
 ![Full Generate page with Higgs performance controls and audio playback](docs/images/studio-page.jpg)

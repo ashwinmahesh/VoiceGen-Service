@@ -155,7 +155,10 @@ function settings(){
    if(options.emotion_reference_id||options.emotion_vector)options.emotion_alpha=Number($('emotion_alpha').value);
  }
  if(caps?.backend==='fish'){options.delivery_tags=$('fish-delivery-tags').value.split('\n').map(x=>x.trim()).filter(Boolean);}
- if(caps?.backend==='higgs')for(const key of ['emotion','prosody','style'])if($('higgs-'+key).value)options[key]=$('higgs-'+key).value;
+ if(caps?.backend==='higgs'){
+  for(const key of ['emotion','prosody','style'])if($('higgs-'+key).value)options[key]=$('higgs-'+key).value;
+  options.text_chunk_size=Number($('higgs-text-chunk-size').value);
+ }
  if(modelControls.top_p){options.top_p=Number($('model-top-p').value);options.top_k=Number($('model-top-k').value);}
  if(modelControls.punctuation_pauses){options.punctuation_pauses=$('punctuation-pauses').checked&&pacingAvailable();for(const key of ['sentence_pause_ms','comma_pause_ms'])options[key]=Number($(key).value);}
  if(Object.keys(options).length)result[caps.backend]=options;
@@ -184,6 +187,7 @@ function updateCapabilities(){
  $('language-field').hidden=caps.languages.length<2;
  $('text').maxLength=caps.limits.text_characters;
  $('max-tokens-field').hidden=!!caps.limits.max_tokens_fixed;
+ $('higgs-chunk-field').hidden=caps.backend!=='higgs';
  $('index-emotion').hidden=!caps.controls[caps.backend]?.emotion_vector;
  $('inline-hint').hidden=!caps.limits.inline_controls;
  $('inline-hint').textContent=caps.backend==='fish'?'Manual local tags such as [whisper] and [pause] remain available. Delivery tags guide performance; audition accent retention.':caps.backend==='higgs'?'Manual local tokens such as <|prosody:pause|> and <|prosody:long_pause|> remain available. They do not specify exact milliseconds.':'';
@@ -426,6 +430,12 @@ function renderCandidates(batch){
    download.href=job.result.audio_url+'?download=true';download.download='';actions.append(select,save,download);card.append(actions);
   }else if(job.status==='error'&&!job.paused&&job.backend===caps?.backend){
    const retry=el('button','Retry this option','secondary');retry.type='button';retry.onclick=async()=>{try{await post('/api/jobs/'+job.id+'/retry',{});watchCandidates(batch.id)}catch(exc){error(exc.message)}};card.append(retry);
+   if(job.backend==='higgs'&&/reached max_tokens.*before EOC/.test(job.error||'')){
+    card.append(el('p','The take stopped before its end marker. Retry keeps the same limit. Use a higher Audio limit or reduce Higgs text chunk size in Advanced settings. Completed options remain available.','hint'));
+    if(job.requested.max_tokens<caps.controls.max_tokens.max){
+     const higher=el('button','Use higher audio limit','secondary');higher.type='button';higher.onclick=()=>{restore({...job.requested,backend:job.backend,max_tokens:caps.controls.max_tokens.max,candidate_count:1});clearExpansion();persist();$('max-tokens').closest('details').open=true;$('max-tokens').focus();announce('Failed option loaded with a higher audio limit. Review the settings and generate one replacement take.');};card.append(higher);
+    }
+   }
   }
   if(previous)previous.element.replaceWith(card);else $('candidate-cards').append(card);
   candidateCards.set(job.id,{signature,element:card});
@@ -751,7 +761,7 @@ async function selectVoiceModel(backend){
   $('preset-voice').replaceChildren(...caps.presets.map(x=>new Option(`${x.name} · ${x.language}`,x.id)));
   $('steering-emotion').replaceChildren(new Option('None',''));
   for(const emotion of caps.extensions?.emotion_steering?.emotions||[])$('steering-emotion').append(new Option(emotion[0].toUpperCase()+emotion.slice(1),emotion));
-  $('settings-hint').textContent=(caps.limits.max_tokens_fixed?'This upstream Chatterbox API uses a fixed 1000-token ceiling. ':caps.backend==='moss'?'The audio-frame ceiling can be raised by the upstream text-derived minimum. ':'The audio token limit is a safety cap. Reaching it can cut a take short. ')+(caps.limits.memory_note||'A matching seed alone does not lock a voice.');
+  $('settings-hint').textContent=(caps.limits.max_tokens_fixed?'This upstream Chatterbox API uses a fixed 1000-token ceiling. ':caps.backend==='higgs'?'Higgs recommends 2,000 audio tokens per text chunk. If a take cannot finish before this cap, it fails without publishing incomplete audio. Increase the limit or reduce text chunk size. ':caps.backend==='moss'?'The audio-frame ceiling can be raised to its text-derived minimum. ':'The audio token limit is a safety cap. Reaching it can cut a take short. ')+(caps.limits.memory_note||'A matching seed alone does not lock a voice.');
   const notice=caps.models[caps.backend];$('license-notice').hidden=!notice?.notice;
   if(notice?.notice){$('license-text').textContent=notice.notice;$('license-link').href=notice.license_url;}
   buildBackendSettings();buildPerformanceControls();updateCapabilities();await refresh();
@@ -777,7 +787,9 @@ function buildBackendSettings(){
   const field=el('div',null,'control-field');field.id=key+'-field';field.append(label,input);$('backend-settings').append(field);
  }
  for(const key of ['steps','guidance','temperature'])if(caps.controls[key])$(key).value=caps.controls[key].default;
- for(const option of $('max-tokens').options){option.disabled=Number(option.value)>caps.controls.max_tokens.max;if(caps.backend==='moss')option.textContent=option.value+' audio frames'}
+ for(const option of $('max-tokens').options){option.disabled=Number(option.value)>caps.controls.max_tokens.max;option.textContent=option.value+(caps.backend==='moss'?' audio frames':option.value==='160'?' tokens · short test':' audio tokens')}
+ $('max-tokens').value=String(caps.controls.max_tokens.ui_default??caps.controls.max_tokens.default);
+ if(caps.backend==='higgs')$('higgs-text-chunk-size').value=caps.controls.higgs.text_chunk_size.default;
 
 }
 $('emotion-reference').onchange=async()=>{
@@ -862,7 +874,10 @@ function restorePerformance(row){
  const options=row[caps.backend]||{};
  if($('punctuation-pauses')){$('punctuation-pauses').checked=options.punctuation_pauses??true;for(const key of ['sentence_pause_ms','comma_pause_ms'])$(key).value=options[key]??caps.controls[caps.backend][key].default;updatePacingControls();}
  if(caps.backend==='fish')$('fish-delivery-tags').value=(options.delivery_tags||[]).join('\n');
- if(caps.backend==='higgs')for(const key of ['emotion','prosody','style'])$('higgs-'+key).value=options[key]||'';
+ if(caps.backend==='higgs'){
+  for(const key of ['emotion','prosody','style'])$('higgs-'+key).value=options[key]||'';
+  $('higgs-text-chunk-size').value=options.text_chunk_size??caps.controls.higgs.text_chunk_size.default;
+ }
  if(caps.controls[caps.backend]?.top_p){$('model-top-p').value=options.top_p??caps.controls[caps.backend].top_p.default;$('model-top-k').value=options.top_k??caps.controls[caps.backend].top_k.default;}
  if(caps.backend==='indextts'){
   const vector=options.emotion_vector||row.emotion_vector,reference=options.emotion_reference_id||row.emotion_reference_id;
@@ -896,12 +911,16 @@ function updatePerformancePreview(){
 $('apply-recommended').onclick=()=>{
  if(!caps)return;
  clearExpansion();
+ $('max-tokens').value=String(caps.controls.max_tokens.ui_default??caps.controls.max_tokens.default);
  for(const key of ['steps','guidance','temperature'])if(caps.controls[key])$(key).value=caps.controls[key].default;
  const scoped=caps.controls[caps.backend]||{};
  for(const key of ['exaggeration','cfg_weight','duration_factor','interval_silence'])if(scoped[key])$(key).value=scoped[key].default;
  if(caps.backend==='chatterbox')$('chatterbox-delivery-preset').value='default';
  if(caps.backend==='fish')$('fish-delivery-tags').value='';
- if(caps.backend==='higgs')for(const key of ['emotion','prosody','style'])$('higgs-'+key).value='';
+ if(caps.backend==='higgs'){
+  for(const key of ['emotion','prosody','style'])$('higgs-'+key).value='';
+  $('higgs-text-chunk-size').value=scoped.text_chunk_size.default;
+ }
  if(scoped.top_p){$('model-top-p').value=scoped.top_p.default;$('model-top-k').value=scoped.top_k.default;}
  if(scoped.punctuation_pauses){$('punctuation-pauses').checked=true;for(const key of ['sentence_pause_ms','comma_pause_ms'])$(key).value=scoped[key].default;updatePacingControls();}
  if(caps.backend==='indextts'){$('index-emotion-mode').value='follow';updateIndexEmotion();}
@@ -975,6 +994,7 @@ const controlHelp={
  'higgs-emotion':'An optional Higgs emotion for this take. Follow recording adds no emotion tag and is a useful baseline for keeping the reference performance.',
  'higgs-prosody':'An optional Higgs control for speaking speed, pitch or expression. It guides the performance rather than setting an exact audio duration.',
  'higgs-style':'An optional Higgs style: singing, shouting or whispering. Follow recording adds no style tag.',
+ 'higgs-text-chunk-size':'The native runtime divides long text near this character budget, up to 1024. Smaller chunks need fewer audio frames per chunk, but may change pacing, expression and how global tags apply. Start with 1024; try 300–500 if longer text cannot finish.',
  'model-top-p':'How broad a range of likely next sounds the model considers. Lower values narrow the choices; higher values allow more variety.',
  'model-top-k':'Limits the number of likely next choices considered at each step. Start with the model’s default and change one sampling setting at a time.',
  'punctuation-pauses':()=>caps?.backend==='moss'?'Ask MOSS for longer sentence and comma pauses in one complete take. The timings are approximate targets, not measured inserted silence.':'Generate separate phrases with the same voice and add silence at punctuation. Turn off for continuous delivery; phrase generation can change the flow.',
