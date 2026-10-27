@@ -39,9 +39,11 @@ function clearExpansion(){appliedExpansion=null;pendingExpansion=null;updateProm
 let generationClock=null;
 function elapsedTime(milliseconds){const seconds=Math.max(0,Math.floor(milliseconds/1000)),minutes=Math.floor(seconds/60);return minutes>=60?`${Math.floor(minutes/60)}:${String(minutes%60).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`:`${minutes}:${String(seconds%60).padStart(2,'0')}`}
 function updateElapsed(){
- const target=$('elapsed');target.hidden=!generationClock;if(!generationClock)return;
- target.textContent=`Elapsed ${elapsedTime((generationClock.end??Date.now())-generationClock.start)} · ${generationClock.label}`;
- target.title='Time since this request was accepted, including time waiting in the queue.';
+ for(const target of document.querySelectorAll('[data-generation-elapsed]')){
+  target.hidden=!generationClock;if(!generationClock)continue;
+  target.textContent=`Elapsed ${elapsedTime((generationClock.end??Date.now())-generationClock.start)} · ${generationClock.label}`;
+  target.title='Time since this request was accepted, including time waiting in the queue.';
+ }
 }
 function generationTiming(identity,created,label,completed=null){
  const timestamp=Date.parse(created),end=Date.parse(completed);
@@ -53,6 +55,7 @@ function batchTiming(batch){
  generationTiming(batch.id,batch.created_at,running?`${running.stage} · option ${running.candidate_index} of ${batch.candidate_count}`:finished?`${batch.done_count} of ${batch.candidate_count} ready`:'Waiting in queue',finished?(completed||new Date().toISOString()):null);
 }
 setInterval(updateElapsed,1000);
+document.addEventListener('visibilitychange',updateElapsed);window.addEventListener('focus',updateElapsed);
 function updatePromptExpansion(){
  if(!caps)return;
  const available=modelChoiceReady&&!!caps.limits.prompt_expansion?.enabled,enabled=available&&$('prompt-expansion-enabled').checked,backend=caps.backend;
@@ -583,7 +586,7 @@ async function watch(identity){
   monitoredImmediate=['queued','running'].includes(job.status)&&job.generate_immediately;controls();
   $('stage').textContent=job.stage;
   $('working-job-resources').href='/observability?job='+encodeURIComponent(identity);
-  generationTiming(identity,job.created_at,job.stage,job.completed_at);
+  generationTiming(identity,job.created_at,job.stage,!['queued','running'].includes(job.status)?job.completed_at||new Date().toISOString():null);
   if(job.status==='done'){localStorage.removeItem(storageKey+'-job');showResult(job.result);await refresh();announce('Speech ready');break}
   if(job.status==='error'||job.status==='deleted'){localStorage.removeItem(storageKey+'-job');throw Error(job.error||'This pending take was removed.');}
   await new Promise(resolve=>setTimeout(resolve,1500));
@@ -631,7 +634,7 @@ async function health(){
   $('status').dataset.offline=!online;
   $('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';
   busy=state.busy;
-  if(queueWritable&&state.active_job&&!watching&&!browsePage&&!localStorage.getItem(storageKey+'-candidates'))watch(state.active_job);
+  if(queueWritable&&state.active_job&&!watching&&!generationClock&&!browsePage&&!localStorage.getItem(storageKey+'-candidates'))watch(state.active_job);
   if(queueWritable){
    try{await refreshQueue()}catch(exc){queueWritable=false;queueNotices({queue_storage:{status:'unavailable',message:exc.message}})}
   }else{

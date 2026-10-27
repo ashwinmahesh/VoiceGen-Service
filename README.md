@@ -18,7 +18,7 @@ Screenshots use benign demonstration records and fake inference; displayed timin
 
 Use **Design a voice** to create a character, or **Record lines** to reuse one. Record lines has a **Voice source** menu for saved voices, uploaded reference audio, and built-in speakers when available. Browse voice catalog opens your Collection in a new tab so your recording form stays open.
 
-An elapsed timer follows each request through waiting and generation. Reference transcripts stay with saved voices; you can save an edit directly or let Generate save it before submitting. Higgs has searchable Emotion, Prosody, and Style inputs. Choose an option, or type a custom direction and preview a supported control with the local LLM. Accent comes from the reference recording.
+An elapsed timer below Generate and in the Listening room updates every second through waiting and generation, then keeps the final duration. Reference transcripts stay with saved voices; you can save an edit directly or let Generate save it before submitting. Higgs has searchable Emotion, Prosody, and Style inputs. Choose an option, or type a custom direction and preview a supported control with the local LLM. Accent comes from the reference recording.
 
 Higgs starts new UI settings with a 2,000-token audio limit. If one option cannot finish within its limit, the others stay available; the failed card can prepare a single replacement with a higher limit. Advanced settings also offer native text chunk size for longer passages.
 
