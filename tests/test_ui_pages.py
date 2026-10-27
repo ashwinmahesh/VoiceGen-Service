@@ -55,6 +55,7 @@ class SharedPageTests(unittest.TestCase):
             for identity in ('open-queue','status','unload','queue-dialog','queue-pause','queue-entries'):
                 self.assertEqual(page.ids.count(identity),1,(path,identity))
             self.assertIn('/assets/app.js',page.scripts)
+            self.assertLess(page.scripts.index('/assets/voice-upload.js'),page.scripts.index('/assets/app.js'))
             self.assertLess(page.scripts.index('/assets/recording-session.js'),page.scripts.index('/assets/app.js'))
             self.assertEqual(len(page.home_links),1,path)
             tag,attrs=page.home_links[0]

@@ -1,5 +1,6 @@
 """The identical API contract used by both local studios."""
 from typing import Literal
+from transcription_schemas import TranscriptionInfo
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -339,6 +340,7 @@ class Reference(BaseModel):
     transcript: str = ''
     original: dict
     effective: dict
+    transcription: TranscriptionInfo | None = None
 
 
 class Unloaded(BaseModel):

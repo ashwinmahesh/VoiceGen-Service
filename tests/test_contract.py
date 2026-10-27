@@ -167,7 +167,7 @@ class ContractTests(unittest.TestCase):
     def test_direct_voice_upload_rolls_back_new_reference_if_catalog_save_fails(self):
         preserved=self.upload().json();before=set((self.root/'references').rglob('*'))
         with patch('server.save_voice',side_effect=OSError('simulated catalog write failure')):
-            response=self.client.post('/api/voices/upload',files={'file':('new.wav',wav(),'audio/wav')},data={'name':'Named'})
+            response=self.client.post('/api/voices/upload',files={'file':('new.wav',wav(),'audio/wav')},data={'name':'Named','transcribe':'false'})
         self.assertEqual(response.status_code,422)
         self.assertEqual(set((self.root/'references').rglob('*')),before)
         self.assertEqual(self.client.get(preserved['audio_url']).status_code,200)

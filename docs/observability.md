@@ -32,6 +32,8 @@ This screenshot uses demonstration data, not measured model performance.
 
 Open **Resources & logs** from any listening-room option or selected take. **Return to recording** brings back the whole batch and selected take. Queued jobs show a waiting message until an attempt has samples, then update automatically. Returning to the page after a lost connection refreshes the charts; expired resource samples do not remove the audio or retained model events.
 
+CPU and resident-memory samples also include the short-lived CPU upload transcriber while it runs. During a voice job these remain measurements of the generator process tree, including concurrent upload work; they are not exclusive inference costs. The transcript receipt reports its total processing time, including startup and recognition.
+
 ## Generation logs
 
 A selected job shows **Generation log** beneath its resource charts. It refreshes every five seconds and has a **Copy visible log** button. Higgs and MOSS currently retain native runtime output; other models show a clear unavailable message, their sampled stages, and any current generation error. No output is borrowed from a shared server log.

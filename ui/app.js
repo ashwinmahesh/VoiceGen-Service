@@ -734,7 +734,7 @@ $('form').onsubmit=async event=>{
  }
  catch(exc){if(generationClock?.identity==='submitting'){generationClock=null;updateElapsed()}error(exc.message)}finally{submitting=false;controls()}
 };
-document.addEventListener('keydown',event=>{if(!browsePage&&(event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();if(!$('generate').disabled)$('form').requestSubmit()}});
+document.addEventListener('keydown',event=>{if(!browsePage&&!document.querySelector('dialog[open]')&&(event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();if(!$('generate').disabled)$('form').requestSubmit()}});
 $('save-voice').onclick = () => {
   if (latest) openVoiceEditor({output_id: latest.id, name: $('voice-name').value,
     description: latest.description || '', transcript:savedTranscript(latest),tags: []});
@@ -918,12 +918,40 @@ function chooseVoice(row, focus = true) {
   $('voice').value = row.id; setMode('saved'); voicePreview();persist();
   if (focus) { $('text').focus(); $('form').scrollIntoView({block: 'start'}); }
 }
+let voiceUploadAudioURL=null;
+function clearVoiceUploadAudio(){
+ const player=$('voice-upload-preview');player.pause();player.removeAttribute('src');player.load();player.hidden=true;
+ if(voiceUploadAudioURL){URL.revokeObjectURL(voiceUploadAudioURL);voiceUploadAudioURL=null}
+}
+function voiceUploadControls(){
+ const state=uploadPreview.snapshot();
+ $('voice-transcription-language').disabled=!$('voice-auto-transcribe').checked;
+ $('voice-transcription-language').title=$('voice-auto-transcribe').checked?'':'Turn on automatic transcription to choose its language.';
+ $('voice-editor-save').disabled=voiceSaving||state.pending||!!(voiceEditor?.upload&&$('voice-auto-transcribe').checked&&state.error&&!$('edit-transcript').value.trim());
+ if(!voiceSaving)$('voice-editor-save').textContent=state.pending?'Transcribing…':voiceEditor?.upload?'Upload to Collection':voiceEditor?.edit_id?'Save changes':'Save voice';
+}
+const uploadPreview=VoiceUpload.create({
+ prepare:async(file,{transcript,language,signal})=>{const body=new FormData();body.append('file',file);body.append('transcript',transcript);body.append('transcribe','true');body.append('transcription_language',language);return api('/api/references',{method:'POST',body,signal})},
+ onState:state=>{
+  if(!voiceEditor?.upload)return;
+  if(state.applyTranscript)$('edit-transcript').value=state.transcript||'';
+  $('voice-transcription-status').textContent=state.pending?'Transcribing on this Mac… You can keep editing the voice details.':state.error?state.error+' Enter the words manually, retry, or turn automatic transcription off.':state.reference?.transcription?'Transcript ready. Review the detected words below before saving.':state.file?$('voice-auto-transcribe').checked?'Your supplied transcript was kept.':'Automatic transcription is off. You can enter the words manually.':'';
+  $('voice-transcription-retry').hidden=!state.error||!$('voice-auto-transcribe').checked;voiceUploadControls();
+ }
+});
+function prepareVoiceUpload(){
+ const file=$('voice-upload-file').files[0];
+ if(file&&file.size>25*1024*1024){uploadPreview.cancel();$('voice-transcription-status').textContent='Choose a file under 25 MB.';return}
+ uploadPreview.select(file,{automatic:$('voice-auto-transcribe').checked,transcript:$('edit-transcript').value,language:$('voice-transcription-language').value});
+}
 function openVoiceEditor(context) {
-  voiceEditor = context;
+  uploadPreview.cancel();clearVoiceUploadAudio();voiceEditor = context;
+  if(context.upload)$('voice-upload-field').after($('edit-transcript-field'));else document.querySelector('label[for="edit-voice-tags"]').before($('edit-transcript-field'));
   $('voice-editor-title').textContent = context.upload ? 'Upload a voice' : context.edit_id ? 'Edit voice details' : 'Save a voice';
   $('voice-editor-save').textContent = context.upload ? 'Upload to Collection' : context.edit_id ? 'Save changes' : 'Save voice';
   $('voice-upload-field').hidden=!context.upload;$('voice-upload-file').required=!!context.upload;$('voice-upload-file').value='';
-  $('voice-editor-hint').textContent = context.upload ? 'Add your own recording to Collection, with a name, description, tags and optional exact transcript.' : context.edit_id ?
+  $('voice-auto-transcribe').checked=true;$('voice-transcription-language').value='auto';$('voice-transcription-status').textContent='';$('voice-transcription-retry').hidden=true;
+  $('voice-editor-hint').textContent = context.upload ? 'Add a recording, review its automatic transcript, then save the voice with a name and tags.' : context.edit_id ?
     'Update the catalog details. The saved recording stays the same.' :
     'Save named performance variants of the same speaker with mood tags and the exact transcript. Choose the desired recorded delivery before combined cloning.';
   $('edit-voice-name').value = context.name || '';
@@ -931,17 +959,22 @@ function openVoiceEditor(context) {
   $('edit-voice-tags').value = (context.tags || []).join(', ');
   $('edit-transcript').value=context.transcript||'';
   $('voice-editor-error').hidden = true;
-  $('voice-editor').showModal(); $('edit-voice-name').focus();
+  $('voice-editor').showModal(); $('edit-voice-name').focus();voiceUploadControls();
 }
 $('upload-voice').onclick=$('upload-saved-voice').onclick=()=>openVoiceEditor({upload:true});
 $('voice-upload-file').onchange=()=>{
- const file=$('voice-upload-file').files[0];
+ clearVoiceUploadAudio();const file=$('voice-upload-file').files[0];
+ if(file&&file.size<=25*1024*1024){voiceUploadAudioURL=URL.createObjectURL(file);$('voice-upload-preview').src=voiceUploadAudioURL;$('voice-upload-preview').hidden=false}
  if(file&&!$('edit-voice-name').value.trim())$('edit-voice-name').value=file.name.replace(/\.[^.]+$/,'').slice(0,100);
+ prepareVoiceUpload();
 };
+$('voice-auto-transcribe').onchange=$('voice-transcription-language').onchange=$('voice-transcription-retry').onclick=prepareVoiceUpload;
+$('edit-transcript').addEventListener('input',()=>{uploadPreview.edit();voiceUploadControls()});
+$('voice-editor').addEventListener('close',()=>{uploadPreview.cancel();clearVoiceUploadAudio();$('voice-upload-file').value=''})
 $('voice-editor-cancel').onclick = () => $('voice-editor').close();
 $('voice-editor').addEventListener('cancel',event=>{if(voiceSaving)event.preventDefault()});
 $('voice-editor-form').onsubmit = async event => {
-  event.preventDefault(); if (!voiceEditor||voiceSaving) return;
+  event.preventDefault(); if (!voiceEditor||voiceSaving||uploadPreview.snapshot().pending||$('voice-editor-save').disabled) return;
   const context = voiceEditor;
   const details = {name: $('edit-voice-name').value.trim(), description: $('edit-voice-description').value.trim(),
     tags: $('edit-voice-tags').value.split(',').map(tag => tag.trim()).filter(Boolean),transcript:$('edit-transcript').value.trim()};
@@ -957,9 +990,13 @@ $('voice-editor-form').onsubmit = async event => {
     if(context.upload){
       const file=$('voice-upload-file').files[0];if(!file)throw Error('Choose a voice recording first.');
       if(file.size>25*1024*1024)throw Error('Choose a file under 25 MB.');
-      const form=new FormData();form.append('file',file);form.append('name',details.name);form.append('description',details.description);form.append('transcript',details.transcript);
-      for(const tag of details.tags)form.append('tags',tag);
-      row=await api('/api/voices/upload',{method:'POST',body:form});
+      const prepared=uploadPreview.snapshot();
+      if(prepared.file===file&&prepared.reference)row=await post('/api/voices',{...details,reference_id:prepared.reference.id});
+      else{
+       const form=new FormData();form.append('file',file);form.append('name',details.name);form.append('description',details.description);form.append('transcript',details.transcript);form.append('transcribe',String($('voice-auto-transcribe').checked));form.append('transcription_language',$('voice-transcription-language').value);
+       for(const tag of details.tags)form.append('tags',tag);
+       row=await api('/api/voices/upload',{method:'POST',body:form});
+      }
     }
     else if (context.edit_id) row = await api('/api/voices/' + context.edit_id,
       {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(details)});
@@ -984,7 +1021,7 @@ $('voice-editor-form').onsubmit = async event => {
     $('voice-editor-error').textContent = exc.message; $('voice-editor-error').hidden = false;
   } finally {
     voiceSaving=false;$('voice-editor-save').textContent=saveLabel;
-    $('voice-editor-save').disabled = false; $('voice-editor-cancel').disabled = false;
+    voiceUploadControls(); $('voice-editor-cancel').disabled = false;
   }
 };
 $('tag-filter').onchange = $('voice-sort').onchange = () => {catalogOffset = 0; loadVoicePage().catch(exc => error(exc.message));};
@@ -1330,6 +1367,8 @@ const controlHelp={
  'page-size':'How many entries to show on each Collection page.',
  'queue-status':'Filter the saved jobs by status. Pending includes waiting and running jobs; other models’ jobs wait until that model is served.',
  'queue-size':'How many queue entries to show on each page.',
+ 'voice-auto-transcribe':'Transcribe this recording locally with a small CPU model. Review names and accented words before saving. Supplied or edited words are kept.',
+ 'voice-transcription-language':'Auto-detect the spoken language, or choose one to help recognition. This does not change the accent or translate the words.',
  'voice-upload-file':'Import 1–30 seconds of speech into Collection, up to 25 MB. The original recording is preserved; uploading does not train a model.',
  'edit-voice-name':'A searchable name for the saved voice. Renaming it does not change its recording.',
  'edit-voice-description':'Notes about the character for your library. These notes do not replace or change the saved voice recording.',

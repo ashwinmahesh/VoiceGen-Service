@@ -250,16 +250,20 @@ Use only the running model's options. For example, Higgs uses `higgs.emotion`; t
 | `file` | Yes | Audio recording. |
 | `name` | Yes | Voice name, 1–100 characters. |
 | `description` | No | Catalog notes, up to 2,000 characters. |
-| `transcript` | No | Exact words in this recording, up to 3,000 characters. Required when using Higgs or Fish. |
+| `transcript` | No | Exact words, up to 3,000 characters. A nonempty value is kept and skips recognition. Otherwise automatic transcription supplies it. Review the returned words before cloning with Higgs or Fish. |
+| `transcribe` | No | Defaults to `true`. Set `false` to upload without recognition or save an empty transcript. |
+| `transcription_language` | No | Defaults to `auto`. Set a supported language code such as `en` to guide recognition; this does not translate speech. |
 | `tags` | No | Repeat the field for each tag; up to 20 tags, 1–40 characters each. |
 
 Add metadata to the [upload example](#1-upload-a-voice) with form fields such as `-F 'description=A cultured baritone.' -F 'tags=romanian' -F 'tags=aristocrat'`.
+
+When recognition is needed, the request waits for local CPU transcription before returning 201. No voice is saved if recognition fails; supply exact words, retry, or set `transcribe=false`. Allow up to 150 seconds in the client. `GET /api/transcription` reports availability and the supported language codes without loading a model. It never downloads while serving. A successful automatic result includes `transcription` with `engine`, `model`, detected `language`, `seconds` and `device: "CPU"`. Editing the saved words clears that recognition provenance when the words change.
 
 Use the returned `id` as `voice_id`. Uploading saves a recording without generating or training a voice model. Original upload bytes are retained. Repeating an upload can create another library entry.
 
 ### Upload a temporary reference
 
-**`POST /api/references`** takes multipart `file` and optional `transcript`, returning **201**. Use its `id` as `reference_id` without saving it to Collection first.
+**`POST /api/references`** takes multipart `file` and optional `transcript`, returning **201**. It also accepts `transcribe` (default `false`) and `transcription_language` (default `auto`). The UI opts in when preparing a voice-upload preview: review its returned `transcript`, then save with `POST /api/voices` using the reference ID and corrected words. This avoids uploading the recording twice. A canceled completed preview remains a reference recording; it does not create a voice in Collection. Use its `id` as `reference_id` without saving it to Collection first.
 
 Download the original with **`GET /api/references/{id}/original`**. For a voice imported directly into Collection, its `source_id` identifies that reference.
 

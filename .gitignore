@@ -45,3 +45,6 @@ storage.json
 /state/
 *.sqlite3
 *.sqlite3-*
+
+# Optional local transcription weights when data storage uses the project folder.
+/transcription/
