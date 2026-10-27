@@ -3,6 +3,7 @@ import argparse
 import asyncio
 from contextlib import asynccontextmanager, nullcontext
 import json
+import hashlib
 import sqlite3
 from pathlib import Path
 from typing import Literal
@@ -105,18 +106,28 @@ def asset_path(kind, identity):
         raise HTTPException(404,'Audio is unavailable; check its storage volume') from None
 
 
+def ui_revision():
+    # Bind HTML and its scripts to one revision so a returning browser cannot mix them.
+    names=('index.html','app.js','recording-session.js','observability.js','observability.css')
+    return hashlib.sha256(b'\0'.join((PROJECT_ROOT/'ui'/name).read_bytes() for name in names)).hexdigest()[:12]
+
+
+def ui_shell(revision=None):
+    return (PROJECT_ROOT/'ui/index.html').read_text().replace('__UI_VERSION__',revision or ui_revision())
+
+
 @app.get('/',include_in_schema=False)
 @app.get('/collection',include_in_schema=False)
 @app.get('/collection/',include_in_schema=False)
-def index(): return FileResponse(PROJECT_ROOT/'ui/index.html')
+def index(): return HTMLResponse(ui_shell(),headers={'Cache-Control':'no-cache'})
 
 
 @app.get('/assets/recording-session.js',include_in_schema=False)
-def recording_session_script(): return FileResponse(PROJECT_ROOT/'ui/recording-session.js',media_type='text/javascript')
+def recording_session_script(): return FileResponse(PROJECT_ROOT/'ui/recording-session.js',media_type='text/javascript',headers={'Cache-Control':'no-cache'})
 
 
 @app.get('/assets/app.js',include_in_schema=False)
-def app_script(): return FileResponse(PROJECT_ROOT/'ui/app.js',media_type='text/javascript')
+def app_script(): return FileResponse(PROJECT_ROOT/'ui/app.js',media_type='text/javascript',headers={'Cache-Control':'no-cache'})
 
 
 @app.get('/assets/icon.svg',include_in_schema=False)
@@ -135,18 +146,19 @@ def favicon(): return FileResponse(PROJECT_ROOT/'ui/favicon.ico',media_type='ima
 @app.get('/observability/',include_in_schema=False)
 def observability_page():
     # Use the generator's complete shell so header layout and controls have one source.
-    shell=(PROJECT_ROOT/'ui/index.html').read_text()
-    return HTMLResponse(shell.replace('<!-- page-assets -->','<link rel="stylesheet" href="/assets/observability.css">')
+    revision=ui_revision()
+    shell=ui_shell(revision)
+    return HTMLResponse(shell.replace('<!-- page-assets -->',f'<link rel="stylesheet" href="/assets/observability.css?v={revision}">')
         .replace('<!-- page-content -->',(PROJECT_ROOT/'ui/observability.html').read_text())
-        .replace('<!-- page-script -->','<script src="/assets/observability.js"></script>'))
+        .replace('<!-- page-script -->',f'<script src="/assets/observability.js?v={revision}"></script>'),headers={'Cache-Control':'no-cache'})
 
 
 @app.get('/assets/observability.js',include_in_schema=False)
-def observability_script(): return FileResponse(PROJECT_ROOT/'ui/observability.js',media_type='text/javascript')
+def observability_script(): return FileResponse(PROJECT_ROOT/'ui/observability.js',media_type='text/javascript',headers={'Cache-Control':'no-cache'})
 
 
 @app.get('/assets/observability.css',include_in_schema=False)
-def observability_styles(): return FileResponse(PROJECT_ROOT/'ui/observability.css',media_type='text/css')
+def observability_styles(): return FileResponse(PROJECT_ROOT/'ui/observability.css',media_type='text/css',headers={'Cache-Control':'no-cache'})
 
 
 def resource_monitor():

@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {createStore,fromURL,resolveSelection,url,createPoller,readJSON}=require('../ui/recording-session.js');
+const {createStore,fromURL,resolveSelection,url,createPoller,readJSON,summary,presentation}=require('../ui/recording-session.js');
 const id='a'.repeat(32),second='b'.repeat(32);
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(check){for(let n=0;n<200;n++){if(check())return;await pause(2)}assert.fail('polling condition timed out')}
@@ -68,7 +68,7 @@ test('explicit links win while retaining saved timing for the same recording',()
 test('standalone takes restore without a batch and duplicate refreshes preserve playback',()=>{
  const vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
  const source=fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8');
- const show=source.slice(source.indexOf('function showResult(row)'),source.indexOf('\nlet pauseSource='));
+ const show=source.slice(source.indexOf('function markSelectedOption(identity)'),source.indexOf('\nlet pauseSource='));
  const elements=new Map();let audioAssignments=0,stops=0;const selections=[];
  const element=id=>{if(!elements.has(id))elements.set(id,{hidden:true,attributes:{},set src(value){this.attributes.src=value;audioAssignments++},getAttribute(name){return this.attributes[name]||null}});return elements.get(id)};
  const row={id,backend:'higgs',audio_url:'/api/audio/outputs/'+id,duration:1,sample_rate:16000,generation_seconds:.1,seed:42};
@@ -79,4 +79,22 @@ test('standalone takes restore without a batch and duplicate refreshes preserve 
  vm.runInContext('showResult(row)',context);assert.equal(stops,1);assert.equal(context.watching,null);assert.equal(context.currentCandidates,null);
  context.currentCandidates={id:second};context.row={...row,candidate_batch_id:second};
  vm.runInContext('showResult(row)',context);assert.equal(selections.at(-1).kind,'candidates');assert.equal(selections.at(-1).selected,id);
+});
+
+test('return summary distinguishes live, completed, partial, removed and disconnected recordings',()=>{
+ const selection={kind:'candidates',id,model:'higgs'};
+ const jobs=[{status:'running',stage:'Generating speech',backend:'higgs'},{status:'queued'}];
+ const active=summary(selection,{status:'running',candidate_count:2,done_count:0,created_at:'2026-10-27T12:00:00Z',jobs});
+ assert.equal(active.stage,'Generating speech');assert.equal(active.completed,null);assert.equal(presentation(active).active,true);
+ assert.equal(presentation(active,'checking').title,'Opening your recording…');
+ assert.equal(presentation(active,'reconnecting').active,false);
+ const partial=summary(selection,{status:'partial',candidate_count:2,done_count:1,jobs:[{status:'done',completed_at:'2026-10-27T12:00:02Z'},{status:'error',completed_at:'2026-10-27T12:00:03Z'}]});
+ assert.equal(partial.failed,1);assert.equal(partial.completed,'2026-10-27T12:00:03Z');assert.equal(presentation(partial).title,'1 of 2 options ready');assert.equal(presentation(partial).action,'Review recording');
+ assert.equal(presentation({...partial,status:'done',ready:2}).action,'Listen to recording');
+ assert.equal(presentation({...partial,status:'deleted'}).title,'Recording removed from queue');
+});
+test('return summaries store progress without copying dialogue or media into browser state',()=>{
+ const data=summary({kind:'job',id},{status:'done',backend:'voxcpm2',result:{audio_url:'/private-audio'},text:'private dialogue',requested:{description:'private prompt'},completed_at:'2026-10-27T12:00:00Z'});
+ assert.equal(data.count,1);assert.equal(data.ready,1);assert.equal(data.status,'done');
+ assert.equal(JSON.stringify(data).includes('private'),false);
 });

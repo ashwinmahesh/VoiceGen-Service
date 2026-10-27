@@ -12,7 +12,7 @@ class Page(HTMLParser):
     def handle_starttag(self,tag,attrs):
         attrs=dict(attrs)
         if 'id' in attrs:self.ids.append(attrs['id'])
-        if tag=='script' and 'src' in attrs:self.scripts.append(attrs['src'])
+        if tag=='script' and 'src' in attrs:self.scripts.append(attrs['src'].split('?',1)[0])
         if attrs.get('data-mode'):self.task_tabs.append(attrs)
         if attrs.get('id')=='browse-voices':self.catalog_links.append((tag,attrs))
         if attrs.get('data-collection'):self.collection_tabs.append(attrs)
@@ -71,6 +71,18 @@ class SharedPageTests(unittest.TestCase):
         for identity in ('recording-connection','result-resources'):
             self.assertIn(identity,studio.ids)
         self.assertIn('job-recording',Page(client.get('/observability').text).ids)
+
+    def test_return_strip_and_scripts_share_the_current_ui_revision(self):
+        client=TestClient(server.app)
+        for path in ('/', '/collection', '/observability'):
+            response=client.get(path);page=Page(response.text)
+            for identity in ('recording-return','recording-return-heading','recording-return-link','listening-room','working-description','recording-reconnect'):
+                self.assertIn(identity,page.ids)
+            versions=re.findall(r'/assets/(?:app|recording-session|observability)\.js\?v=([a-f0-9]+)',response.text)
+            self.assertGreaterEqual(len(versions),2)
+            self.assertEqual(len(set(versions)),1)
+            self.assertEqual(response.headers['cache-control'],'no-cache')
+        self.assertEqual(client.get('/assets/app.js').headers['cache-control'],'no-cache')
 
     def test_observability_content_and_script_only_load_on_its_page(self):
         client=TestClient(server.app)
