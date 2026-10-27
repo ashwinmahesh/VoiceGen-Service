@@ -9,6 +9,7 @@ import time
 from uuid import uuid4
 
 from resource_probe import ResourceProbe
+from lifecycle_store import LifecycleHistory, LIFECYCLE_RETENTION
 
 WINDOWS = {'5m': 300, '30m': 1800, '1h': 3600, '6h': 21600, '24h': 86400, '3d': 259200, '7d': 604800}
 RETENTION_SECONDS = WINDOWS['7d']
@@ -22,7 +23,7 @@ SCOPES = {
 }
 
 
-class MetricsStore:
+class MetricsStore(LifecycleHistory):
     def __init__(self, path):
         self.path = path
 
@@ -34,6 +35,7 @@ class MetricsStore:
     def initialize(self):
         # The generator already owns queue recovery. Never modify queue tables here.
         with closing(self.connect()) as db, db:
+            self.initialize_lifecycle(db)
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS resource_sessions (
                     id TEXT PRIMARY KEY, backend TEXT NOT NULL, model TEXT NOT NULL,
@@ -57,6 +59,7 @@ class MetricsStore:
 
     def recover(self, now):
         with closing(self.connect()) as db, db:
+            db.execute("UPDATE model_lifecycle_events SET status='interrupted',duration_seconds=NULL WHERE status='running'")
             db.execute("""UPDATE resource_runs SET status='interrupted', ended_at=COALESCE(
                 (SELECT MAX(ts) FROM resource_samples WHERE run_id=resource_runs.id),started_at)
                 WHERE ended_at IS NULL""")
@@ -74,6 +77,7 @@ class MetricsStore:
     def finish_run(self, identity, status, now):
         with closing(self.connect()) as db, db:
             db.execute('UPDATE resource_runs SET status=?,ended_at=? WHERE id=?', (status, now, identity))
+            db.execute("UPDATE model_lifecycle_events SET status='interrupted',duration_seconds=NULL WHERE run_id=? AND status='running'",(identity,))
 
     def insert(self, sample):
         keys = ('ts','session_id','run_id','job_id','backend','model','stage', *METRICS)
@@ -86,6 +90,7 @@ class MetricsStore:
             db.execute('DELETE FROM resource_samples WHERE ts<?', (now-RETENTION_SECONDS,))
             db.execute('DELETE FROM resource_runs WHERE ended_at<?', (now-RETENTION_SECONDS,))
             db.execute('DELETE FROM resource_sessions WHERE ended_at<?', (now-RETENTION_SECONDS,))
+            db.execute("DELETE FROM model_lifecycle_events WHERE started_at<? AND status!='running'", (now-LIFECYCLE_RETENTION,))
 
     def series(self, start, end, backend=None, job_id=None, run_id=None):
         where, args = ['ts>=?', 'ts<=?'], [start, end]
@@ -140,12 +145,17 @@ class ResourceMonitor:
         self.last_prune = 0
         self.initialized = False
         self.pending_finishes = []
+        self.pending_events = []
+        self.dropped_events = 0
+        self.event_error = None
 
     def status(self):
         context=self.context
         return {'running':bool(self.thread and self.thread.is_alive()), 'last_sample_at':self.last_sample_at,
                 'storage_error':self.last_error, 'counter_notices':self.probe_errors,
                 'dropped_samples':self.dropped_samples, 'session_id':self.session_id,
+                'pending_lifecycle_events':len(self.pending_events),'dropped_lifecycle_events':self.dropped_events,
+                'lifecycle_error':self.event_error,
                 'active_job':context['job_id'] if context else None}
 
     def start(self):
@@ -168,6 +178,7 @@ class ResourceMonitor:
             if not self.initialized:
                 self._initialize()
                 if not self.initialized:return
+            self._flush_events()
             self._flush_finishes()
             if self.context and not self.context.get('recorded'):
                 self.store.start_run(self.context)
@@ -226,11 +237,35 @@ class ResourceMonitor:
             self.store.finish_run(*self.pending_finishes[0])
             self.pending_finishes.pop(0)
 
+    def lifecycle_event(self, event):
+        with self.lock:
+            context=self.context or {}
+            row={**event,'session_id':self.session_id,'run_id':context.get('id'),
+                 'job_id':context.get('job_id'),'attempt':context.get('attempt')}
+            if len(self.pending_events)>=1000:
+                self.dropped_events+=1
+                self.event_error='Model history buffer is full; some lifecycle boundaries could not be saved.'
+                return
+            self.pending_events.append(row)
+            try:
+                if self.initialized:self._flush_events()
+            except Exception:
+                self.event_error='Model lifecycle history is waiting for SQLite storage; generation can continue.'
+        self.wake.set()
+
+    def _flush_events(self):
+        while self.pending_events:
+            self.store.lifecycle_event(self.pending_events[0])
+            self.pending_events.pop(0)
+        self.event_error=None
+
     def close(self):
         self.stop_event.set();self.wake.set()
         if self.thread:self.thread.join(timeout=5)
         try:
+            self._flush_events()
             self._flush_finishes()
             with closing(self.store.connect()) as db, db:
+                db.execute("UPDATE model_lifecycle_events SET status='interrupted',duration_seconds=NULL WHERE session_id=? AND status='running'",(self.session_id,))
                 db.execute('UPDATE resource_sessions SET ended_at=? WHERE id=?',(time.time(),self.session_id))
         except Exception:logging.warning('Could not record resource session end',exc_info=True)

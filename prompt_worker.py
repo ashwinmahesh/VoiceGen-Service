@@ -4,12 +4,30 @@ import json
 import resource
 import sys
 from prompt_policy import messages_for,higgs_completion
+from lifecycle_events import measure, observe, pipe_emitter
+from prompt_assets import REPOSITORY
 
 
 def run(request):
-    from mlx_lm import load,stream_generate
+    from mlx_lm import load
+    backend=request.get('backend','unknown')
+    with measure('load','llm_weights',backend,REPOSITORY,'prompt_expansion'):
+        model,tokenizer=load(request['weights'])
+    try:return generate_loaded(request,model,tokenizer)
+    finally:
+        try:
+            with measure('unload','llm_weights',backend,REPOSITORY,'prompt_expansion'):
+                model=tokenizer=None
+                import gc
+                import mlx.core as mx
+                gc.collect();mx.clear_cache()
+        except Exception:
+            pass  # This short-lived worker still exits; telemetry must not mask its result/error.
+
+
+def generate_loaded(request,model,tokenizer):
+    from mlx_lm import stream_generate
     from mlx_lm.sample_utils import make_sampler
-    model,tokenizer=load(request['weights'])
     candidates=request.get('task')=='candidate_variants'
     if candidates:
         batches=request['plan']['messages']
@@ -34,7 +52,7 @@ def run(request):
 if __name__=='__main__':
     try:
         request=json.loads(sys.stdin.read(131073))
-        with contextlib.redirect_stdout(sys.stderr):result=run(request)
+        with contextlib.redirect_stdout(sys.stderr),observe(pipe_emitter()):result=run(request)
         print(json.dumps(result,allow_nan=False))
     except Exception:
         print(json.dumps({'error':'Local voice guidance expansion failed or reached its limit; no speech was generated.'}))

@@ -36,8 +36,8 @@ def main():
             subprocess.run(['git','-C',str(source),'checkout','--detach',AUDIOCPP_REVISION],check=True)
         actual=subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True).strip()
         if actual!=AUDIOCPP_REVISION:raise SystemExit('Native source revision differs; preserve it and select a clean pinned checkout.')
-        if subprocess.check_output(['git','-C',str(source),'status','--porcelain'],text=True).strip():
-            raise SystemExit('Native source has local changes; preserve them before rebuilding.')
+        from native_instrumentation import prepare_native
+        prepare_native(source,PROJECT_ROOT)
         cmake=target/'bin/cmake'
         subprocess.run([str(cmake),'-S',str(source),'-B',str(source/'build'),'-DCMAKE_BUILD_TYPE=Release',
             '-DENGINE_ENABLE_METAL=ON','-DENGINE_ENABLE_OPENMP=OFF','-DAUDIOCPP_DEPLOYMENT_BUILD=ON',

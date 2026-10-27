@@ -13,6 +13,7 @@ from voice_catalog import now, atomic_json, IDENTITY
 from schemas import Generation, generation_metadata, MODEL_OPTIONS, PACING_FIELDS, LEGACY_BACKEND_FIELDS
 from inference_locks import inherit_reservations
 from model_readiness import ModelUnavailable
+from lifecycle_events import observe, reason
 
 
 class BusyError(QueueConflict):
@@ -118,7 +119,8 @@ class JobManager:
         if self._thread:
             self._thread.join()
         self.executor.shutdown(wait=True)
-        if self.runtime:self.engine.unload()
+        if self.runtime:
+            with observe(lambda event:self.observe('lifecycle_event',event)), reason('shutdown'):self.engine.unload()
         self.observe('close')
         if self._owner:
             self._owner.close(); self._owner = None
@@ -417,6 +419,10 @@ class JobManager:
             self._wake.wait(2 if self.runtime else .2)
 
     def _run_bound(self,row,handle):
+        with observe(lambda event:self.observe('lifecycle_event',event)):
+            return self._execute_bound(row,handle)
+
+    def _execute_bound(self,row,handle):
         if self.runtime:
             from model_readiness import ModelUnavailable
             try:self.catalog.require(row['backend'],force=True)
@@ -481,8 +487,9 @@ class JobManager:
                 try:
                     from candidate_diversity import generate
                     with inherit_reservations(self._owner,handle,self.data_owner):
-                        self.engine.unload()
-                        variants=generate(payload['candidate_plan'])
+                        with reason('prompt_expansion'):
+                            self.engine.unload()
+                            variants=generate(payload['candidate_plan'])
                     self.store.freeze_candidate_variants(payload['candidate_batch_id'],variants)
                 except Exception as exc:
                     self.store.fail_candidate_planning(payload['candidate_batch_id'],str(exc));raise
@@ -581,7 +588,7 @@ class JobManager:
             self.unloading, self.stage = True,'unloading'
         def work():
             try:
-                self.engine.unload()
+                with observe(lambda event:self.observe('lifecycle_event',event)), reason('memory_release'):self.engine.unload()
                 self.stage, self.last_error = 'unloaded',None
             except Exception as exc:
                 self.stage, self.last_error = 'error',str(exc)
@@ -601,7 +608,7 @@ class JobManager:
             handle=self.reserve();self.expanding=True;self.stage='expanding'
         def work():
             try:
-                with model_context(backend),inherit_reservations(self._owner,handle,self.data_owner):
+                with model_context(backend),inherit_reservations(self._owner,handle,self.data_owner), observe(lambda event:self.observe('lifecycle_event',event)), reason('prompt_expansion'):
                     self.engine.unload()
                     return expand(request,effective,backend,guidance,self.root,transcript,higgs_control=higgs_control)
             finally:

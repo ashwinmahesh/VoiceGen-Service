@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import time
+from lifecycle_events import event_pipe
 
 from assets import all_errors
 from config import MODEL_DIR, MODEL_SPECS, PROFILE, PROJECT_ROOT, ROOT
@@ -56,10 +57,13 @@ class NativeEngine:
         log=ROOT/'logs'/f'native-{destination.stem}.log'
         args=self.command(request,reference,transcript,temporary)
         started=time.monotonic()
+        lifecycle=[]
         try:
             with log.open('w') as stream:
-                result=subprocess.run(['/usr/bin/time','-l',*args],stdout=stream,stderr=subprocess.STDOUT,
-                                      cwd=PROJECT_ROOT,check=False,pass_fds=reservation_descriptors())
+                with event_pipe(PROFILE['backend'],MODEL_SPECS[PROFILE['backend']]['repo'],lifecycle.append) as event_fd:
+                    result=subprocess.run(['/usr/bin/time','-l',*args],stdout=stream,stderr=subprocess.STDOUT,
+                                          cwd=PROJECT_ROOT,check=False,pass_fds=(*reservation_descriptors(),event_fd),
+                                          env={**os.environ,'VOICEGEN_LIFECYCLE_FD':str(event_fd)})
             if result.returncode:
                 with log.open('rb') as stream:
                     stream.seek(max(0,log.stat().st_size-16384));tail=stream.read(16384).decode(errors='replace')
@@ -78,9 +82,10 @@ class NativeEngine:
         elapsed=time.monotonic()-started;duration=len(data)/sr
         measured=re.search(r'(\d+)\s+maximum resident set size',log.read_text(errors='replace'))
         spec=MODEL_SPECS[PROFILE['backend']]
+        durations={event['action']:event['duration_seconds'] for event in lifecycle if event['status']=='success'}
         return dict(sample_rate=sr,channels=1,format='WAV/PCM_16',duration=round(duration,3),
-            cold_load=True,load_seconds=None,generation_seconds=round(elapsed,3),total_seconds=round(elapsed,3),
-            timing_scope='subprocess startup + model load + synthesis + output validation',real_time_factor=round(elapsed/duration,3),
+            cold_load=True,load_seconds=durations.get('load'),unload_seconds=durations.get('unload'),generation_seconds=round(elapsed,3),total_seconds=round(elapsed,3),
+            timing_scope='subprocess startup + model load + synthesis + model release + output validation',real_time_factor=round(elapsed/duration,3),
             peak_process_rss_gb=round(int(measured[1])/1e9,3) if measured else None,
             model=spec['repo'],model_revision=spec['revision'],variant=PROFILE['backend'],
             backend=PROFILE['backend'],runtime={'audio.cpp':AUDIOCPP_REVISION,'backend':'Metal'},

@@ -13,7 +13,7 @@ from backend_selection import AUDIOCPP_REVISION
 def native_build_error(binary, stamp):
     try:
         result=subprocess.run([binary,'--version'],capture_output=True,text=True,timeout=5,check=False)
-        if result.returncode or AUDIOCPP_REVISION[:7] not in result.stdout or 'metal' not in result.stdout:
+        if result.returncode or AUDIOCPP_REVISION[:7] not in result.stdout or 'metal' not in result.stdout or 'voicegen_lifecycle=1' not in result.stdout:
             return 'Native binary is not the pinned Metal build; run make setup-env MODEL='+PROFILE['backend']
     except (OSError,subprocess.TimeoutExpired) as exc:
         return 'Cannot inspect native runtime: '+str(exc)

@@ -43,6 +43,9 @@ class ResourceCollector(BaseModel):
     dropped_samples: int
     session_id: str
     active_job: str | None
+    pending_lifecycle_events: int = 0
+    dropped_lifecycle_events: int = 0
+    lifecycle_error: str | None = None
 
 
 class RecordedModel(BaseModel):
@@ -99,6 +102,49 @@ class ResourceJobHistory(ResourceSeries):
     job_id: str
     runs: list[ResourceRun]
     selected_run: ResourceRun
+
+
+class ModelLifecycleEvent(BaseModel):
+    id: str
+    session_id: str
+    run_id: str | None
+    job_id: str | None
+    attempt: int | None
+    backend: str
+    model: str
+    action: Literal['load','unload']
+    scope: Literal['runtime_process','weights','native_weights','native_release','llm_weights']
+    reason: str
+    started_at: float
+    ended_at: float | None
+    duration_seconds: float | None = Field(description='Monotonic elapsed seconds; null while running or interrupted. Never inferred from restart downtime.')
+    status: Literal['running','success','error','interrupted']
+
+
+class ModelLifecycleSummary(BaseModel):
+    backend: str
+    model: str
+    action: str
+    scope: str
+    count: int
+    mean_seconds: float
+    max_seconds: float
+
+
+class ModelLifecyclePage(BaseModel):
+    data: list[ModelLifecycleEvent]
+    total: int
+    counts: dict[str,int]
+    summaries: list[ModelLifecycleSummary] = Field(description='Successful durations across all matching events, grouped by model/action/scope. Overlapping scopes must not be added together.')
+    offset: int
+    limit: int
+    has_more: bool
+    window: Literal['24h','7d','30d','90d','all']
+    start: float | None
+    end: float
+    retention_seconds: int
+    scopes: dict[str,str]
+    collector: ResourceCollector
 
 
 class JobLogs(BaseModel):

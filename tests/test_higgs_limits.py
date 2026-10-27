@@ -61,7 +61,7 @@ class HiggsLimitTests(unittest.TestCase):
                 kwargs['stdout'].write('Higgs TTS generation reached max_tokens (1000) before EOC for this text chunk\n')
                 destination.with_suffix('.tmp.wav').write_bytes(b'incomplete')
                 return SimpleNamespace(returncode=1)
-            with patch('native_engine.ROOT',root),patch('native_engine.PROFILE',higgs_profile()),patch('native_engine.all_errors',return_value=[]),patch.object(native_engine.NativeEngine,'command',return_value=['native']),patch('native_engine.subprocess.run',side_effect=fail) as run:
+            with patch('native_engine.ROOT',root),patch('native_engine.PROFILE',higgs_profile()),patch('native_engine.MODEL_SPECS',{'higgs':{'repo':'fixture/higgs'}}),patch('native_engine.all_errors',return_value=[]),patch.object(native_engine.NativeEngine,'command',return_value=['native']),patch('native_engine.subprocess.run',side_effect=fail) as run:
                 with self.assertRaisesRegex(RuntimeError,r'reached max_tokens \(1000\) before EOC.*Advanced settings'):
                     native_engine.NativeEngine().generate(Generation(text='Welcome.',reference_id='a'*32),Path('/ref.wav'),destination)
                 self.assertEqual(run.call_count,1)

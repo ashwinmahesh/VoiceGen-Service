@@ -35,7 +35,11 @@ class ReservationTests(unittest.TestCase):
             def run(args,**kwargs):
                 destination.with_suffix('.tmp.wav').write_bytes(wav())
                 self.assertEqual(args[:2],['/usr/bin/time','-l'])
-                self.assertEqual(kwargs['pass_fds'],reservation_descriptors())
+                self.assertEqual(kwargs['pass_fds'][:-1],reservation_descriptors())
+                event_fd=int(kwargs['env']['VOICEGEN_LIFECYCLE_FD'])
+                self.assertEqual(kwargs['pass_fds'][-1],event_fd)
+                self.assertNotIn(event_fd,reservation_descriptors())
+                os.fstat(event_fd)
                 return Mock(returncode=0)
             with (root/'owner').open('a+') as owner,(root/'gpu').open('a+') as gpu,ExitStack() as stack:
                 stack.enter_context(patch('native_engine.ROOT',root))
@@ -46,7 +50,7 @@ class ReservationTests(unittest.TestCase):
                 runner=stack.enter_context(patch('native_engine.subprocess.run',side_effect=run))
                 with inherit_reservations(owner,gpu):
                     result=engine.generate(Generation(text='Benign fixture.',description='Calm.'),None,destination)
-                    self.assertEqual(runner.call_args.kwargs['pass_fds'],(owner.fileno(),gpu.fileno()))
+                    self.assertEqual(runner.call_args.kwargs['pass_fds'][:2],(owner.fileno(),gpu.fileno()))
                 self.assertEqual(result['sample_rate'],16000)
                 self.assertTrue(destination.is_file())
 

@@ -4,7 +4,9 @@ from contextlib import ExitStack
 import os
 from pathlib import Path
 import socket
+import threading
 from backend_protocol import send,receive
+from lifecycle_events import observe, reason
 
 
 def main():
@@ -19,23 +21,27 @@ def main():
     # while model tensors or native descendants still retain memory.
     os.fstat(args.owner_fd)
     with socket.socket(fileno=args.fd) as channel:
-        send(channel,{'ready':True})
+        message_lock=threading.Lock()
+        def report(value):
+            with message_lock:send(channel,value)
+        report({'ready':True})
         while True:
             try:request,fds=receive(channel)
             except EOFError:break
             with ExitStack() as stack:
                 handles=[stack.enter_context(os.fdopen(fd,'rb',closefd=True)) for fd in fds]
                 try:
-                    with inherit_reservations(*handles):
+                    with inherit_reservations(*handles),observe(lambda event:report({'lifecycle':event})):
                         if request['command']=='close':
-                            engine.unload();send(channel,{'ok':True});return
+                            with reason(request.get('reason')):engine.unload()
+                            report({'ok':True});return
                         if request['command']!='generate':raise ValueError('Unknown backend command')
                         result=engine.generate(Generation.model_validate(request['request']),
                             Path(request['reference']) if request['reference'] else None,Path(request['destination']),
-                            lambda stage:send(channel,{'event':stage}),transcript=request['transcript'])
-                        send(channel,{'result':result,'loaded':engine.model is not None,'variant':engine.variant})
+                            lambda stage:report({'event':stage}),transcript=request['transcript'])
+                        report({'result':result,'loaded':engine.model is not None,'variant':engine.variant})
                 except Exception as error:
-                    send(channel,{'error':str(error),'loaded':engine.model is not None,'variant':engine.variant})
+                    report({'error':str(error),'loaded':engine.model is not None,'variant':engine.variant})
 
 
 if __name__=='__main__':main()

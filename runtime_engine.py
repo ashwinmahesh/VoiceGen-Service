@@ -9,6 +9,7 @@ import time
 from config import PROJECT_ROOT,PROFILE,OVERRIDE_BACKEND
 from inference_locks import reservation_descriptors
 from backend_protocol import send,receive
+from lifecycle_events import emit, measure, reason, current_reason
 
 
 class RuntimeEngine:
@@ -49,12 +50,23 @@ class RuntimeEngine:
         if self._live_group(process.pid):raise RuntimeError('Owned backend processes remain alive; generation is stopped')
 
     def _stop(self,failed=False):
+        if self.process is None:return
+        with measure('unload','runtime_process',self.backend or PROFILE['backend'],self.variant or self.backend or PROFILE['id'],
+                     'failure_cleanup' if failed else None):
+            self._stop_process(failed)
+
+    def _stop_process(self,failed=False):
         process,channel=self.process,self.channel
         if process is None:return
         try:
             try:
                 if not failed and process.poll() is None:
-                    channel.settimeout(10);send(channel,{'command':'close'});receive(channel)
+                    channel.settimeout(10);send(channel,{'command':'close','reason':current_reason()})
+                    while True:
+                        response,fds=receive(channel)
+                        for fd in fds:os.close(fd)
+                        if 'lifecycle' in response:emit(response['lifecycle']);continue
+                        break
                 if channel:channel.close()
                 process.wait(timeout=10)
             except (OSError,EOFError,ValueError,subprocess.TimeoutExpired):
@@ -72,11 +84,14 @@ class RuntimeEngine:
         if self.fatal_error:raise RuntimeError(self.fatal_error)
         if self.process and self.backend==backend and self.process.poll() is None:return
         if on_stage:on_stage('Switching model')
-        self._stop()
+        with reason('model_switch'):self._stop()
         self.catalog.require(backend,force=True)
         from license_notices import warn_at_startup
         warn_at_startup(backend)
         if self.consumer_owner is None:raise RuntimeError('A backend requires the global queue consumer lease')
+        with measure('load','runtime_process',backend,backend):self._launch(backend)
+
+    def _launch(self,backend):
         owner_fd=self.consumer_owner.fileno()
         parent,child=socket.socketpair()
         environment={**os.environ,'MODEL_BACKEND':backend,'VOICEGEN_OVERRIDE_BACKEND':OVERRIDE_BACKEND}
@@ -107,6 +122,7 @@ class RuntimeEngine:
                 while True:
                     response,fds=receive(self.channel)
                     for fd in fds:os.close(fd)
+                    if 'lifecycle' in response:emit(response['lifecycle']);continue
                     if 'event' in response:
                         if on_stage:on_stage(response['event'])
                         continue

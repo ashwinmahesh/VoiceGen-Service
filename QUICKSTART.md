@@ -87,7 +87,7 @@ Open **Queue** in the header to monitor progress. Drag a left-side handle to reo
 
 ### Check resource use
 
-To check resource use, open **Observability** in the header. **Over time** charts VoiceGen's memory and CPU alongside the Mac's GPU utilization and memory, with windows of **5m, 30m, 1h, 6h, 24h, 3 days, and 7 days**. Filter by model, or choose **By job → View charts** for a shorter view of a take. Retries have separate attempts. Recording is automatic while the generator runs and keeps seven days in the existing project SQLite database; no setup change is needed. GPU values include other apps. See [what the measurements mean](docs/observability.md).
+To check resource use, open **Observability** in the header. **Over time** charts VoiceGen's memory and CPU alongside the Mac's GPU utilization and memory, with windows of **5m, 30m, 1h, 6h, 24h, 3 days, and 7 days**. Filter by model, or choose **By job → Charts & logs** for a shorter view of a take. Retries have separate attempts. Recording is automatic while the generator runs and keeps seven days in the existing project SQLite database. GPU values include other apps. For infrequent model changes, choose **Model activity**: individual load/unload durations, 24h/7/30/90-day windows, filters, and job links. These events stay for 90 days. Existing Higgs/MOSS installations need one `make setup-env MODEL=higgs` rebuild for native timing; new setup includes it automatically. See [what the measurements mean](docs/observability.md).
 
 ## 4. Generate through the API
 

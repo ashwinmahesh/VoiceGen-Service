@@ -12,6 +12,7 @@ from prompt_assets import REPOSITORY,REVISION,check_assets,check_runtime
 from prompt_expansion import strict_json
 from prompt_profiles import mode_spec
 from inference_locks import reservation_descriptors
+from lifecycle_events import event_pipe
 
 TARGETS=[
  ('Brighter resonance','Brighter forward resonance and lighter vocal weight within the stated register.',
@@ -90,10 +91,11 @@ def built_in(plan):
 def generate(plan):
     folder=check_assets();python=check_runtime();started=time.monotonic()
     try:
-        response=subprocess.run([str(python),str(PROJECT_ROOT/'prompt_worker.py')],
-            input=json.dumps({'weights':str(folder),'task':'candidate_variants','plan':{'messages':plan['messages']}}),text=True,capture_output=True,
-            env={**os.environ,'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1','TOKENIZERS_PARALLELISM':'false'},
-            pass_fds=reservation_descriptors(),timeout=180)
+        with event_pipe() as event_fd:
+            response=subprocess.run([str(python),str(PROJECT_ROOT/'prompt_worker.py')],
+                input=json.dumps({'weights':str(folder),'task':'candidate_variants','backend':plan['profile_spec']['backend'],'plan':{'messages':plan['messages']}}),text=True,capture_output=True,
+                env={**os.environ,'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1','TOKENIZERS_PARALLELISM':'false','VOICEGEN_LIFECYCLE_FD':str(event_fd)},
+                pass_fds=(*reservation_descriptors(),event_fd),timeout=180)
     except subprocess.TimeoutExpired:raise ValueError('Distinct voice planning exceeded 180 seconds; no speech was generated.') from None
     if response.returncode:raise ValueError('Distinct voice planning failed; retry or choose seed_only. No silent fallback was used.')
     data=json.loads(response.stdout)

@@ -66,8 +66,9 @@ Outputs retain original text, requested/effective controls, model revision/runti
 | Field or group | Interpretation |
 | --- | --- |
 | `real_time_factor` | Generation seconds divided by audio duration. |
-| `load_seconds` | Separate load timing where available; null for native Higgs/MOSS. |
-| Native `generation_seconds` | Includes child startup, model load, and speech generation; `timing_scope` describes it. |
+| `load_seconds` | Separate loader timing where available. New instrumented Higgs/MOSS builds measure native model loading and session construction; older outputs retain null. |
+| Native `unload_seconds` | Native session/model destruction before process exit, when its timing boundary was observed. |
+| Native `generation_seconds` | Includes child startup, load, synthesis, unload and output validation; `timing_scope` describes it. Load/unload values are subsets and must not be added to it. |
 | `peak_process_rss_gb` | Native child peak process memory, not total system/GPU memory. |
 | Torch MPS measurements | Current active/driver allocation differs from process-lifetime peak RSS. Older `current_device_memory_gb` means end-of-job MPS driver allocation. |
 | `effective.<model>.pacing` | Phrase text and inserted silence positions, or approximate native MOSS instructions. |

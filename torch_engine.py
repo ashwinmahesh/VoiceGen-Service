@@ -9,6 +9,7 @@ from importlib.metadata import version
 from assets import all_errors
 from capabilities import capabilities
 from config import MODEL_DIR, MODEL_SPECS, PROFILE, ROOT
+from lifecycle_events import measure
 
 
 class TorchEngine:
@@ -18,6 +19,10 @@ class TorchEngine:
         self.loader=loader
 
     def unload(self):
+        if self.model is None:return
+        with measure('unload','weights',PROFILE['backend'],MODEL_SPECS[PROFILE['backend']]['repo']):self._release()
+
+    def _release(self):
         self.model=None
         self.variant=None
         gc.collect()
@@ -31,6 +36,9 @@ class TorchEngine:
         if self.model is not None:return
         errors=all_errors()
         if errors:raise RuntimeError('; '.join(errors)+'. Run make download MODEL='+PROFILE['backend'])
+        with measure('load','weights',PROFILE['backend'],MODEL_SPECS[PROFILE['backend']]['repo']):self._construct()
+
+    def _construct(self):
         if self.loader is not None:
             self.model=self.loader(MODEL_DIR)
         else:

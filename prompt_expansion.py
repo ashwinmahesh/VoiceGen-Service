@@ -13,6 +13,7 @@ from prompt_policy import POLICY_VERSION
 from prompt_profiles import BACKENDS,load_profile,mode_spec
 from prompt_assets import REPOSITORY,REVISION,check_assets,check_runtime
 from voice_catalog import IDENTITY,atomic_json,now
+from lifecycle_events import event_pipe
 
 
 def capability(enabled):
@@ -124,9 +125,10 @@ def expand(request,effective,backend,guidance='',root=ROOT,transcript='',higgs_c
     folder=check_assets();python=check_runtime();started=time.monotonic()
     environment={**os.environ,'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1','TOKENIZERS_PARALLELISM':'false'}
     try:
-        response=subprocess.run([str(python),str(PROJECT_ROOT/'prompt_worker.py')],
-            input=json.dumps({'weights':str(folder),'plan':prompt}),text=True,capture_output=True,
-            env=environment,pass_fds=reservation_descriptors(),timeout=180)
+        with event_pipe() as event_fd:
+            response=subprocess.run([str(python),str(PROJECT_ROOT/'prompt_worker.py')],
+                input=json.dumps({'weights':str(folder),'plan':prompt,'backend':backend}),text=True,capture_output=True,
+                env={**environment,'VOICEGEN_LIFECYCLE_FD':str(event_fd)},pass_fds=(*reservation_descriptors(),event_fd),timeout=180)
     except subprocess.TimeoutExpired:raise ValueError('Expansion exceeded 180 seconds; no speech was generated.') from None
     if response.returncode:
         if backend=='higgs':raise ValueError('Higgs delivery suggestion failed or did not return a supported control. Keep the original, choose Emotion/Prosody/Style directly, or try a short acting direction such as quietly amused or more expressive.')

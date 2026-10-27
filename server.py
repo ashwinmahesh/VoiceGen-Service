@@ -10,7 +10,7 @@ from uuid import uuid4
 from config import ROOT, PROJECT_ROOT, PROFILE, DEFAULT_PORT, prepare_storage,model_context,validate_mount
 from queue_config import QUEUE_DB, DEFAULT_QUEUE_PORT
 from queue_schemas import QueueMove, QueueState, ModelList
-from resource_schemas import ResourceOverview, ResourceJobPage, ResourceJobHistory, JobLogs
+from resource_schemas import ResourceOverview, ResourceJobPage, ResourceJobHistory, JobLogs, ModelLifecyclePage
 from queue_status import api_status, storage_error_response, STORAGE_ERROR
 from model_readiness import ReadyModels,ModelUnavailable
 from runtime_engine import RuntimeEngine
@@ -163,6 +163,23 @@ def resource_history(window: Literal['5m','30m','1h','6h','24h','3d','7d']='5m',
 @app.get('/api/observability/jobs',response_model=ResourceJobPage,tags=['Observability'],summary='Recorded job attempts and resource peaks')
 def resource_jobs(model: str | None=Query(None,max_length=80), limit: int=Query(25,ge=1,le=100), offset: int=Query(0,ge=0)):
     return resource_monitor().store.jobs(model,limit,offset)
+
+
+@app.get('/api/observability/models',response_model=ModelLifecyclePage,tags=['Observability'],summary='Model load and unload history')
+def model_lifecycle(window: Literal['24h','7d','30d','90d','all']='30d',
+                    model: Literal['higgs','voxcpm2','qwen3','chatterbox','indextts','moss','fish'] | None=None,
+                    action: Literal['load','unload'] | None=None,
+                    scope: Literal['runtime_process','weights','native_weights','native_release','llm_weights'] | None=None,
+                    job_id: str | None=Query(None,pattern='^[a-f0-9]{32}$'),
+                    run_id: str | None=Query(None,pattern='^[a-f0-9]{32}$'),
+                    limit: int=Query(25,ge=1,le=100),offset: int=Query(0,ge=0)):
+    from lifecycle_store import LIFECYCLE_WINDOWS, LIFECYCLE_RETENTION, LIFECYCLE_SCOPES
+    import time
+    monitor=resource_monitor();end=time.time();seconds=LIFECYCLE_WINDOWS[window]
+    start=end-seconds if seconds is not None else None
+    return {**monitor.store.lifecycle(start,end,model,action,scope,job_id,run_id,limit,offset),
+            'window':window,'start':start,'end':end,'retention_seconds':LIFECYCLE_RETENTION,
+            'scopes':LIFECYCLE_SCOPES,'collector':monitor.status()}
 
 
 @app.get('/api/observability/jobs/{identity}',response_model=ResourceJobHistory,tags=['Observability'],summary='Resource charts for one job or selected attempt')

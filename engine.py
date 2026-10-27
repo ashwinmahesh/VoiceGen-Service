@@ -8,6 +8,7 @@ from capabilities import capabilities
 from directions import instructions, variant_for
 from emotion_steering import emotion_context
 from performance_controls import rendered_text,applied_performance,qwen_sampling
+from lifecycle_events import measure, reason
 
 
 def create_engine():
@@ -27,6 +28,11 @@ class Engine:
         self.loader = loader
 
     def unload(self):
+        if self.model is None:return
+        model=MODEL_SPECS.get(self.variant,{}).get('repo',self.variant or PROFILE['id'])
+        with measure('unload','weights',PROFILE['backend'],model):self._release()
+
+    def _release(self):
         self.model = None
         self.variant = None
         gc.collect()
@@ -36,10 +42,16 @@ class Engine:
     def load(self, variant):
         if self.variant == variant and self.model is not None:
             return
-        self.unload()
+        changing=self.model is not None
+        with reason('variant_change' if changing else 'first_use'):self.unload()
         errors = verify_assets(variant)
         if errors:
             raise RuntimeError('; '.join(errors)+'. Run make download.')
+        with measure('load','weights',PROFILE['backend'],MODEL_SPECS[variant]['repo'],
+                     'variant_change' if changing else 'first_use'):
+            self._construct(variant)
+
+    def _construct(self,variant):
         if self.loader is None:
             if PROFILE['backend']=='fish':
                 from fish_loader import load_fish_model
@@ -52,6 +64,7 @@ class Engine:
         from clean_env import clean_appledouble
         clean_appledouble(MODEL_DIR/MODEL_SPECS[variant]['subdir'])
         self.model = loader(str(MODEL_DIR/MODEL_SPECS[variant]['subdir']))
+        self.variant = variant
         if self.model.tokenizer is None or (PROFILE['backend']=='qwen3' and self.model.speech_tokenizer is None):
             self.unload()
             raise RuntimeError('Tokenizer/decoder failed to load. Run make download and check logs.')

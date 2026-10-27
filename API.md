@@ -38,6 +38,7 @@ The generator records memory, CPU, GPU, model, and job-attempt history while run
 
 ```sh
 curl --fail-with-body 'http://localhost:5743/api/observability?window=30m&model=higgs'
+curl --fail-with-body 'http://localhost:5743/api/observability/models?window=30d&model=higgs'
 curl --fail-with-body 'http://localhost:5743/api/observability/jobs?limit=25&offset=0'
 curl --fail-with-body 'http://localhost:5743/api/observability/jobs/JOB_ID_HERE'
 ```
@@ -59,6 +60,8 @@ The response includes `job_id`, `model`, `attempt`, current queue `status`, `ava
 Higgs and MOSS retain native runtime logs in the configured media store. Other models currently have sampled stages and generation errors, rather than reliable job-specific console output. Missing/disconnected logs and older attempts that were not retained separately return **200**, `available: false`, empty `text`, and an explanatory `notice`. The endpoint never substitutes a shared backend log or another attempt's output. An unknown job/attempt returns 404; invalid attempt numbers return 422; SQLite failures return 503.
 
 The Observability job view refreshes this output every five seconds alongside the charts. Its **Recorded stages** list comes from sampled resource history; it is separate from the raw runtime output and may miss brief stages.
+
+Model load/unload events have their own **30-day default view and 90-day retention**, with individual durations rather than an interpolated resource curve. `GET /api/observability/models` supports model, operation, boundary, and triggering job/attempt filters, pagination, status counts, and successful mean/max summaries. Python/native weight operations and backend process startup/shutdown are separate, potentially overlapping scopes; interrupted durations remain unknown.
 
 See [resource history](docs/observability.md) for response fields, sampling intervals, retention, model/phase labels, and measurement limits. These endpoints live on the generator, not the standalone queue API.
 
