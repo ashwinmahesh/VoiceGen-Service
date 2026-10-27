@@ -156,15 +156,15 @@ def searchable(value):
                    if not unicodedata.combining(c))
 
 
-def search(root, query="", tag="", sort="newest", limit=24, offset=0, deleted=False):
+def search(root, query="", tag="", sort="newest", limit=24, offset=0, deleted=False, tags=()):
     words = searchable(query).split()
-    chosen_tag = searchable(tag.strip())
+    chosen_tags = {searchable(item.strip()) for item in [tag, *tags] if item.strip()}
     rows = []
     for row in all_voices(root,deleted=deleted):
         haystack = searchable(" ".join([row.name, row.description, row.design_description, *row.tags]))
         if words and not all(word in haystack for word in words):
             continue
-        if chosen_tag and chosen_tag not in {searchable(item) for item in row.tags}:
+        if chosen_tags and chosen_tags.isdisjoint(searchable(item) for item in row.tags):
             continue
         rows.append(row)
     if sort == "name":
