@@ -724,7 +724,7 @@ function buildBackendSettings(){
   const spec=caps.controls[caps.backend]?.[key];if(!spec)continue;
   const names={exaggeration:'Exaggeration',cfg_weight:'Voice guidance',duration_factor:'Duration factor · higher is slower',interval_silence:'Pause between generated segments (ms)',emotion_alpha:'Emotion blend'};
   const label=el('label',names[key]);label.htmlFor=key;const input=el('input');input.id=key;input.type='number';input.min=spec.min;input.max=spec.max;input.step=key==='interval_silence'?50:.05;input.value=spec.default;
-  const field=el('div');field.id=key+'-field';field.append(label,input);$('backend-settings').append(field);
+  const field=el('div',null,'control-field');field.id=key+'-field';field.append(label,input);$('backend-settings').append(field);
  }
  for(const key of ['steps','guidance','temperature'])if(caps.controls[key])$(key).value=caps.controls[key].default;
  for(const option of $('max-tokens').options){option.disabled=Number(option.value)>caps.controls.max_tokens.max;if(caps.backend==='moss')option.textContent=option.value+' audio frames'}
@@ -759,7 +759,7 @@ function buildPerformanceControls(){
   const label=el('label','Delivery candidate');label.htmlFor='chatterbox-delivery-preset';const select=el('select');select.id='chatterbox-delivery-preset';
   for(const [id,name] of [['custom','Current settings'],['default','Recommended · provisional'],['neutral','Upstream neutral · 0.5'],['deliberate','More deliberate'],['expressive','More expressive · experimental']])select.append(new Option(name,id));
   select.onchange=()=>{const values={default:[caps.controls.chatterbox.exaggeration.default,caps.controls.chatterbox.cfg_weight.default],neutral:[.5,.5],deliberate:[.5,.3],expressive:[.7,.3]}[select.value];if(values){$('exaggeration').value=values[0];$('cfg_weight').value=values[1];$('temperature').value='.8';pendingKey=null;persist()}};
-  $('backend-presets').append(label,select);
+  const field=el('div',null,'control-field');field.append(label,select);$('backend-presets').append(field);
  }
  if(caps.backend==='indextts'){
   for(const [name,value] of [['Default duration',1],['Slightly slower · 1.1',1.1]]){const button=el('button',name,'secondary');button.type='button';button.onclick=()=>{$('duration_factor').value=value;pendingKey=null;persist()};$('backend-presets').append(button)}
@@ -767,20 +767,23 @@ function buildPerformanceControls(){
   for(const name of ['happy','angry','sad','afraid','disgusted','melancholic','surprised','calm']){
    const label=el('label',name[0].toUpperCase()+name.slice(1));label.htmlFor='index-vector-'+name;
    const input=el('input');input.id=label.htmlFor;input.type='number';input.min=0;input.max=1;input.step=.05;input.value=0;input.oninput=()=>updateIndexEmotion();
-   $('emotion-vector-fields').append(label,input);
+   const field=el('div',null,'control-field');field.append(label,input);$('emotion-vector-fields').append(field);
   }updateIndexEmotion();
  }
  if(caps.backend==='fish'){
   const label=el('label','Delivery tags · one per line');label.htmlFor='fish-delivery-tags';const input=el('textarea');input.id=label.htmlFor;input.maxLength=244;input.placeholder='low voice';
-  $('performance-controls').append(label,input,el('p','Up to four short directions. Brackets are added for you. Leave empty to follow the reference; acting can change the accent.','hint'));
+  const field=el('div',null,'control-field');field.append(label,input,el('p','Up to four short directions. Brackets are added for you. Leave empty to follow the reference; acting can change the accent.','hint'));$('performance-controls').append(field);
  }
  if(caps.backend==='higgs')for(const key of ['emotion','prosody','style']){
   const label=el('label',key[0].toUpperCase()+key.slice(1));label.htmlFor='higgs-'+key;const select=el('select');select.id=label.htmlFor;select.append(new Option('Follow recording',''));
-  for(const value of caps.controls.higgs[key].values)select.append(new Option(value.replaceAll('_',' '),value));$('performance-controls').append(label,select);
+  for(const value of caps.controls.higgs[key].values)select.append(new Option(value.replaceAll('_',' '),value));
+  const field=el('div',null,'control-field');field.append(label,select);$('performance-controls').append(field);
  }
  if(caps.controls[caps.backend]?.top_p){
   const details=el('details'),summary=el('summary','Advanced sampling');details.append(summary);
-  for(const [key,id,name] of [['top_p','model-top-p','Nucleus sampling'],['top_k','model-top-k','Sampling candidates']]){const spec=caps.controls[caps.backend][key];const label=el('label',name);label.htmlFor=id;const input=el('input');input.id=id;input.type='number';input.min=spec.min;input.max=spec.max;input.step=key==='top_p'?.05:1;input.value=spec.default;details.append(label,input)}
+  const fields=el('div',null,'sampling-fields control-stack');
+  for(const [key,id,name] of [['top_p','model-top-p','Nucleus sampling'],['top_k','model-top-k','Sampling candidates']]){const spec=caps.controls[caps.backend][key];const label=el('label',name);label.htmlFor=id;const input=el('input');input.id=id;input.type='number';input.min=spec.min;input.max=spec.max;input.step=key==='top_p'?.05:1;input.value=spec.default;const field=el('div',null,'control-field');field.append(label,input);fields.append(field)}
+  details.append(fields);
   $('performance-controls').append(details);
  }
  if(caps.backend==='qwen3'){
@@ -792,7 +795,7 @@ function buildPerformanceControls(){
   label.append(input,document.createTextNode('Longer punctuation pauses'));$('pacing-settings').append(label);
   const fields=el('div',null,'two');
   for(const [key,name] of [['sentence_pause_ms','Extra pause after sentences (ms)'],['comma_pause_ms','Extra pause after commas (ms)']]){
-   const spec=caps.controls[caps.backend][key],field=el('div'),label=el('label',caps.backend==='moss'?name.replace('Extra pause','Pause target'):name),number=el('input');label.htmlFor=key;number.id=key;number.type='number';number.min=spec.min;number.max=spec.max;number.step=50;number.value=spec.default;field.append(label,number);fields.append(field);
+   const spec=caps.controls[caps.backend][key],field=el('div',null,'control-field'),label=el('label',caps.backend==='moss'?name.replace('Extra pause','Pause target'):name),number=el('input');label.htmlFor=key;number.id=key;number.type='number';number.min=spec.min;number.max=spec.max;number.step=50;number.value=spec.default;field.append(label,number);fields.append(field);
   }
   $('pacing-settings').append(fields,el('p',caps.backend==='moss'?'Targets guide the native model in a single take to preserve voice identity. Exact millisecond pauses are not guaranteed.':'Keeps the same reference voice for each phrase and adds these gaps to its natural pauses. Phrase delivery can differ from a whole-line take. Disable for continuous delivery. Voice design and manual Fish tags use whole-line delivery.','hint'));
   input.onchange=updatePacingControls;

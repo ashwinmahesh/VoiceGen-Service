@@ -16,7 +16,7 @@ Screenshots use benign demonstration records and fake inference; displayed timin
 
 **Design a voice** stays visible when the current model needs a recording, such as Higgs. Open it and choose a set-up VoxCPM2, Qwen3-TTS, or MOSS VoiceGenerator from the model menu. If none is set up, the tab stays disabled and its tooltip lists those alternatives.
 
-![Full Generate page with voice controls and multiple listening options](docs/images/studio-page.jpg)
+![Full Generate page with Higgs performance controls and audio playback](docs/images/studio-page.jpg)
 
 **Collection:** browse previous takes or save and upload voices with names, descriptions, and searchable tags.
 
