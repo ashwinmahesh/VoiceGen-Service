@@ -25,6 +25,7 @@ let catalogOffset = 0, searchTimer = null, catalogRequest = 0, refreshRequest=0,
 let collectionDeleteTarget=null,collectionChanging=false;
 let monitoredImmediate=false,higgsSelectedControls={},suspendedHiggsDirections={};
 let recordingStore=null,recordingSelection=null,recordingPoller=null,healthSnapshot=null,studioInitialized=false,studioStarting=false;
+let returnPoller=null,returnSelection=null,returnSummary=null;
 const enabledPlaceholders=new WeakMap();
 function disabledPlaceholder(input,reason){
  if(input.disabled){
@@ -42,9 +43,10 @@ function post(path,body){return api(path,{method:'POST',headers:{'Content-Type':
 function error(message){const target=$($('queue-dialog').open?'queue-error':browsePage?'page-error':'error');target.textContent=message;target.hidden=false}function announce(text){$('announcement').textContent=text}
 function immediateInProgress(){return !!watching&&monitoredImmediate&&$('generate-immediately').checked}
 function controls(){
+ $('form').inert=!studioInitialized||changingModel;$('form').setAttribute('aria-busy',String(!studioInitialized||changingModel));
  updateSeedMode();
- const loading=immediateInProgress();$('generate').disabled=!online||!queueWritable||submitting||uploading||enhancing||changingModel||transcriptSaving||!modelChoiceReady||unresolvedHiggsControls().length>0||loading;
- $('generate').setAttribute('aria-busy',String(submitting||loading));$('generate-label').textContent=submitting?'Submitting…':loading?'Generating speech…':'Generate speech';
+ const loading=immediateInProgress();$('generate').disabled=!studioInitialized||!online||!queueWritable||submitting||uploading||enhancing||changingModel||transcriptSaving||!modelChoiceReady||unresolvedHiggsControls().length>0||loading;
+ $('generate').setAttribute('aria-busy',String(!studioInitialized||submitting||loading));$('generate-label').textContent=!studioInitialized?'Opening studio…':submitting?'Submitting…':loading?'Generating speech…':'Generate speech';
  $('generate-icon').className=submitting||loading?'button-spinner':'';$('generate-icon').textContent=submitting||loading?'':'↗';
  $('unload').disabled=!online||busy||enhancing;$('new-seed').disabled=busy;updatePromptExpansion();
 }
@@ -52,6 +54,7 @@ function clearExpansion(){appliedExpansion=null;pendingExpansion=null;updateProm
 let generationClock=null;
 function elapsedTime(milliseconds){const seconds=Math.max(0,Math.floor(milliseconds/1000)),minutes=Math.floor(seconds/60);return minutes>=60?`${Math.floor(minutes/60)}:${String(minutes%60).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`:`${minutes}:${String(seconds%60).padStart(2,'0')}`}
 function updateElapsed(){
+ updateReturnElapsed();
  for(const target of document.querySelectorAll('[data-generation-elapsed]')){
   target.hidden=!generationClock;if(!generationClock)continue;
   target.textContent=`Elapsed ${elapsedTime((generationClock.end??Date.now())-generationClock.start)} · ${generationClock.label}`;
@@ -69,7 +72,7 @@ function batchTiming(batch){
  generationTiming(batch.id,batch.created_at,running?`${running.stage} · option ${running.candidate_index} of ${batch.candidate_count}`:finished?`${batch.done_count} of ${batch.candidate_count} ready`:'Waiting in queue',finished?(completed||new Date().toISOString()):null);
 }
 setInterval(updateElapsed,1000);
-function resumeRecording(){updateElapsed();if(document.hidden)return;recordingPoller?.refresh();if(studioInitialized)health();else startStudio()}
+function resumeRecording(){updateElapsed();if(document.hidden)return;recordingPoller?.refresh();if(browsePage&&studioInitialized)watchReturnRecording();if(studioInitialized)health();else startStudio()}
 document.addEventListener('visibilitychange',resumeRecording);window.addEventListener('focus',resumeRecording);window.addEventListener('pageshow',resumeRecording);window.addEventListener('online',resumeRecording);
 
 function updatePromptExpansion(){
@@ -524,13 +527,20 @@ $('search').oninput = () => {
   searchTimer=setTimeout(()=>loadCollection().catch(exc=>error(exc.message)),250);
 };
 function waveform(peaks){const canvas=$('waveform'),ratio=devicePixelRatio||1;canvas.width=canvas.clientWidth*ratio;canvas.height=110*ratio;const c=canvas.getContext('2d');c.clearRect(0,0,canvas.width,canvas.height);c.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent');if(!peaks?.length)return;const step=canvas.width/peaks.length;peaks.forEach((peak,i)=>{const h=Math.max(2*ratio,peak*canvas.height*.9);c.fillRect(i*step,(canvas.height-h)/2,Math.max(1,step*.55),h)})}
+function markSelectedOption(identity){
+ for(const [id,card] of candidateCards){
+  const selected=id===identity;card.element.dataset.selected=String(selected);
+  const button=card.element.querySelector('[data-select-option]');
+  if(button){button.textContent=selected?'Selected':'Select option';button.setAttribute('aria-pressed',String(selected))}
+ }
+}
 function showResult(row){if(browsePage){location.href='/?artifact='+encodeURIComponent(row.id);return}const sameAudio=latest?.id===row.id&&$('player').getAttribute('src')===row.audio_url;
  if(currentCandidates&&row.candidate_batch_id!==currentCandidates.id){recordingPoller?.stop();watching=null;monitoredImmediate=false;currentCandidates=null;candidateCards.clear();$('candidate-results').hidden=true;controls()}
  latest=row;
  if(currentCandidates&&currentCandidates.id===row.candidate_batch_id)rememberRecording({kind:'candidates',id:currentCandidates.id,selected:row.id,model:row.backend});
  else rememberRecording({kind:recordingSelection?.kind==='job'&&recordingSelection.id===row.id?'job':'artifact',id:row.id,model:row.backend});
  $('result-resources').href='/observability?job='+encodeURIComponent(row.id);
- renderExpansion(candidateExpansion(row),'result-expansion-details','Saved with this take');for(const [id,card] of candidateCards)card.element.dataset.selected=String(id===row.id);$('result-title').textContent=row.candidate_index?'Option '+row.candidate_index+' · selected take':'Your latest take';const details=[row.preset_voice?'Preset '+row.preset_voice:'',row.clone_mode==='combined'?'Combined identity and recorded performance':row.clone_mode==='continuation'?'Continued reference performance':'',row.accent?'Accent direction: '+row.accent:'',row.steering_emotion?`Experimental ${row.steering_emotion} steering · ${row.steering_strength}`:''].filter(Boolean);$('direction-summary').textContent=details.join(' · ');$('direction-summary').hidden=!details.length;$('empty').hidden=true;$('working').hidden=true;$('result').hidden=false;if(!sameAudio)$('player').src=row.audio_url;$('download').href=row.audio_url+'?download=true';$('metrics').textContent=`${row.duration.toFixed(1)} seconds · ${row.sample_rate/1000} kHz · ${row.transformation?`Pause edit ${row.transformation.processing_seconds}s · Original ${row.timing_scope?'process total':'synthesis'}`:row.timing_scope?'Total process':'Synthesis'} ${row.generation_seconds}s${row.cold_load&&Number.isFinite(row.load_seconds)?` · Load ${row.load_seconds}s`:``}`;$('result-seed').textContent=`Seed ${row.seed}`;$('path').textContent=row.path;$('truncated').hidden=!row.possibly_truncated;$('save-hint').textContent='Use a clean, natural take as your character reference. Up to the first 30 seconds are saved.';waveform(row.waveform)}
+ renderExpansion(candidateExpansion(row),'result-expansion-details','Saved with this take');markSelectedOption(row.id);$('result-title').textContent=row.candidate_index?'Option '+row.candidate_index+' · selected take':'Your latest take';const details=[row.preset_voice?'Preset '+row.preset_voice:'',row.clone_mode==='combined'?'Combined identity and recorded performance':row.clone_mode==='continuation'?'Continued reference performance':'',row.accent?'Accent direction: '+row.accent:'',row.steering_emotion?`Experimental ${row.steering_emotion} steering · ${row.steering_strength}`:''].filter(Boolean);$('direction-summary').textContent=details.join(' · ');$('direction-summary').hidden=!details.length;$('empty').hidden=true;$('working').hidden=true;$('result').hidden=false;if(!sameAudio)$('player').src=row.audio_url;$('download').href=row.audio_url+'?download=true';$('metrics').textContent=`${row.duration.toFixed(1)} seconds · ${row.sample_rate/1000} kHz · ${row.transformation?`Pause edit ${row.transformation.processing_seconds}s · Original ${row.timing_scope?'process total':'synthesis'}`:row.timing_scope?'Total process':'Synthesis'} ${row.generation_seconds}s${row.cold_load&&Number.isFinite(row.load_seconds)?` · Load ${row.load_seconds}s`:``}`;$('result-seed').textContent=`Seed ${row.seed}`;$('path').textContent=row.path;$('truncated').hidden=!row.possibly_truncated;$('save-hint').textContent='Use a clean, natural take as your character reference. Up to the first 30 seconds are saved.';waveform(row.waveform)}
 let pauseSource=null,pauseSpans=[],pausePreviewEnd=null,pausePreviewTimer=null,pausePendingKey=null,pauseSaving=false;
 function pauseError(message){$('pause-error').textContent=message;$('pause-error').hidden=false}
 function renderPauseSpans(){
@@ -584,7 +594,7 @@ function renderCandidates(batch){
   if(job.result){
    const audio=el('audio');audio.controls=true;audio.preload='none';audio.src=job.result.audio_url;audio.setAttribute('aria-label','Listen to option '+job.candidate_index);card.append(audio);
    const actions=el('div',null,'card-actions'),select=el('button','Select option','secondary'),save=el('button','Save voice','secondary'),download=el('a','Download WAV','secondary');
-   select.type=save.type='button';select.onclick=()=>showResult(job.result);
+   select.type=save.type='button';select.dataset.selectOption=job.id;select.setAttribute('aria-pressed',String(latest?.id===job.id));select.textContent=latest?.id===job.id?'Selected':'Select option';select.onclick=()=>showResult(job.result);
    save.onclick=()=>openVoiceEditor({output_id:job.result.id,name:'',description:job.result.description||'',transcript:savedTranscript(job.result),tags:[]});
    download.href=job.result.audio_url+'?download=true';download.download='';actions.append(select,save,download);card.append(actions);
   }else if(job.status==='error'&&!job.paused&&job.backend===caps?.backend){
@@ -601,17 +611,66 @@ function renderCandidates(batch){
   candidateCards.set(job.id,{signature,element:card});
  }
 }
+function updateReturnElapsed(){
+ const target=$('recording-return-elapsed'),summary=returnSummary;
+ if(!summary?.created){target.textContent='';return}
+ const start=Date.parse(summary.created),end=Date.parse(summary.completed);
+ if(!Number.isFinite(start)){target.textContent='';return}
+ const active=['queued','running'].includes(summary.status);
+ target.textContent=active?` · Elapsed ${elapsedTime(Date.now()-start)}`:Number.isFinite(end)?` · Elapsed ${elapsedTime(end-start)}`:'';
+}
+function showReturnRecording(selection,summary,connection='connected'){
+ returnSelection=selection;returnSummary=summary;
+ const bar=$('recording-return');bar.hidden=!selection;if(!selection)return;
+ const view=VoiceRecording.presentation(summary,connection);
+ bar.dataset.active=String(view.active);bar.dataset.connection=connection;
+ $('recording-return-heading').textContent=view.title;
+ const name=availableModels.find(row=>row.id===summary?.backend)?.name||summary?.backend||'';
+ const detail=summary?[name,summary.count>1?`${summary.ready} of ${summary.count} options ready`:summary.ready?'Audio ready':'One take',summary.failed?`${summary.failed} failed`:summary.stage].filter(Boolean).join(' · '):'Checking progress. Your request is saved.';
+ $('recording-return-detail').textContent=detail;
+ $('recording-return-link').href=browsePage?VoiceRecording.url(selection)+'#listening-room':'#listening-room';
+ $('recording-return-link').textContent=(browsePage?view.action:view.active?'View progress':'View recording')+' ↗';
+ updateReturnElapsed();
+}
+function saveRecordingSummary(data){
+ if(!recordingSelection)return;
+ recordingSelection.summary=VoiceRecording.summary(recordingSelection,data);recordingStore?.save(recordingSelection);
+ showReturnRecording(recordingSelection,recordingSelection.summary);
+ $('recording-away-hint').hidden=!['queued','running'].includes(data.status);
+}
+function watchReturnRecording(){
+ if(!browsePage||!recordingStore)return;
+ const selection=recordingStore.selection();returnPoller?.stop();
+ if(!selection){showReturnRecording(null);return}
+ showReturnRecording(selection,selection.summary,'checking');
+ const path=selection.kind==='candidates'?'/api/candidates/':selection.kind==='job'?'/api/jobs/':'/api/artifacts/';
+ returnPoller=VoiceRecording.createPoller({interval:5000,read:signal=>api(path+selection.id,{signal}),
+  onData:data=>{const value=selection.kind==='artifact'?{status:'done',backend:data.backend,count:1,ready:1,created:null}:VoiceRecording.summary(selection,data);showReturnRecording(selection,value);return !['queued','running'].includes(value.status)},
+  onConnection:offline=>{if(offline)showReturnRecording(selection,returnSummary,'reconnecting')},
+  onMissing:()=>{if(recordingStore.selection()?.id===selection.id)recordingStore.clear();showReturnRecording(null)},
+  onError:()=>showReturnRecording(selection,returnSummary,'reconnecting')
+ });
+}
+window.addEventListener('storage',event=>{
+ if(!browsePage||event.key!==recordingStore?.key)return;
+ const saved=recordingStore.selection();
+ if(saved?.id!==returnSelection?.id||saved?.selected!==returnSelection?.selected||saved?.summary?.status!==returnSummary?.status)watchReturnRecording();
+});
+$('recording-reconnect').onclick=()=>{recordingPoller?.refresh();health()};
+function showEmptyRoom(){if(browsePage)return;$('working').hidden=true;$('empty').hidden=false}
 function rememberRecording(selection){
  if(browsePage)return;
  const same=recordingSelection?.kind===selection.kind&&recordingSelection?.id===selection.id;
  recordingSelection={...(same?recordingSelection:{}),...selection,model:selection.model||(same?recordingSelection.model:null)||caps?.backend};
  if(!same){const clock=selection.timing;generationClock=clock&&clock.identity===selection.id&&Number.isFinite(clock.start)?clock:null;updateElapsed()}
  recordingStore?.save(recordingSelection);
- history.replaceState(null,'',VoiceRecording.url(recordingSelection));
+ showReturnRecording(recordingSelection,recordingSelection.summary,recordingSelection.summary?'connected':'checking');
+ history.replaceState(null,'',VoiceRecording.url(recordingSelection)+location.hash);
 }
 function recordingConnection(reconnecting){
  $('recording-connection').hidden=!reconnecting;
- $('recording-connection').textContent='Connection interrupted. Your request is saved; reconnecting to check progress…';
+ $('recording-connection-message').textContent='Your request is saved. We’ll update your recording when the connection returns.';
+ if(recordingSelection)showReturnRecording(recordingSelection,recordingSelection.summary,reconnecting?'reconnecting':recordingSelection.summary?'connected':'checking');
 }
 function finishMonitoring(){watching=null;monitoredImmediate=false;controls();refreshQueue().catch(()=>{})}
 function monitorRecording(path,onData){
@@ -619,7 +678,7 @@ function monitorRecording(path,onData){
  recordingPoller=VoiceRecording.createPoller({
   read:signal=>api(path,{signal}),onConnection:recordingConnection,
   onData:value=>{const finished=onData(value);if(finished)finishMonitoring();return finished},
-  onMissing:()=>{recordingConnection(false);recordingStore?.clear();recordingSelection=null;generationClock=null;updateElapsed();history.replaceState(null,'','/');$('working').hidden=true;$('candidate-results').hidden=true;$('empty').hidden=!!latest;error('This recording is no longer available. Choose another take from Collection or Queue.');finishMonitoring()},
+  onMissing:()=>{recordingConnection(false);recordingStore?.clear();recordingSelection=null;generationClock=null;showReturnRecording(null);updateElapsed();history.replaceState(null,'','/');$('working').hidden=true;$('candidate-results').hidden=true;$('empty').hidden=!!latest;error('This recording is no longer available. Choose another take from Collection or Queue.');finishMonitoring()},
   onError:exc=>{recordingConnection(false);error(exc.message);finishMonitoring()}
  });
 }
@@ -629,9 +688,10 @@ function watchCandidates(identity,immediate=null,selected=null){
  if(currentCandidates?.id!==identity){currentCandidates=null;candidateCards.clear();$('candidate-cards').replaceChildren();$('candidate-results').hidden=true;latest=null;$('result').hidden=true;}
  selected=selected||(recordingSelection?.kind==='candidates'&&recordingSelection.id===identity?recordingSelection.selected:null);
  rememberRecording({kind:'candidates',id:identity,selected});
- watching=token;monitoredImmediate=immediate??true;controls();$('error').hidden=true;$('empty').hidden=true;$('working').hidden=false;$('stage').textContent='Reconnecting to your recording…';
+ watching=token;monitoredImmediate=immediate??true;controls();$('error').hidden=true;$('empty').hidden=true;$('working').hidden=false;$('stage').textContent='Opening your recording…';$('working-description').textContent='Fetching progress and audio. Your accepted request continues on the server.';
  $('working-job-resources').hidden=true;
  monitorRecording('/api/candidates/'+identity,batch=>{
+  saveRecordingSummary(batch);
   monitoredImmediate=['queued','running'].includes(batch.status)&&batch.jobs.some(job=>job.generate_immediately);controls();$('working').hidden=true;
   renderCandidates(batch);
   const preferred=batch.jobs.find(job=>job.result?.id===recordingSelection?.selected);
@@ -645,10 +705,11 @@ function watch(identity){
  if(browsePage){location.href='/?job='+encodeURIComponent(identity);return}
  if(watching===identity){recordingPoller?.refresh();return}
  currentCandidates=null;latest=null;$('candidate-results').hidden=true;watching=identity;monitoredImmediate=true;rememberRecording({kind:'job',id:identity});controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
- $('stage').textContent='Reconnecting to your recording…';$('working-job-resources').hidden=false;$('working-job-resources').href='/observability?job='+encodeURIComponent(identity);
+ $('stage').textContent='Opening your recording…';$('working-description').textContent='Fetching progress and audio. Your accepted request continues on the server.';$('working-job-resources').hidden=false;$('working-job-resources').href='/observability?job='+encodeURIComponent(identity);
  monitorRecording('/api/jobs/'+identity,job=>{
   // Queue/Observability links often point at one child. Recover its entire listening room.
   if(job.candidate_batch_id){watchCandidates(job.candidate_batch_id,job.generate_immediately,job.result?.id);return false}
+  saveRecordingSummary(job);
   monitoredImmediate=['queued','running'].includes(job.status)&&job.generate_immediately;controls();$('stage').textContent=job.stage;
   generationTiming(identity,job.created_at,job.stage,!['queued','running'].includes(job.status)?job.completed_at||new Date().toISOString():null);
   if(job.status==='done'){showResult(job.result);refresh().catch(exc=>error(exc.message));announce('Speech ready');return true}
@@ -981,6 +1042,7 @@ async function startStudio(){
  if(studioInitialized||studioStarting)return;studioStarting=true;
  try{
   await health();if(!recordingStore)return;
+  if(browsePage)watchReturnRecording();
   const initial=await loadModelChoices(),savedModel=recordingStore.model()||recordingStore.selection()?.model;
   const model=availableModels.some(row=>row.id===savedModel)?savedModel:initial;
   if(!model){error('No set-up voice models are ready. Run make setup or reconnect model storage.');return}
@@ -997,8 +1059,12 @@ async function startStudio(){
    }
    localStorage.removeItem(storageKey+'-candidates');localStorage.removeItem(storageKey+'-job');
   }
+  if(!browsePage&&!recordingSelection)showEmptyRoom();
   studioInitialized=true;
- }catch(exc){error(exc.message)}finally{studioStarting=false}
+  if(!browsePage&&location.hash==='#listening-room')requestAnimationFrame(()=>{
+   const target=$('listening-room');target.scrollIntoView({block:'start'});target.focus({preventScroll:true});
+  });
+ }catch(exc){error(exc.message)}finally{studioStarting=false;controls()}
 }
 startStudio();setInterval(()=>{if(studioInitialized)health();else startStudio()},5000);
 
@@ -1212,8 +1278,8 @@ async function openRecording(selection){
  if(selection.kind==='candidates')watchCandidates(selection.id,null,selection.selected);
  else if(selection.kind==='job')watch(selection.id);
  else{
-  try{const row=await api('/api/artifacts/'+selection.id);showResult(row)}
-  catch(exc){if(exc.status===404){recordingStore?.clear();recordingSelection=null;history.replaceState(null,'','/');error('This recording is no longer available. Choose another take from Collection.')}else throw exc}
+  try{const row=await api('/api/artifacts/'+selection.id);showResult(row);if(!recordingSelection.summary){recordingSelection.summary={status:'done',backend:row.backend,count:1,ready:1};recordingStore?.save(recordingSelection);showReturnRecording(recordingSelection,recordingSelection.summary)}}
+  catch(exc){if(exc.status===404){recordingStore?.clear();recordingSelection=null;showReturnRecording(null);showEmptyRoom();history.replaceState(null,'','/');error('This recording is no longer available. Choose another take from Collection.')}else throw exc}
  }
 }
 async function openPageSelection(){

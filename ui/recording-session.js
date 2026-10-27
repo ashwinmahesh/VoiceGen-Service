@@ -10,11 +10,26 @@ function fromURL(search){
 }
 function resolveSelection(explicit,saved){return explicit?{...(saved?.kind===explicit.kind&&saved?.id===explicit.id?saved:{}),...explicit}:saved}
 function url(selection){const params=new URLSearchParams({[selection.kind]:selection.id});if(selection.kind==='candidates'&&validId(selection.selected))params.set('option',selection.selected);return '/?'+params}
+function summary(selection,data){
+ const batch=selection.kind==='candidates',jobs=batch?data.jobs:[data],active=['queued','running'].includes(data.status);
+ const running=jobs.find(job=>job.status==='running');
+ return {status:data.status,backend:data.backend||jobs[0]?.backend||selection.model,count:batch?data.candidate_count:1,
+  ready:batch?data.done_count:data.result?1:0,failed:jobs.filter(job=>job.status==='error').length,
+  stage:running?.stage||(active?'Waiting in queue':''),created:data.created_at,
+  completed:active?null:jobs.map(job=>job.completed_at).filter(Boolean).sort().at(-1)||data.completed_at||null};
+}
+function presentation(summary,connection='connected'){
+ const active=['queued','running'].includes(summary?.status);
+ if(connection!=='connected')return {title:connection==='reconnecting'?'Reconnecting to your recording…':'Opening your recording…',active:false,action:'Return to recording'};
+ const count=summary.count||1,ready=summary.ready||0;
+ const title=active?'Recording in progress':summary.status==='done'?'Your recording is ready':summary.status==='partial'?`${ready} of ${count} options ready`:summary.status==='deleted'?'Recording removed from queue':'Recording needs attention';
+ return {title,active,action:active?'Return to recording':summary.status==='done'?'Listen to recording':'Review recording'};
+}
 function createStore(storage,project){
  const key='voice-studio-session-v1:'+project;
  function read(){try{return JSON.parse(storage.getItem(key)||'{}')||{}}catch{return {}}}
  function update(values){try{storage.setItem(key,JSON.stringify({...read(),...values}))}catch{}}
- return {selection:()=>{const value=read().selection;return validSelection(value)?value:null},save:selection=>update({selection}),clear:()=>update({selection:null}),model:()=>read().model,setModel:model=>update({model})};
+ return {key,selection:()=>{const value=read().selection;return validSelection(value)?value:null},save:selection=>update({selection}),clear:()=>update({selection:null}),model:()=>read().model,setModel:model=>update({model})};
 }
 async function readJSON(path,{signal,timeout=10000,...options}={}){
  const controller=new AbortController(),abort=()=>controller.abort();
@@ -55,6 +70,6 @@ function createPoller({read,onData,onConnection=()=>{},onMissing=()=>{},onError=
  Promise.resolve().then(run);
  return {stop,refresh};
 }
-const api={validId,fromURL,resolveSelection,url,createStore,readJSON,createPoller};
+const api={validId,fromURL,resolveSelection,url,summary,presentation,createStore,readJSON,createPoller};
 if(typeof module==='object'&&module.exports)module.exports=api;else root.VoiceRecording=api;
 })(typeof window==='object'?window:globalThis);

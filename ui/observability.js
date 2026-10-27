@@ -104,7 +104,7 @@ async function loadJobResources(token){
  let currentJob=null;
  try{currentJob=await api('/api/jobs/'+encodeURIComponent(selectedJob))}catch(exc){if(exc.status!==404&&token===requestNumber)$('job-log-notice').textContent='Recording details temporarily unavailable.'}
  if(token!==requestNumber)return;
- $('job-recording').href=VoiceRecording.url(currentJob?.candidate_batch_id?{kind:'candidates',id:currentJob.candidate_batch_id,selected:currentJob.result?.id}:{kind:'job',id:selectedJob});$('job-recording').hidden=false;
+ $('job-recording').href=VoiceRecording.url(currentJob?.candidate_batch_id?{kind:'candidates',id:currentJob.candidate_batch_id,selected:currentJob.result?.id}:{kind:'job',id:selectedJob})+'#listening-room';$('job-recording').hidden=false;
  let job;
  try{const suffix=selectedRun?'?run_id='+encodeURIComponent(selectedRun):'';job=await api('/api/observability/jobs/'+encodeURIComponent(selectedJob)+suffix)}
  catch(exc){
