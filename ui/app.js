@@ -448,6 +448,7 @@ const queueIconPaths={
  options:'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
  resources:'M4 3v18h17M8 16v-5M13 16V7M18 16v-8',
  retry:'M3 10a9 9 0 1 1 1 8M3 4v6h6',
+ audio:'M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2',
  grip:'M8 5h.01M16 5h.01M8 12h.01M16 12h.01M8 19h.01M16 19h.01'
 };
 function queueIcon(name){
@@ -457,6 +458,8 @@ function queueIcon(name){
 }
 function queueLabel(control,icon,label){control.replaceChildren(queueIcon(icon),el('span',label));return control}
 function queueControl(tag,label,icon,cls='secondary'){return queueLabel(el(tag,null,cls),icon,label)}
+// Row actions show only their icon; the action name is the accessible label and the hover tooltip.
+function queueIconControl(tag,label,icon,cls='secondary'){const control=el(tag,null,cls+' queue-icon-button');control.replaceChildren(queueIcon(icon));control.setAttribute('aria-label',label);control.title=label;return control}
 for(const[id,icon,label]of [['queue-clear','clear','Clear pending'],['queue-prev','previous','Previous'],['queue-next','next','Next']])queueLabel($(id),icon,label);
 $('close-queue').replaceChildren(queueIcon('close'));
 $('open-queue').prepend(queueIcon('queue'));
@@ -891,16 +894,16 @@ async function refreshQueue(){
   if(progress)content.append(progressBar(progress,row.stage,'queue-progress'));
   if(row.error)content.append(el('p',row.error,'error'));
   const actions=el('div',null,'card-actions queue-actions');
-  if(row.candidate_batch_id){const options=queueControl('button','View all options','options');options.type='button';options.onclick=()=>{$('queue-dialog').close();watchCandidates(row.candidate_batch_id)};actions.append(options);}
-  const inspect=queueControl('button',row.status==='done'?'Open take':'Monitor',row.status==='done'?'play':'monitor','secondary queue-monitor');inspect.type='button';inspect.onclick=()=>{$('queue-dialog').close();row.result?showResult(row.result):watch(row.id)};actions.append(inspect);
-  if(row.status!=='queued'){const resourceLink=queueControl('a','Resources & logs','resources');resourceLink.href='/observability?job='+encodeURIComponent(row.id);actions.append(resourceLink)}
+  if(row.candidate_batch_id){const options=queueIconControl('button','View all options','options');options.type='button';options.onclick=()=>{$('queue-dialog').close();watchCandidates(row.candidate_batch_id)};actions.append(options);}
+  const inspect=queueIconControl('button',row.status==='done'?'Open take':'Monitor',row.status==='done'?'audio':'monitor','secondary queue-monitor');inspect.type='button';inspect.onclick=()=>{$('queue-dialog').close();row.result?showResult(row.result):watch(row.id)};actions.append(inspect);
+  if(row.status!=='queued'){const resourceLink=queueIconControl('a','Resources & logs','resources');resourceLink.href='/observability?job='+encodeURIComponent(row.id);actions.append(resourceLink)}
   if(row.status==='queued'){
-   const run=queueControl('button','Run Now','play','secondary queue-run-now');run.type='button';run.disabled=!!row.paused;
-   run.title=row.paused?row.stage:'Run next, ahead of other waiting jobs. The current batch finishes first.';
+   const run=queueIconControl('button','Run Now','play','secondary queue-run-now');run.type='button';run.disabled=!!row.paused;
+   if(row.paused)run.title='Run Now · '+row.stage;
    run.onclick=()=>changeQueueOrder(row.id,null,true);actions.append(run);
-   const remove=queueControl('button','Remove','remove','secondary queue-remove');remove.type='button';remove.onclick=async()=>{try{await api('/api/queue/'+row.id,{method:'DELETE'});await refreshQueue()}catch(exc){error(exc.message)}};actions.append(remove);
+   const remove=queueIconControl('button','Remove','remove','secondary queue-remove');remove.type='button';remove.onclick=async()=>{try{await api('/api/queue/'+row.id,{method:'DELETE'});await refreshQueue()}catch(exc){error(exc.message)}};actions.append(remove);
   }
-  if(row.status==='error'&&!row.paused){const retry=queueControl('button','Retry same entry','retry');retry.type='button';retry.onclick=async()=>{try{const job=await post('/api/jobs/'+row.id+'/retry',{});$('queue-dialog').close();watch(job.id);await refreshQueue()}catch(exc){error(exc.message)}};actions.append(retry)}
+  if(row.status==='error'&&!row.paused){const retry=queueIconControl('button','Retry same entry','retry');retry.type='button';retry.onclick=async()=>{try{const job=await post('/api/jobs/'+row.id+'/retry',{});$('queue-dialog').close();watch(job.id);await refreshQueue()}catch(exc){error(exc.message)}};actions.append(retry)}
   card.append(content,actions);$('queue-entries').append(card);
  }
  $('queue-entries').scrollTop=queueScroll;
