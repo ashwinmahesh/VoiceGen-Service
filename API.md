@@ -387,7 +387,14 @@ List responses contain `data`, `total`, `counts`, `limit`, `offset`, `has_more`,
 
 Deletion affects **waiting work only**. It does not cancel active generation or delete completed audio, History, or voices. Deleting an already deleted job reports zero removed. Retrying requires an `error` job whose model is ready; other states return 409. If its model is unavailable, retry returns 422 with setup guidance and leaves the failed entry unchanged.
 
-`POST /api/queue/pause` pauses normal waiting work; `/api/queue/resume` resumes it. Both APIs share this saved switch. Immediate jobs can run while paused. A running job is never interrupted. Both endpoints return `{"paused": true}` or `{"paused": false}`, including the saved state shared by the two services.
+`POST /api/queue/pause` pauses normal waiting work; `/api/queue/resume` resumes it. Both APIs share this saved switch, and it is kept after restarts. Jobs submitted with `generate_immediately:true`, and jobs given Run Now, can still run while paused. A running job is never interrupted. Neither endpoint takes a body. Both return `{"paused": true}` or `{"paused": false}`, the saved state shared by the two services. Read the current state from generator `/health` `queue_paused` or queue `/health` `paused`. The generator's value is only reliable while its `queue_storage.status` is `ready`.
+
+```sh
+curl --fail-with-body -X POST http://localhost:5743/api/queue/pause    # or :55205
+curl --fail-with-body -X POST http://localhost:55205/api/queue/resume
+```
+
+Every page header has a **Process queue** switch beside the Queue button. On means waiting jobs run; off means the queue is paused. It calls these routes on the generator, as does the Queue dialog's Pause/Resume button. Both follow `queue_paused` from the five-second health poll, so a change made elsewhere appears within one poll. While paused and idle, the header status reads **Queue paused**. The switch is disabled when the server or queue storage is unavailable, and a failed change shows the error and keeps the saved state.
 
 ### Reorder or run next
 
