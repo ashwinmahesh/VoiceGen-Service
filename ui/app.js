@@ -955,7 +955,9 @@ function moveQueueGap(list,card,before){
 function queueDropTarget(y){
  const list=$('queue-entries'),card=queueDrag.card,rows=queuedEntries().filter(row=>row!==card);
  if(!rows.length){queueDrag.target=null;return}
- const next=rows.find(row=>{const box=row.getBoundingClientRect();return y<box.top+box.height/2});
+ // Place the gap by the lifted row's centre, so releasing where the drag began restores the original order.
+ const center=queueDrag.ghost?y-queueDrag.offset+card.offsetHeight/2:y;
+ const next=rows.find(row=>{const box=row.getBoundingClientRect();return center<=box.top+box.height/2});
  const before=next||rows.at(-1).nextSibling;
  if(before!==card&&card.nextSibling!==before)moveQueueGap(list,card,before);
  const queued=queuedEntries(),index=queued.indexOf(card);
