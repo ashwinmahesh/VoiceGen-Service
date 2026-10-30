@@ -86,6 +86,13 @@ class SharedPageTests(unittest.TestCase):
         self.assertIn("'queue-processing':'On: waiting jobs run in order.",script)
         self.assertIn('Generate immediately and Run Now jobs still run while paused',script)
 
+    def test_release_model_memory_is_unavailable_with_a_reason_when_nothing_is_loaded(self):
+        script=(Path(server.__file__).parent/'ui/app.js').read_text()
+        self.assertIn("healthSnapshot?.model_loaded?'':'No model loaded'",script)
+        self.assertIn("$('unload').setAttribute('aria-disabled',String(Boolean(unloadReason)))",script)
+        self.assertIn("if($('unload').getAttribute('aria-disabled')==='true')return;",script)
+        self.assertIn('#unload[aria-disabled=true]{opacity:.5;cursor:not-allowed}',(Path(server.__file__).parent/'ui/index.html').read_text())
+
     def test_recording_recovery_asset_and_resource_navigation_are_available(self):
         client=TestClient(server.app)
         response=client.get('/assets/recording-session.js')
