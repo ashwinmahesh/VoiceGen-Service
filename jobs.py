@@ -14,6 +14,7 @@ from schemas import Generation, generation_metadata, MODEL_OPTIONS, PACING_FIELD
 from inference_locks import inherit_reservations
 from model_readiness import ModelUnavailable
 from lifecycle_events import observe, reason
+from progress_estimate import samples, started, take_progress, batch_progress
 
 
 class BusyError(QueueConflict):
@@ -135,6 +136,7 @@ class JobManager:
                   'sequence','queue_order','backend','model','mode','generate_immediately','attempts','started_at','completed_at']}
         result['blocked_reason']=row.get('blocked_reason')
         result['position']=row.get('position')
+        result['progress']=take_progress(row['status'],row.get('progress'))
         if self.runtime:
             result['model_variant']=row['model'];result['model']=row['backend']
         result['paused'] = row['status']=='queued' and (bool(row.get('blocked_reason')) if self.runtime else row['backend'] != self.current_profile['backend'])
@@ -308,7 +310,8 @@ class JobManager:
                   'done' if done == len(jobs) else 'partial' if done else
                   'deleted' if all(value=='deleted' for value in statuses) else 'error')
         return dict(id=batch['id'],backend=batch['backend'],created_at=batch['created_at'],
-                    candidate_count=len(jobs),candidate_variation=jobs[0].get('candidate_variation') or 'seed_only',status=status,done_count=done,jobs=jobs)
+                    candidate_count=len(jobs),candidate_variation=jobs[0].get('candidate_variation') or 'seed_only',status=status,done_count=done,
+                    progress=batch_progress(batch['jobs']),jobs=jobs)
 
     def read_candidates(self, identity):
         if not IDENTITY.fullmatch(identity):
@@ -495,9 +498,16 @@ class JobManager:
                     self.store.fail_candidate_planning(payload['candidate_batch_id'],str(exc));raise
                 payload=self.store.read(identity)['payload']
                 effective=Generation.model_validate(payload['effective'])
+            generating=[]
             def stage(value):
                 self.stage = 'loading' if value in ('Loading model','Switching model') else 'generating'
-                self.update(identity,stage=value)
+                changes={'stage':value}
+                # The first speech stage starts the estimate; model loading/planning stay at 0%.
+                if value.startswith('Generating') and not generating:
+                    generating.append(value)
+                    progress=self.estimate(queued,effective)
+                    if progress:changes['progress']=progress
+                self.update(identity,**changes)
             with inherit_reservations(self._owner,handle,self.data_owner):
                 metrics = self.engine.generate(effective,reference,destination,stage,transcript=payload['transcript'])
             metadata_settings = generation_metadata(effective)
@@ -543,6 +553,17 @@ class JobManager:
             with self.guard:
                 self.active = None
                 handle.close()
+
+    def estimate(self, row, effective):
+        """Freeze the expected generation time from recent successful takes of this model."""
+        try:
+            exact=samples(self.store.finished_results(row['backend'],row['model']))
+            wide=samples(self.store.finished_results(row['backend']))
+            return started(len(effective.text),exact,wide,row['backend'])
+        except Exception:
+            # Progress is informational; an estimate failure never affects the take.
+            logging.warning('Progress estimate unavailable; generation continues',exc_info=True)
+            return None
 
     def listing(self, **kwargs):
         self._ready()

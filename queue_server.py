@@ -11,7 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from body_limit import BodyLimit
 from queue_status import storage_error_response
-from queue_schemas import QueueMove, QueueState, ModelDescriptor, ModelList
+from queue_schemas import QueueMove, QueueState, ModelDescriptor, ModelList, JobProgress
+from progress_estimate import take_progress
 from durable_queue import QueueStore, QueueConflict
 from queue_config import PROJECT_ROOT, QUEUE_DB, DEFAULT_QUEUE_PORT, DEFAULT_MODEL, MODELS
 from model_readiness import ReadyModels,ModelUnavailable
@@ -84,6 +85,7 @@ class Entry(BaseModel):
     attempts: int
     error: str | None
     result: dict | None
+    progress: JobProgress | None = Field(default=None,description='Estimated progress while running and 100 when done; null otherwise.')
 
 
 class Page(BaseModel):
@@ -121,7 +123,7 @@ def public(row):
     return {key:row[key] for key in ('id','sequence','queue_order','status','stage','created_at','updated_at',
             'started_at','completed_at','attempts','generate_immediately','error','result')} | {
         'model':row['backend'],
-        'blocked_reason':reason,'position':row.get('position'),
+        'blocked_reason':reason,'position':row.get('position'),'progress':take_progress(row['status'],row.get('progress')),
         'payload':row['payload'].get('queue_request',row['payload'].get('queue_submission',row['payload'])),
         'prepared':row['payload'].get('queue_format') != 'opaque-v1'}
 

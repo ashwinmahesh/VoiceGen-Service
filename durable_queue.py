@@ -101,6 +101,8 @@ class QueueStore:
                 key_hash TEXT UNIQUE, fingerprint TEXT NOT NULL, job_ids TEXT NOT NULL)''')
             if 'blocked_reason' not in {row['name'] for row in db.execute('PRAGMA table_info(entries)')}:
                 db.execute('ALTER TABLE entries ADD COLUMN blocked_reason TEXT')
+            if 'progress' not in {row['name'] for row in db.execute('PRAGMA table_info(entries)')}:
+                db.execute('ALTER TABLE entries ADD COLUMN progress TEXT')
             db.execute('CREATE TABLE IF NOT EXISTS queue_settings (key TEXT PRIMARY KEY,value TEXT NOT NULL)')
 
     def setting(self,key,default=None,timeout=10):
@@ -162,7 +164,7 @@ class QueueStore:
             group=json.loads(chosen['payload']).get('candidate_batch_id')
             if group:
                 db.execute("INSERT INTO queue_settings VALUES('active_batch',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(json.dumps(group),))
-            db.execute("UPDATE entries SET status='running',attempts=attempts+1,started_at=?,completed_at=NULL,updated_at=?,stage='Starting',error=NULL,blocked_reason=NULL WHERE id=?",(now(),now(),chosen['id']))
+            db.execute("UPDATE entries SET status='running',attempts=attempts+1,started_at=?,completed_at=NULL,updated_at=?,stage='Starting',error=NULL,blocked_reason=NULL,progress=NULL WHERE id=?",(now(),now(),chosen['id']))
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(chosen['id'],)).fetchone())
 
     @staticmethod
@@ -171,8 +173,8 @@ class QueueStore:
             raise FileNotFoundError('Queue entry not found')
         row = dict(row)
         row['generate_immediately'] = bool(row['generate_immediately'])
-        for key in ['payload','result']:
-            if row[key] is not None:
+        for key in ['payload','result','progress']:
+            if row.get(key) is not None:
                 row[key] = json.loads(row[key])
         return row
 
@@ -374,11 +376,13 @@ class QueueStore:
             return self._candidate_batch(db, db.execute('SELECT * FROM candidate_batches WHERE id=?',(batch_id,)).fetchone())
 
     def change(self, identity, **changes):
-        allowed = {'status','stage','error','result','started_at','completed_at'}
+        allowed = {'status','stage','error','result','started_at','completed_at','progress'}
         if not changes or not set(changes) <= allowed:
             raise ValueError('Unsupported queue update')
         if 'result' in changes:
             changes['result'] = json.dumps(changes['result'],allow_nan=False)
+        if changes.get('progress') is not None:
+            changes['progress'] = json.dumps(changes['progress'],allow_nan=False)
         changes['updated_at'] = now()
         with self.transaction() as db:
             db.execute('UPDATE entries SET '+','.join(f'{k}=?' for k in changes)+' WHERE id=?',
@@ -402,9 +406,17 @@ class QueueStore:
             if row is None:
                 return None
             db.execute('''UPDATE entries SET status='running',attempts=attempts+1,
-                started_at=?,completed_at=NULL,updated_at=?,stage='Starting',error=NULL WHERE id=?''',
+                started_at=?,completed_at=NULL,updated_at=?,stage='Starting',error=NULL,progress=NULL WHERE id=?''',
                 (now(),now(),row['id']))
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(row['id'],)).fetchone())
+
+    def finished_results(self, backend, model=None, limit=60):
+        """Newest successful results of one backend (optionally one variant) for timing estimates."""
+        with self.transaction() as db:
+            rows = db.execute("SELECT result FROM entries WHERE status='done' AND result IS NOT NULL AND backend=?"+
+                              (' AND model=?' if model else '')+' ORDER BY completed_at DESC LIMIT ?',
+                              (backend,*((model,) if model else ()),limit))
+            return [json.loads(row['result']) for row in rows]
 
     def freeze_candidate_variants(self, batch_id, variants):
         """Commit every effective design together before any member synthesizes."""

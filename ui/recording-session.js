@@ -16,7 +16,26 @@ function summary(selection,data){
  return {status:data.status,backend:data.backend||jobs[0]?.backend||selection.model,count:batch?data.candidate_count:1,
   ready:batch?data.done_count:data.result?1:0,failed:jobs.filter(job=>job.status==='error').length,
   stage:running?.stage||(active?'Waiting in queue':''),created:data.created_at,
+  percent:active&&data.progress&&data.progress.phase!=='preparing'?data.progress.percent:null,
   completed:active?null:jobs.map(job=>job.completed_at).filter(Boolean).sort().at(-1)||data.completed_at||null};
+}
+// Speech models report no step count; the server's percentage is a time estimate from recent takes.
+function remaining(seconds){
+ if(seconds<10)return 'a few seconds left';
+ if(seconds<55)return `about ${Math.round(seconds/5)*5} sec left`;
+ if(seconds<3570)return `about ${Math.max(1,Math.round(seconds/60))} min left`;
+ return `about ${Math.round(seconds/3600)} hr left`;
+}
+function progressText(progress,{compact=false}={}){
+ if(!progress||!['generating','waiting'].includes(progress.phase))return '';
+ const percent=(progress.estimated?'~':'')+progress.percent+'%';
+ if(progress.overdue)return percent+(compact?' · longer than usual':' · taking longer than usual');
+ return compact||progress.eta_seconds==null?percent:percent+' · '+remaining(progress.eta_seconds);
+}
+function progressSpeech(progress,stage=''){
+ if(!progress)return '';
+ if(progress.phase==='preparing')return stage?'Preparing: '+stage:'Preparing';
+ return (progress.estimated?`About ${progress.percent} percent, estimated`:`${progress.percent} percent`)+(progress.overdue?', taking longer than usual':'');
 }
 function presentation(summary,connection='connected'){
  const active=['queued','running'].includes(summary?.status);
@@ -70,6 +89,6 @@ function createPoller({read,onData,onConnection=()=>{},onMissing=()=>{},onError=
  Promise.resolve().then(run);
  return {stop,refresh};
 }
-const api={validId,fromURL,resolveSelection,url,summary,presentation,createStore,readJSON,createPoller};
+const api={validId,fromURL,resolveSelection,url,summary,progressText,progressSpeech,presentation,createStore,readJSON,createPoller};
 if(typeof module==='object'&&module.exports)module.exports=api;else root.VoiceRecording=api;
 })(typeof window==='object'?window:globalThis);

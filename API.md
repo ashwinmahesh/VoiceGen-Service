@@ -16,6 +16,7 @@ Each service has interactive documentation at **`/docs`** and its complete reque
 ### In this guide
 
 - [Generate speech](#generate-speech)
+- [Estimated progress](#estimated-progress)
 - [Generate multiple options](#generate-multiple-options)
 - [Generation fields](#generation-fields)
 - [Voices and reference recordings](#voices-and-reference-recordings)
@@ -132,6 +133,27 @@ curl --fail-with-body http://localhost:5743/api/jobs/JOB_ID_HERE
 
 A finished job includes `result.id`, `result.audio_url`, `result.duration`, and the actual settings used. See [results and downloads](#history-and-downloads).
 
+#### Estimated progress
+
+Running jobs include an estimated `progress` object. Speech models stop at their own end marker and report no step count, and `max_tokens` is only a ceiling, so the percentage is a **time estimate**, not a measurement:
+
+```json
+"progress": {"percent": 62, "phase": "generating", "estimated": true, "eta_seconds": 40, "overdue": false, "basis": "history"}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `percent` | `0` while preparing. While generating, elapsed time divided by the expected time, held at **95** until the audio is saved. `100` when done. |
+| `phase` | `preparing` (starting, switching or loading a model, or planning distinct designs), `generating`, `waiting` (batches only, between takes), or `done`. |
+| `estimated` | `true` until the take is saved. |
+| `eta_seconds` | Estimated seconds left. `null` while preparing or when overdue. |
+| `overdue` | `true` once the take runs past its estimate; `percent` stays at 95. |
+| `basis` | `history` or `default` (see below). `null` while preparing or when done. |
+
+`progress` is `null` for queued, failed and removed jobs.
+
+When speech generation starts, the generator saves an expected generation time for that take. It learns from the newest 20 successful takes of the same model variant (or the whole model when the variant has fewer than 3), using each take's `result.generation_seconds` and dialogue length. Three or more takes of different lengths fit a robust line (per-take overhead plus seconds per character), so short and long lines both estimate sensibly. Fewer takes use their median seconds per character. A model with no finished takes uses a built-in starting rate (`basis: "default"`), replaced after its first successful take. Model loading and LLM planning are not part of the estimate. The percentage only grows while a take runs. Both the generator and the standalone queue API compute it from the same saved estimate, so they agree.
+
 ### 4. Download the audio
 
 Use the finished job's **`result.id`**, replacing `OUTPUT_ID_HERE`:
@@ -184,7 +206,7 @@ For distinct designs, option 1 keeps the original description. Later options exp
 
 Reference and preset batches, including Higgs, retain the selected speaker recording or preset. Neither repeated seeds nor different descriptions guarantee a particular audible identity.
 
-Batch status is `queued`, `running`, `done`, `partial`, `error`, or `deleted`. `done_count` counts successful takes. `partial` means some finished successfully and others did not. Remove or retry individual jobs using their IDs; successful takes remain available.
+Batch status is `queued`, `running`, `done`, `partial`, `error`, or `deleted`. `done_count` counts successful takes. The batch's own [`progress`](#estimated-progress) counts each finished take (including failed or removed ones) fully, plus the running take's share; `eta_seconds` adds the remaining takes at the running take's expected time. It is `null` before any take starts and once every take has failed or been removed. `partial` means some finished successfully and others did not. Remove or retry individual jobs using their IDs; successful takes remain available.
 
 Keep the same batch key after a timeout to recover its original jobs. Batch keys are separate from single-take keys. If an unplanned LLM batch waits after restarting with the LLM disabled, restart with it enabled to continue planning.
 
@@ -468,7 +490,7 @@ Start `make serve` to process the shared queue across ready models. `MODEL=higgs
 
 Listing uses the same status/pagination fields as the generator, including optional **`model`** filtering with global positions. Clear can also use `?model=higgs`.
 
-Entries include `id`, `sequence`, `queue_order`, `position`, `blocked_reason`, `model`, `payload`, `generate_immediately`, `status`, `stage`, timestamps, `attempts`, `result`, `error`, and `prepared`. `position` is the global 1-based waiting position (null for other states); filtering retains global positions. `blocked_reason` explains unavailable-model work and is null when unblocked. `prepared: true` means the generator has checked and saved the generation settings. Lists also include totals, counts, and pagination.
+Entries include `id`, `sequence`, `queue_order`, `position`, `blocked_reason`, `model`, `payload`, `generate_immediately`, `status`, `stage`, timestamps, `attempts`, `result`, `error`, `prepared`, and the same [estimated `progress`](#estimated-progress) the generator reports. `position` is the global 1-based waiting position (null for other states); filtering retains global positions. `blocked_reason` explains unavailable-model work and is null when unblocked. `prepared: true` means the generator has checked and saved the generation settings. Lists also include totals, counts, and pagination.
 
 PATCH restrictions:
 
