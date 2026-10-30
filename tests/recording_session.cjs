@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {createStore,fromURL,resolveSelection,url,createPoller,readJSON,summary,presentation}=require('../ui/recording-session.js');
+const {createStore,fromURL,resolveSelection,url,createPoller,readJSON,summary,presentation,progressText,progressSpeech}=require('../ui/recording-session.js');
 const id='a'.repeat(32),second='b'.repeat(32);
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(check){for(let n=0;n<200;n++){if(check())return;await pause(2)}assert.fail('polling condition timed out')}
@@ -97,4 +97,23 @@ test('return summaries store progress without copying dialogue or media into bro
  const data=summary({kind:'job',id},{status:'done',backend:'voxcpm2',result:{audio_url:'/private-audio'},text:'private dialogue',requested:{description:'private prompt'},completed_at:'2026-10-27T12:00:00Z'});
  assert.equal(data.count,1);assert.equal(data.ready,1);assert.equal(data.status,'done');
  assert.equal(JSON.stringify(data).includes('private'),false);
+});
+test('estimated progress labels carry a tilde, remaining time and an overdue state',()=>{
+ const running={percent:62,phase:'generating',estimated:true,eta_seconds:70,overdue:false,basis:'history'};
+ assert.equal(progressText(running),'~62% · about 1 min left');assert.equal(progressText(running,{compact:true}),'~62%');
+ assert.equal(progressText({...running,eta_seconds:42}),'~62% · about 40 sec left');assert.equal(progressText({...running,eta_seconds:4}),'~62% · a few seconds left');
+ assert.equal(progressText({...running,percent:95,eta_seconds:null,overdue:true}),'~95% · taking longer than usual');
+ assert.equal(progressText({...running,percent:95,eta_seconds:null,overdue:true},{compact:true}),'~95% · longer than usual');
+ assert.equal(progressText({...running,phase:'waiting',percent:33,eta_seconds:null}),'~33%');
+ assert.equal(progressText({percent:0,phase:'preparing',estimated:true,eta_seconds:null,overdue:false}),'');
+ assert.equal(progressText(null),'');assert.equal(progressText({percent:100,phase:'done',estimated:false,eta_seconds:0,overdue:false}),'');
+ assert.equal(progressSpeech(running),'About 62 percent, estimated');
+ assert.equal(progressSpeech({...running,percent:95,overdue:true}),'About 95 percent, estimated, taking longer than usual');
+ assert.equal(progressSpeech({percent:0,phase:'preparing',estimated:true},'Loading model'),'Preparing: Loading model');
+});
+test('return summaries keep only the active percentage, not the preparing placeholder',()=>{
+ const jobs=[{status:'running',stage:'Generating speech'}];
+ assert.equal(summary({kind:'job',id},{status:'running',jobs,progress:{percent:40,phase:'generating'}}).percent,40);
+ assert.equal(summary({kind:'job',id},{status:'running',progress:{percent:0,phase:'preparing'}}).percent,null);
+ assert.equal(summary({kind:'job',id},{status:'done',progress:{percent:100,phase:'done'}}).percent,null);
 });

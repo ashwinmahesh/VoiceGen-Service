@@ -38,7 +38,7 @@ Voice library appears first and opens by default; History holds your generated t
 
 ![Full Collection page with a saved voice, search, and tags](docs/images/collection-page.jpg)
 
-**Queue:** drag waiting jobs into order, choose **Run Now** to run one next, monitor progress, or remove pending work. The studio's default **Generate immediately** switch runs next after the current take and keeps Generate busy until your options finish. Turn it off to keep adding ordinary queued jobs.
+**Queue:** drag waiting jobs into order, choose **Run Now** to run one next, monitor progress, or remove pending work. Running takes show an estimated percentage (for example ~62%) based on how long recent takes of the same model took, in the queue and in the listening room. The studio's default **Generate immediately** switch runs next after the current take and keeps Generate busy until your options finish. Turn it off to keep adding ordinary queued jobs.
 
 ![Full page with the Queue modal open](docs/images/queue-modal.jpg)
 

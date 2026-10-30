@@ -2,6 +2,7 @@
 from typing import Literal
 from transcription_schemas import TranscriptionInfo
 from collection_schemas import CollectionDeletion
+from queue_schemas import JobProgress
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -287,6 +288,7 @@ class Job(BaseModel):
     attempts: int = 0
     started_at: str | None = None
     completed_at: str | None = None
+    progress: JobProgress | None = Field(default=None,description='Estimated progress while running and 100 when done; null otherwise.')
     requested: dict = Field(default_factory=dict)
     effective: dict = Field(default_factory=dict)
     candidate_batch_id: str | None = None
@@ -305,6 +307,7 @@ class CandidateBatch(BaseModel):
     candidate_variation: Literal['distinct','seed_only'] = 'seed_only'
     status: Literal['queued','running','done','partial','error','deleted']
     done_count: int
+    progress: JobProgress | None = Field(default=None,description='Whole-batch estimate: finished takes plus the running take\'s share; null before any take starts.')
     jobs: list[Job]
 
 

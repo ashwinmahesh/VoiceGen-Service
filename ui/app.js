@@ -74,6 +74,20 @@ function batchTiming(batch){
  generationTiming(batch.id,batch.created_at,running?`${running.stage} · option ${running.candidate_index} of ${batch.candidate_count}`:finished?`${batch.done_count} of ${batch.candidate_count} ready`:'Waiting in queue',finished?(completed||new Date().toISOString()):null);
 }
 setInterval(updateElapsed,1000);
+function setProgress(track,progress,stage=''){
+ const percent=['generating','waiting','done'].includes(progress?.phase)?progress.percent:0;
+ track.firstElementChild.style.width=percent+'%';track.setAttribute('aria-valuenow',String(percent));track.setAttribute('aria-valuetext',VoiceRecording.progressSpeech(progress,stage));
+}
+function progressBar(progress,stage,cls){
+ const track=el('div',null,'progress-track '+cls);track.append(el('span',null,'progress-fill'));
+ track.setAttribute('role','progressbar');track.setAttribute('aria-label','Estimated generation progress');track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');
+ setProgress(track,progress,stage);return track;
+}
+function showGenerationProgress(progress,stage=''){
+ const box=$('generation-progress');if(!box)return;
+ box.hidden=!progress||progress.phase==='done';if(box.hidden)return;
+ setProgress($('generation-progress-bar'),progress,stage);$('generation-progress-label').textContent=VoiceRecording.progressText(progress);
+}
 function resumeRecording(){updateElapsed();if(document.hidden)return;recordingPoller?.refresh();if(browsePage&&studioInitialized)watchReturnRecording();if(studioInitialized)health();else startStudio()}
 document.addEventListener('visibilitychange',resumeRecording);window.addEventListener('focus',resumeRecording);window.addEventListener('pageshow',resumeRecording);window.addEventListener('online',resumeRecording);
 
@@ -667,7 +681,7 @@ function showReturnRecording(selection,summary,connection='connected'){
  bar.dataset.active=String(view.active);bar.dataset.connection=connection;
  $('recording-return-heading').textContent=view.title;
  const name=availableModels.find(row=>row.id===summary?.backend)?.name||summary?.backend||'';
- const detail=summary?[name,summary.count>1?`${summary.ready} of ${summary.count} options ready`:summary.ready?'Audio ready':'One take',summary.failed?`${summary.failed} failed`:summary.stage].filter(Boolean).join(' · '):'Checking progress. Your request is saved.';
+ const detail=summary?[name,summary.count>1?`${summary.ready} of ${summary.count} options ready`:summary.ready?'Audio ready':'One take',summary.failed?`${summary.failed} failed`:summary.stage,summary.percent!=null&&['queued','running'].includes(summary.status)?`~${summary.percent}%`:null].filter(Boolean).join(' · '):'Checking progress. Your request is saved.';
  $('recording-return-detail').textContent=detail;
  $('recording-return-link').href=browsePage?VoiceRecording.url(selection)+'#listening-room':'#listening-room';
  $('recording-return-link').textContent=(browsePage?view.action:view.active?'View progress':'View recording')+' ↗';
@@ -713,7 +727,7 @@ function recordingConnection(reconnecting){
  $('recording-connection-message').textContent='Your request is saved. We’ll update your recording when the connection returns.';
  if(recordingSelection)showReturnRecording(recordingSelection,recordingSelection.summary,reconnecting?'reconnecting':recordingSelection.summary?'connected':'checking');
 }
-function finishMonitoring(){watching=null;monitoredImmediate=false;controls();refreshQueue().catch(()=>{})}
+function finishMonitoring(){watching=null;monitoredImmediate=false;showGenerationProgress(null);controls();refreshQueue().catch(()=>{})}
 function monitorRecording(path,onData){
  recordingPoller?.stop();
  recordingPoller=VoiceRecording.createPoller({
@@ -729,12 +743,13 @@ function watchCandidates(identity,immediate=null,selected=null){
  if(currentCandidates?.id!==identity){currentCandidates=null;candidateCards.clear();$('candidate-cards').replaceChildren();$('candidate-results').hidden=true;latest=null;$('result').hidden=true;}
  selected=selected||(recordingSelection?.kind==='candidates'&&recordingSelection.id===identity?recordingSelection.selected:null);
  rememberRecording({kind:'candidates',id:identity,selected});
- watching=token;monitoredImmediate=immediate??true;controls();$('error').hidden=true;$('empty').hidden=true;$('working').hidden=false;$('stage').textContent='Opening your recording…';$('working-description').textContent='Fetching progress and audio. Your accepted request continues on the server.';
+ watching=token;monitoredImmediate=immediate??true;showGenerationProgress(null);controls();$('error').hidden=true;$('empty').hidden=true;$('working').hidden=false;$('stage').textContent='Opening your recording…';$('working-description').textContent='Fetching progress and audio. Your accepted request continues on the server.';
  $('working-job-resources').hidden=true;
  monitorRecording('/api/candidates/'+identity,batch=>{
   saveRecordingSummary(batch);
   monitoredImmediate=['queued','running'].includes(batch.status)&&batch.jobs.some(job=>job.generate_immediately);controls();$('working').hidden=true;
   renderCandidates(batch);
+  showGenerationProgress(['queued','running'].includes(batch.status)?batch.progress:null,batch.jobs.find(job=>job.status==='running')?.stage);
   const preferred=batch.jobs.find(job=>job.result?.id===recordingSelection?.selected);
   if(preferred&&latest?.id!==preferred.result.id)showResult(preferred.result);
   else if(!latest){const first=batch.jobs.find(job=>job.result);if(first)showResult(first.result)}
@@ -745,13 +760,14 @@ function watchCandidates(identity,immediate=null,selected=null){
 function watch(identity){
  if(browsePage){location.href='/?job='+encodeURIComponent(identity);return}
  if(watching===identity){recordingPoller?.refresh();return}
- currentCandidates=null;latest=null;$('candidate-results').hidden=true;watching=identity;monitoredImmediate=true;rememberRecording({kind:'job',id:identity});controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
+ currentCandidates=null;latest=null;$('candidate-results').hidden=true;watching=identity;monitoredImmediate=true;showGenerationProgress(null);rememberRecording({kind:'job',id:identity});controls();$('error').hidden=true;$('empty').hidden=true;$('result').hidden=true;$('working').hidden=false;
  $('stage').textContent='Opening your recording…';$('working-description').textContent='Fetching progress and audio. Your accepted request continues on the server.';$('working-job-resources').hidden=false;$('working-job-resources').href='/observability?job='+encodeURIComponent(identity);
  monitorRecording('/api/jobs/'+identity,job=>{
   // Queue/Observability links often point at one child. Recover its entire listening room.
   if(job.candidate_batch_id){watchCandidates(job.candidate_batch_id,job.generate_immediately,job.result?.id);return false}
   saveRecordingSummary(job);
   monitoredImmediate=['queued','running'].includes(job.status)&&job.generate_immediately;controls();$('stage').textContent=job.stage;
+  showGenerationProgress(['queued','running'].includes(job.status)?job.progress:null,job.stage);
   generationTiming(identity,job.created_at,job.stage,!['queued','running'].includes(job.status)?job.completed_at||new Date().toISOString():null);
   if(job.status==='done'){showResult(job.result);refresh().catch(exc=>error(exc.message));announce('Speech ready');return true}
   if(job.status==='error'||job.status==='deleted'){$('working').hidden=true;error(job.error||'This pending take was removed.');return true}
@@ -842,7 +858,9 @@ async function refreshQueue(){
    card.append(handle);
   }else{const spacer=el('span',null,'queue-drag-spacer');spacer.setAttribute('aria-hidden','true');card.append(spacer)}
   content.append(el('strong',`${row.status} · ${row.backend||'legacy'} · ${row.generate_immediately?'Immediate':'Normal'}`));
-  content.append(el('p',row.requested?.text||row.id),el('p',row.stage,'hint'));
+  const progress=row.status==='running'?row.progress:null,progressLabel=VoiceRecording.progressText(progress,{compact:true});
+  content.append(el('p',row.requested?.text||row.id),el('p',progressLabel?`${row.stage} · ${progressLabel}`:row.stage,'hint'));
+  if(progress)content.append(progressBar(progress,row.stage,'queue-progress'));
   if(row.error)content.append(el('p',row.error,'error'));
   const actions=el('div',null,'card-actions queue-actions');
   if(row.candidate_batch_id){const options=queueControl('button','View all options','options');options.type='button';options.onclick=()=>{$('queue-dialog').close();watchCandidates(row.candidate_batch_id)};actions.append(options);}
