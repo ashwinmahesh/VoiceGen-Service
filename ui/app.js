@@ -527,13 +527,16 @@ function renderCards() {
       const pauses=el('button','Adjust pauses','secondary');pauses.type='button';pauses.onclick=()=>openPauseEditor(row);actions.append(pauses);
     }
     }
+    // Download and Delete stay together on one line; Delete is an icon-only trash button.
+    const fileActions=el('span',null,'collection-file-actions');
     if(!row.deletion?.cleanup_started){const download = el('a', 'Download WAV', 'secondary');
     download.href = row.audio_url + '?download=true'; download.download = '';
-    actions.append(download)}
-    const change=el('button',deleted?'Restore':'Delete',deleted?'secondary':'secondary danger');change.type='button';
+    fileActions.append(download)}
+    const change=el('button',deleted?'Restore':null,deleted?'secondary':'secondary danger icon-button');change.type='button';
+    if(!deleted){change.append(queueIcon('remove'));change.setAttribute('aria-label',isVoices?'Delete voice':'Delete take');change.title='Delete'}
     if(deleted&&(row.deletion?.cleanup_started||Date.parse(row.deletion?.purge_after)<=Date.now())){change.disabled=true;change.title='The 24-hour restore window has expired.'}
     change.onclick=()=>deleted?restoreCollectionEntry(row,isVoices,change):openCollectionDelete(row,isVoices);
-    actions.append(change);side.append(actions);card.append(main,side); $('cards').append(card);
+    fileActions.append(change);actions.append(fileActions);side.append(actions);card.append(main,side); $('cards').append(card);
   }
 }
 function collectionPath(target){return '/api/'+(target.kind==='voices'?'voices':'artifacts')+'/'+target.id}
