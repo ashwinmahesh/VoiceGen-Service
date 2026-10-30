@@ -810,18 +810,39 @@ function queueNotices(state){
   $(id).hidden=!(storageMessage||serviceMessage);
  }
 }
+// The header switch and the queue dialog button both mirror the persisted pause flag read by health polling.
+// Each pause/resume bumps the revision so a health reading requested before it cannot undo the change.
+let queueSwitchBusy=false,queuePauseRevision=0;
+function showQueuePaused(paused,available=true,revision=queuePauseRevision){
+ if(revision!==queuePauseRevision)return;
+ queuePaused=paused;queueLabel($('queue-pause'),paused?'play':'pause',paused?'Resume queue':'Pause queue');
+ if(queueSwitchBusy)return;
+ $('queue-processing').checked=!paused;$('queue-processing').disabled=!available;
+}
+async function setQueuePaused(paused){
+ const toggle=$('queue-processing');
+ if(queueSwitchBusy){toggle.checked=!queuePaused;return}
+ queueSwitchBusy=true;toggle.disabled=true;$('queue-pause').disabled=true;queuePauseRevision++;
+ try{
+  const state=await post('/api/queue/'+(paused?'pause':'resume'),{});queueSwitchBusy=false;showQueuePaused(state.paused);
+  announce(state.paused?'Queue paused. Active work finishes first; Generate immediately and Run Now jobs still run.':'Queue resumed.');
+ }catch(exc){queueSwitchBusy=false;showQueuePaused(queuePaused,queueWritable);error(`Could not ${paused?'pause':'resume'} the queue: ${exc.message}`)}
+ finally{queueSwitchBusy=false;$('queue-pause').disabled=false;queuePauseRevision++;await health()}
+}
 let healthInFlight=false;
 async function health(){
  if(healthInFlight)return;healthInFlight=true;
  try{
-  const state=await api('/health');healthSnapshot=state;
+  const pauseRevision=queuePauseRevision,state=await api('/health');healthSnapshot=state;
   if(!recordingStore)recordingStore=VoiceRecording.createStore(localStorage,state.project||location.origin);
-  queuePaused=!!state.queue_paused;queueLabel($('queue-pause'),queuePaused?'play':'pause',queuePaused?'Resume queue':'Pause queue');
   if(!changingModel)await loadModelChoices();
   online=state.downloaded&&!state.runtime_errors?.length;
   queueWritable=state.queue_storage?.status!=='unavailable';queueNotices(state);
-  $('status').dataset.offline=!online;
-  $('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';
+  // Without readable storage, queue_paused is only a default: keep the last known position and disable the switch.
+  if(queueWritable)showQueuePaused(!!state.queue_paused,true,pauseRevision);else if(!queueSwitchBusy)$('queue-processing').disabled=true;
+  const pausedIdle=queueWritable&&queuePaused&&!state.busy&&state.status!=='error';
+  $('status').dataset.offline=!online;$('status').dataset.paused=pausedIdle;
+  $('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:pausedIdle?'Queue paused':state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';
   busy=state.busy;
   if(queueWritable){
    try{await refreshQueue()}catch(exc){queueWritable=false;queueNotices({queue_storage:{status:'unavailable',message:exc.message}})}
@@ -831,7 +852,7 @@ async function health(){
   }
  }catch(exc){
   online=false;$('status').textContent=exc.message==='Failed to fetch'?'Server offline':exc.message;
-  $('status').dataset.offline=true;queueNotices(null);
+  $('status').dataset.offline=true;$('status').dataset.paused=false;$('queue-processing').disabled=true;queueNotices(null);
  }finally{healthInFlight=false;controls()}
 }
 let queueOffset=0,queuePage=null,queueRequest=0,queueDrag=null,queueMutating=false;
@@ -1136,7 +1157,8 @@ async function selectVoiceModel(backend){
  }finally{changingModel=false;controls();if(pendingModelRestore){const row=pendingModelRestore;pendingModelRestore=null;restore(row)}}
 }
 $('voice-model').onchange=()=>{if($('voice-model').value)selectVoiceModel($('voice-model').value).catch(exc=>error(exc.message))};
-$('queue-pause').onclick=async()=>{try{const state=await post('/api/queue/'+(queuePaused?'resume':'pause'),{});queuePaused=state.paused;queueLabel($('queue-pause'),queuePaused?'play':'pause',queuePaused?'Resume queue':'Pause queue');await health()}catch(exc){error(exc.message)}};
+$('queue-pause').onclick=()=>setQueuePaused(!queuePaused);
+$('queue-processing').onchange=event=>setQueuePaused(!event.target.checked);
 async function startStudio(){
  if(studioInitialized||studioStarting)return;studioStarting=true;
  try{
@@ -1393,6 +1415,7 @@ async function openPageSelection(){
 }
 
 const controlHelp={
+ 'queue-processing':'On: waiting jobs run in order. Off: the queue pauses after the active job finishes and waiting jobs stay saved. Generate immediately and Run Now jobs still run while paused. The setting is shared with the queue API and kept after restarts.',
  'show-deleted':'Show recordings deleted within the last 24 hours. Restore brings them back before that deadline. After 24 hours the generator removes their audio and metadata from disk, waiting for unfinished jobs that still need the files.',
  'record-source':'Choose a saved character, upload a reference recording, or use a built-in speaker when available. The same Record lines form handles each source.',
  description:'Describe the voice you want: pitch, age, accent and vocal texture. This designs a voice; save a take to reuse its recording.',

@@ -38,7 +38,7 @@ Voice library appears first and opens by default; History holds your generated t
 
 ![Full Collection page with a saved voice, search, and tags](docs/images/collection-page.jpg)
 
-**Queue:** drag waiting jobs into order, choose **Run Now** to run one next, monitor progress, or remove pending work. Running takes show an estimated percentage (for example ~62%) based on how long recent takes of the same model took, in the queue and in the listening room. The studio's default **Generate immediately** switch runs next after the current take and keeps Generate busy until your options finish. Turn it off to keep adding ordinary queued jobs.
+**Queue:** drag waiting jobs into order, choose **Run Now** to run one next, monitor progress, or remove pending work. Running takes show an estimated percentage (for example ~62%) based on how long recent takes of the same model took, in the queue and in the listening room. The studio's default **Generate immediately** switch runs next after the current take and keeps Generate busy until your options finish. Turn it off to keep adding ordinary queued jobs. To pause the queue, switch off **Process queue** in the header. The current take finishes, then waiting jobs stay saved until you switch it back on. **Generate immediately** and **Run Now** jobs still run while paused.
 
 ![Full page with the Queue modal open](docs/images/queue-modal.jpg)
 
@@ -148,7 +148,7 @@ Here are the available endpoints. See [API.md](API.md) for request formats, exam
 | GET | `/api/references/{id}/original` | Download the original reference file. |
 | POST | `/api/model/unload` | Release the model's memory. |
 
-Both APIs also provide `POST /api/queue/pause` and `/api/queue/resume`. Run Now waits for the active batch, then runs ahead of normal work.
+Both APIs also provide `POST /api/queue/pause` and `/api/queue/resume`, which the header's **Process queue** switch uses. Run Now waits for the active batch, then runs ahead of normal work.
 
 ### Queue service — localhost:55205
 

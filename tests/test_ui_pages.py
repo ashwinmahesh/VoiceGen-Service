@@ -1,5 +1,6 @@
 """All browser pages use the generator shell without duplicating IDs or controls."""
 from html.parser import HTMLParser
+from pathlib import Path
 import re
 import unittest
 from fastapi.testclient import TestClient
@@ -52,7 +53,7 @@ class SharedPageTests(unittest.TestCase):
             markup=response.text;page=Page(markup)
             self.assertEqual(re.search(r'<header>.*?</header>',markup,re.S).group(),expected,path)
             self.assertEqual(len(page.ids),len(set(page.ids)),path)
-            for identity in ('open-queue','status','unload','queue-dialog','queue-pause','queue-entries'):
+            for identity in ('open-queue','queue-processing','status','unload','queue-dialog','queue-pause','queue-entries'):
                 self.assertEqual(page.ids.count(identity),1,(path,identity))
             self.assertIn('/assets/app.js',page.scripts)
             self.assertLess(page.scripts.index('/assets/voice-upload.js'),page.scripts.index('/assets/app.js'))
@@ -62,6 +63,24 @@ class SharedPageTests(unittest.TestCase):
             self.assertEqual((tag,attrs['href']),('a','/'),path)
             brand=re.search(r'<a [^>]*id="brand-home".*?</a>',markup,re.S).group()
             for element in ('<img','<strong','<small'):self.assertIn(element,brand,path)
+
+    def test_header_queue_switch_is_labelled_and_drives_the_shared_pause_flag(self):
+        markup=TestClient(server.app).get('/').text
+        header=re.search(r'<header>.*?</header>',markup,re.S).group()
+        switch=re.search(r'<input [^>]*id="queue-processing"[^>]*>',header).group()
+        for attribute in ('type="checkbox"','role="switch"'):self.assertIn(attribute,switch)
+        self.assertIn('<label class="expansion-switch queue-switch" for="queue-processing"><span>Process queue</span>',header)
+        script=(Path(server.__file__).parent/'ui/app.js').read_text()
+        # Both controls call the existing pause/resume routes and follow the polled health flag.
+        self.assertIn("post('/api/queue/'+(paused?'pause':'resume'),{})",script)
+        self.assertIn("$('queue-processing').onchange=event=>setQueuePaused(!event.target.checked)",script)
+        self.assertIn("$('queue-pause').onclick=()=>setQueuePaused(!queuePaused)",script)
+        # A health reading requested before a pause/resume must not undo it.
+        self.assertIn("const pauseRevision=queuePauseRevision,state=await api('/health')",script)
+        self.assertIn("if(queueWritable)showQueuePaused(!!state.queue_paused,true,pauseRevision);else if(!queueSwitchBusy)$('queue-processing').disabled=true;",script)
+        self.assertIn("if(revision!==queuePauseRevision)return;",script)
+        self.assertIn("'queue-processing':'On: waiting jobs run in order.",script)
+        self.assertIn('Generate immediately and Run Now jobs still run while paused',script)
 
     def test_recording_recovery_asset_and_resource_navigation_are_available(self):
         client=TestClient(server.app)
