@@ -50,7 +50,9 @@ function controls(){
  const loading=immediateInProgress();$('generate').disabled=!studioInitialized||!online||!queueWritable||submitting||uploading||enhancing||changingModel||transcriptSaving||!modelChoiceReady||unresolvedHiggsControls().length>0||loading;
  $('generate').setAttribute('aria-busy',String(!studioInitialized||submitting||loading));$('generate-label').textContent=!studioInitialized?'Opening studio…':submitting?'Submitting…':loading?'Generating speech…':'Generate speech';
  $('generate-icon').className=submitting||loading?'button-spinner':'';$('generate-icon').textContent=submitting||loading?'':'↗';
- $('unload').disabled=!online||busy||enhancing;$('new-seed').disabled=busy;updatePromptExpansion();
+ // Releasing needs a loaded, idle model; aria-disabled keeps the reason readable as a hover tooltip.
+ const unloadReason=!online?'Server offline':busy||enhancing?'Wait for the current take to finish':healthSnapshot?.model_loaded?'':'No model loaded';
+ $('unload').setAttribute('aria-disabled',String(Boolean(unloadReason)));$('unload').title=unloadReason||'Free the speech model’s memory now. It reloads on the next take.';$('new-seed').disabled=busy;updatePromptExpansion();
 }
 function clearExpansion(){appliedExpansion=null;pendingExpansion=null;updatePromptExpansion();}
 let generationClock=null;
@@ -810,7 +812,15 @@ $('save-reference').onclick = () => {
   if (reference) openVoiceEditor({reference_id: reference.id,
     name: (reference.name || 'Uploaded voice').replace(/\.[^.]+$/, '').slice(0, 100), description: '', transcript:$('ref-text').value,tags: []});
 };
-$('unload').onclick=async()=>{try{await post('/api/model/unload',{});announce('Model memory released. It reloads on the next take.');await health()}catch(exc){error(exc.message)}};
+$('unload').onclick=async()=>{
+ if($('unload').getAttribute('aria-disabled')==='true')return;
+ try{
+  await post('/api/model/unload',{});announce('Model memory released. It reloads on the next take.');
+  // Visible confirmation; the next health check then shows the button as unavailable until a model loads again.
+  $('unload').textContent='Memory released ✓';setTimeout(()=>{$('unload').textContent='Release model memory'},2500);
+  await health();
+ }catch(exc){error(exc.message)}
+};
 function queueNotices(state){
  const storageMessage=state?.queue_storage?.status==='unavailable'?state.queue_storage.message:null;
  const serviceMessage=state?.queue_service&&state.queue_service.status!=='ready'?state.queue_service.message:null;
