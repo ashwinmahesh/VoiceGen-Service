@@ -53,7 +53,7 @@ class SharedPageTests(unittest.TestCase):
             markup=response.text;page=Page(markup)
             self.assertEqual(re.search(r'<header>.*?</header>',markup,re.S).group(),expected,path)
             self.assertEqual(len(page.ids),len(set(page.ids)),path)
-            for identity in ('open-queue','queue-processing','status','unload','queue-dialog','queue-pause','queue-entries'):
+            for identity in ('open-queue','queue-processing','status','unload','queue-dialog','queue-processing-dialog','queue-entries'):
                 self.assertEqual(page.ids.count(identity),1,(path,identity))
             self.assertIn('/assets/app.js',page.scripts)
             self.assertLess(page.scripts.index('/assets/voice-upload.js'),page.scripts.index('/assets/app.js'))
@@ -73,11 +73,15 @@ class SharedPageTests(unittest.TestCase):
         script=(Path(server.__file__).parent/'ui/app.js').read_text()
         # Both controls call the existing pause/resume routes and follow the polled health flag.
         self.assertIn("post('/api/queue/'+(paused?'pause':'resume'),{})",script)
-        self.assertIn("$('queue-processing').onchange=event=>setQueuePaused(!event.target.checked)",script)
-        self.assertIn("$('queue-pause').onclick=()=>setQueuePaused(!queuePaused)",script)
+        # The Queue dialog repeats the same switch instead of a Pause button.
+        dialog=re.search(r'<dialog id="queue-dialog".*?</dialog>',markup,re.S).group()
+        self.assertIn('<label class="expansion-switch queue-switch" for="queue-processing-dialog"><span>Process queue</span>',dialog)
+        self.assertNotIn('queue-pause',markup+script)
+        self.assertIn("const queueSwitches=()=>[$('queue-processing'),$('queue-processing-dialog')];",script)
+        self.assertIn("for(const toggle of queueSwitches())toggle.onchange=event=>setQueuePaused(!event.target.checked);",script)
         # A health reading requested before a pause/resume must not undo it.
         self.assertIn("const pauseRevision=queuePauseRevision,state=await api('/health')",script)
-        self.assertIn("if(queueWritable)showQueuePaused(!!state.queue_paused,true,pauseRevision);else if(!queueSwitchBusy)$('queue-processing').disabled=true;",script)
+        self.assertIn("if(queueWritable)showQueuePaused(!!state.queue_paused,true,pauseRevision);else if(!queueSwitchBusy)for(const toggle of queueSwitches())toggle.disabled=true;",script)
         self.assertIn("if(revision!==queuePauseRevision)return;",script)
         self.assertIn("'queue-processing':'On: waiting jobs run in order.",script)
         self.assertIn('Generate immediately and Run Now jobs still run while paused',script)

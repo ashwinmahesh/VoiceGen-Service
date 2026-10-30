@@ -457,7 +457,8 @@ function queueIcon(name){
 }
 function queueLabel(control,icon,label){control.replaceChildren(queueIcon(icon),el('span',label));return control}
 function queueControl(tag,label,icon,cls='secondary'){return queueLabel(el(tag,null,cls),icon,label)}
-for(const[id,icon,label]of [['queue-pause','pause','Pause queue'],['queue-clear','clear','Clear pending'],['close-queue','close','Close'],['queue-prev','previous','Previous'],['queue-next','next','Next']])queueLabel($(id),icon,label);
+for(const[id,icon,label]of [['queue-clear','clear','Clear pending'],['queue-prev','previous','Previous'],['queue-next','next','Next']])queueLabel($(id),icon,label);
+$('close-queue').replaceChildren(queueIcon('close'));
 $('open-queue').prepend(queueIcon('queue'));
 function renderCards() {
   const isVoices = collection === 'voices',deleted=$('show-deleted').checked;
@@ -482,18 +483,19 @@ function renderCards() {
     'Save a generated take or upload a reference to create your voice library.' :
     'Your generated takes will appear here.';
   for (const row of rows) {
-    const card = el('article', null, 'card');
+    // Each entry is a row: details on the left, the player and actions on the right.
+    const card = el('article', null, 'card collection-row'),main=el('div',null,'collection-main'),side=el('div',null,'collection-side');
     card.dataset.collectionId=row.id;card.dataset.collectionKind=isVoices?'voices':'outputs';
     card.dataset.deleted=String(deleted);
-    if(deleted){const badge=el('span',null,'deleted-badge');badge.append(queueIcon('remove'),el('span','Deleted'));card.append(badge)}
+    if(deleted){const badge=el('span',null,'deleted-badge');badge.append(queueIcon('remove'),el('span','Deleted'));main.append(badge)}
     const head = el('div', null, 'card-title');
     head.append(el('strong', isVoices ? row.name : new Date(row.created_at).toLocaleString()),
       el('span', `${row.duration.toFixed(1)}s`, 'tiny'));
-    card.append(head, el('p', isVoices ? row.description || 'No description yet.' : row.text, 'library-description'));
+    main.append(head, el('p', isVoices ? row.description || 'No description yet.' : row.text, 'library-description'));
     if(deleted&&row.deletion){
       const info=row.deletion;
       const message=info.cleanup_started?'Removing files…':info.cleanup_deferred_reason||'Files will be removed after '+new Date(info.purge_after).toLocaleString()+'.';
-      card.append(el('p',message,'notice'));
+      main.append(el('p',message,'notice'));
     }
     if (isVoices && row.tags.length) {
       const tags = el('div', null, 'tag-list');
@@ -503,11 +505,12 @@ function renderCards() {
         chip.onclick = () => { selectedTags=new Set([tag]);renderTagChoices();catalogOffset = 0; loadVoicePage().catch(exc => error(exc.message)); };
         tags.append(chip);
       }
-      card.append(tags);
+      main.append(tags);
     }
-    if (!isVoices && row.emotion) card.append(el('p', row.emotion));
-    if (!isVoices && (row.preset_voice || row.steering_emotion || row.accent)) card.append(el('p',[row.preset_voice?'Preset '+row.preset_voice:'',row.steering_emotion?'Experimental '+row.steering_emotion+' steering':'',row.accent].filter(Boolean).join(' · ')));
-    if(!row.deletion?.cleanup_started){const player = el('audio'); player.controls = true; player.preload = 'none'; player.src = row.audio_url;card.append(player)}
+    if (!isVoices) main.append(el('p','Voice: '+(voiceLabel(row)||'Unknown'),'collection-voice'));
+    if (!isVoices && row.emotion) main.append(el('p', row.emotion));
+    if (!isVoices && (row.steering_emotion || row.accent)) main.append(el('p',[row.steering_emotion?'Experimental '+row.steering_emotion+' steering':'',row.accent].filter(Boolean).join(' · ')));
+    if(!row.deletion?.cleanup_started){const player = el('audio'); player.controls = true; player.preload = 'none'; player.src = row.audio_url;side.append(player)}
     const actions = el('div', null, 'card-actions');
     if(!deleted){
     const use = el('button', isVoices ? 'Use this voice' : 'Open take', 'secondary');
@@ -530,7 +533,7 @@ function renderCards() {
     const change=el('button',deleted?'Restore':'Delete',deleted?'secondary':'secondary danger');change.type='button';
     if(deleted&&(row.deletion?.cleanup_started||Date.parse(row.deletion?.purge_after)<=Date.now())){change.disabled=true;change.title='The 24-hour restore window has expired.'}
     change.onclick=()=>deleted?restoreCollectionEntry(row,isVoices,change):openCollectionDelete(row,isVoices);
-    actions.append(change);card.append(actions); $('cards').append(card);
+    actions.append(change);side.append(actions);card.append(main,side); $('cards').append(card);
   }
 }
 function collectionPath(target){return '/api/'+(target.kind==='voices'?'voices':'artifacts')+'/'+target.id}
@@ -813,21 +816,22 @@ function queueNotices(state){
 // The header switch and the queue dialog button both mirror the persisted pause flag read by health polling.
 // Each pause/resume bumps the revision so a health reading requested before it cannot undo the change.
 let queueSwitchBusy=false,queuePauseRevision=0;
+// The header and Queue dialog switches show the same shared pause flag.
+const queueSwitches=()=>[$('queue-processing'),$('queue-processing-dialog')];
 function showQueuePaused(paused,available=true,revision=queuePauseRevision){
  if(revision!==queuePauseRevision)return;
- queuePaused=paused;queueLabel($('queue-pause'),paused?'play':'pause',paused?'Resume queue':'Pause queue');
+ queuePaused=paused;
  if(queueSwitchBusy)return;
- $('queue-processing').checked=!paused;$('queue-processing').disabled=!available;
+ for(const toggle of queueSwitches()){toggle.checked=!paused;toggle.disabled=!available}
 }
 async function setQueuePaused(paused){
- const toggle=$('queue-processing');
- if(queueSwitchBusy){toggle.checked=!queuePaused;return}
- queueSwitchBusy=true;toggle.disabled=true;$('queue-pause').disabled=true;queuePauseRevision++;
+ if(queueSwitchBusy){for(const toggle of queueSwitches())toggle.checked=!queuePaused;return}
+ queueSwitchBusy=true;for(const toggle of queueSwitches())toggle.disabled=true;queuePauseRevision++;
  try{
   const state=await post('/api/queue/'+(paused?'pause':'resume'),{});queueSwitchBusy=false;showQueuePaused(state.paused);
   announce(state.paused?'Queue paused. Active work finishes first; Generate immediately and Run Now jobs still run.':'Queue resumed.');
  }catch(exc){queueSwitchBusy=false;showQueuePaused(queuePaused,queueWritable);error(`Could not ${paused?'pause':'resume'} the queue: ${exc.message}`)}
- finally{queueSwitchBusy=false;$('queue-pause').disabled=false;queuePauseRevision++;await health()}
+ finally{queueSwitchBusy=false;queuePauseRevision++;await health()}
 }
 let healthInFlight=false;
 async function health(){
@@ -839,7 +843,7 @@ async function health(){
   online=state.downloaded&&!state.runtime_errors?.length;
   queueWritable=state.queue_storage?.status!=='unavailable';queueNotices(state);
   // Without readable storage, queue_paused is only a default: keep the last known position and disable the switch.
-  if(queueWritable)showQueuePaused(!!state.queue_paused,true,pauseRevision);else if(!queueSwitchBusy)$('queue-processing').disabled=true;
+  if(queueWritable)showQueuePaused(!!state.queue_paused,true,pauseRevision);else if(!queueSwitchBusy)for(const toggle of queueSwitches())toggle.disabled=true;
   const pausedIdle=queueWritable&&queuePaused&&!state.busy&&state.status!=='error';
   $('status').dataset.offline=!online;$('status').dataset.paused=pausedIdle;
   $('status').textContent=state.status==='error'?(state.last_error||'Setup incomplete'):state.busy?state.status:pausedIdle?'Queue paused':state.model_loaded?'Model loaded · Ready':caps?.limits.model_residency==='per job subprocess'?'Ready · Loads per take':'Ready · Loads on first take';
@@ -852,7 +856,7 @@ async function health(){
   }
  }catch(exc){
   online=false;$('status').textContent=exc.message==='Failed to fetch'?'Server offline':exc.message;
-  $('status').dataset.offline=true;$('status').dataset.paused=false;$('queue-processing').disabled=true;queueNotices(null);
+  $('status').dataset.offline=true;$('status').dataset.paused=false;for(const toggle of queueSwitches())toggle.disabled=true;queueNotices(null);
  }finally{healthInFlight=false;controls()}
 }
 let queueOffset=0,queuePage=null,queueRequest=0,queueDrag=null,queueMutating=false;
@@ -868,7 +872,7 @@ async function refreshQueue(){
  $('queue-clear').disabled=!(page.counts.queued>0);$('queue-prev').disabled=queueOffset===0;$('queue-next').disabled=!page.has_more;
  $('queue-page').textContent=page.total?`${queueOffset+1}–${queueOffset+page.data.length} of ${page.total}`:'No matching entries';
  for(const row of page.data){
-  const card=el('article',null,'card queue-entry'),content=el('div',null,'queue-entry-content');
+  const card=el('article',null,'queue-entry'),content=el('div',null,'queue-entry-content');
   card.dataset.jobId=row.id;card.dataset.queueStatus=row.status;
   if(row.status==='queued'){
    const handle=el('button',null,'queue-drag-handle');handle.append(queueIcon('grip'));handle.type='button';handle.dataset.jobId=row.id;
@@ -878,7 +882,7 @@ async function refreshQueue(){
    handle.onkeydown=event=>{if(['ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();changeQueueOrder(row.id,{direction:event.key==='ArrowUp'?'up':'down'},false,true)}};
    card.append(handle);
   }else{const spacer=el('span',null,'queue-drag-spacer');spacer.setAttribute('aria-hidden','true');card.append(spacer)}
-  content.append(el('strong',`${row.status} · ${row.backend||'legacy'} · ${row.generate_immediately?'Immediate':'Normal'}`));
+  content.append(el('strong',[row.status,row.backend||'legacy',voiceLabel(row.requested),row.generate_immediately?'Immediate':'Normal'].filter(Boolean).join(' · ')));
   const progress=row.status==='running'?row.progress:null,progressLabel=VoiceRecording.progressText(progress,{compact:true});
   content.append(el('p',row.requested?.text||row.id),el('p',progressLabel?`${row.stage} · ${progressLabel}`:row.stage,'hint'));
   if(progress)content.append(progressBar(progress,row.stage,'queue-progress'));
@@ -899,6 +903,27 @@ async function refreshQueue(){
  $('queue-entries').scrollTop=queueScroll;
  if(queueFocus){const card=$('queue-entries').querySelector(`[data-job-id="${queueFocus.id}"]`);[...card?.querySelectorAll('button')||[]].find(button=>button.textContent===queueFocus.text&&!button.disabled)?.focus({preventScroll:true})}
 }
+// Name the voice a line is recorded with: saved voices by name, uploads and built-in speakers by kind.
+const savedVoiceNames=new Map();
+function voiceLabel(request){
+ if(!request)return '';
+ if(request.voice_id){
+  const name=voiceRows.find(voice=>voice.id===request.voice_id)?.name||savedVoiceNames.get(request.voice_id);
+  if(name)return name;
+  if(!savedVoiceNames.has(request.voice_id)){
+   savedVoiceNames.set(request.voice_id,null);
+   api('/api/voices/'+request.voice_id).then(voice=>{savedVoiceNames.set(request.voice_id,voice.name||'Saved voice');voiceNamesChanged()}).catch(()=>savedVoiceNames.set(request.voice_id,'Saved voice'));
+  }
+  return 'Saved voice';
+ }
+ if(request.reference_id)return 'Uploaded voice';
+ if(request.preset_voice)return 'Built-in voice: '+request.preset_voice;
+ return request.description?'Designed voice':'';
+}
+function voiceNamesChanged(){
+ if($('queue-dialog')?.open)refreshQueue().catch(()=>{});
+ if($('cards')&&collection==='history'&&historyPage.data.length)renderCards();
+}
 async function changeQueueOrder(identity,target,runNow=false,refocus=false){
  if(queueMutating||queueDrag)return;
  queueMutating=true;queueRequest++;$('queue-error').hidden=true;$('queue-entries').setAttribute('aria-busy','true');
@@ -912,13 +937,29 @@ async function changeQueueOrder(identity,target,runNow=false,refocus=false){
   try{await refreshQueue();if(refocus||runNow){const card=$('queue-entries').querySelector(`[data-job-id="${identity}"]`);(card?.querySelector(runNow?'.queue-run-now':'.queue-drag-handle')||card?.querySelector('button'))?.focus()}}catch(exc){error(exc.message)}
  }
 }
+function queuedEntries(){return [...$('queue-entries').querySelectorAll('[data-queue-status="queued"]')]}
+function liftQueueEntry(card,y){
+ const box=card.getBoundingClientRect(),ghost=card.cloneNode(true);
+ ghost.className='queue-entry queue-ghost';delete ghost.dataset.jobId;delete ghost.dataset.queueStatus;ghost.setAttribute('aria-hidden','true');ghost.inert=true;
+ Object.assign(ghost.style,{left:box.left+'px',top:box.top+'px',width:box.width+'px',height:box.height+'px'});
+ $('queue-dialog').append(ghost);card.classList.add('queue-moving');
+ return {ghost,offset:y-box.top};
+}
+function moveQueueGap(list,card,before){
+ // Animate rows that shift around the gap from where they were (FLIP).
+ const rows=[...list.children].filter(row=>row!==card),first=new Map(rows.map(row=>[row,row.getBoundingClientRect().top]));
+ list.insertBefore(card,before);
+ if(matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+ for(const row of rows){const shift=first.get(row)-row.getBoundingClientRect().top;if(shift)row.animate([{transform:`translateY(${shift}px)`},{transform:'none'}],{duration:150,easing:'ease-out'})}
+}
 function queueDropTarget(y){
- const rows=[...$('queue-entries').querySelectorAll('[data-queue-status="queued"]')].filter(card=>card.dataset.jobId!==queueDrag.identity);
- for(const card of $('queue-entries').children)delete card.dataset.drop;
- const anchor=rows.find(card=>y<card.getBoundingClientRect().top+card.getBoundingClientRect().height/2)||rows.at(-1);
- if(!anchor){queueDrag.target=null;return}
- const placement=y<anchor.getBoundingClientRect().top+anchor.getBoundingClientRect().height/2?'before':'after';
- anchor.dataset.drop=placement;queueDrag.target={[placement+'_id']:anchor.dataset.jobId};
+ const list=$('queue-entries'),card=queueDrag.card,rows=queuedEntries().filter(row=>row!==card);
+ if(!rows.length){queueDrag.target=null;return}
+ const next=rows.find(row=>{const box=row.getBoundingClientRect();return y<box.top+box.height/2});
+ const before=next||rows.at(-1).nextSibling;
+ if(before!==card&&card.nextSibling!==before)moveQueueGap(list,card,before);
+ const queued=queuedEntries(),index=queued.indexOf(card);
+ queueDrag.target=index===queueDrag.startIndex?null:queued[index+1]?{before_id:queued[index+1].dataset.jobId}:{after_id:queued[index-1].dataset.jobId};
 }
 function queueDragFrame(){
  if(!queueDrag?.moving)return;
@@ -931,14 +972,15 @@ function startQueueDrag(event){
  if(event.button!==0||queueMutating||queueDrag)return;
  const handle=event.currentTarget;event.preventDefault();handle.focus({preventScroll:true});
  queueRequest++;handle.setPointerCapture(event.pointerId);
- queueDrag={identity:handle.dataset.jobId,handle,pointerId:event.pointerId,x:event.clientX,y:event.clientY,startX:event.clientX,startY:event.clientY,direction:0,moving:false,target:null};
+ const card=handle.closest('.queue-entry');
+ queueDrag={identity:handle.dataset.jobId,handle,card,startIndex:queuedEntries().indexOf(card),pointerId:event.pointerId,x:event.clientX,y:event.clientY,startX:event.clientX,startY:event.clientY,direction:0,moving:false,target:null};
 }
 function finishQueueDrag(commit=false){
  if(!queueDrag)return;
  const drag=queueDrag;queueDrag=null;cancelAnimationFrame(drag.frame);
  if(drag.handle.hasPointerCapture(drag.pointerId))drag.handle.releasePointerCapture(drag.pointerId);
- $('queue-entries').classList.remove('queue-dragging');
- for(const card of $('queue-entries').children){delete card.dataset.drop;card.classList.remove('queue-moving')}
+ $('queue-entries').classList.remove('queue-dragging');drag.ghost?.remove();
+ for(const card of $('queue-entries').children)card.classList.remove('queue-moving');
  if(commit&&drag.moving&&drag.target)changeQueueOrder(drag.identity,drag.target,false,true);
  else refreshQueue().catch(exc=>error(exc.message));
 }
@@ -947,9 +989,10 @@ document.addEventListener('pointermove',event=>{
  queueDrag.direction=Math.sign(event.clientY-queueDrag.y)||queueDrag.direction;
  queueDrag.x=event.clientX;queueDrag.y=event.clientY;
  if(!queueDrag.moving&&Math.hypot(event.clientX-queueDrag.startX,event.clientY-queueDrag.startY)>6){
-  queueDrag.moving=true;$('queue-entries').classList.add('queue-dragging');queueDrag.handle.closest('.queue-entry').classList.add('queue-moving');
-  announce('Moving job. Release at the highlighted position, or press Escape to cancel.');queueDragFrame();
+  queueDrag.moving=true;$('queue-entries').classList.add('queue-dragging');Object.assign(queueDrag,liftQueueEntry(queueDrag.card,event.clientY));
+  announce('Moving job. Release at the outlined position, or press Escape to cancel.');queueDragFrame();
  }
+ if(queueDrag.ghost)queueDrag.ghost.style.top=(event.clientY-queueDrag.offset)+'px';
  if(queueDrag.moving)event.preventDefault();
 },{passive:false});
 document.addEventListener('pointerup',event=>{
@@ -1157,8 +1200,7 @@ async function selectVoiceModel(backend){
  }finally{changingModel=false;controls();if(pendingModelRestore){const row=pendingModelRestore;pendingModelRestore=null;restore(row)}}
 }
 $('voice-model').onchange=()=>{if($('voice-model').value)selectVoiceModel($('voice-model').value).catch(exc=>error(exc.message))};
-$('queue-pause').onclick=()=>setQueuePaused(!queuePaused);
-$('queue-processing').onchange=event=>setQueuePaused(!event.target.checked);
+for(const toggle of queueSwitches())toggle.onchange=event=>setQueuePaused(!event.target.checked);
 async function startStudio(){
  if(studioInitialized||studioStarting)return;studioStarting=true;
  try{
@@ -1415,6 +1457,7 @@ async function openPageSelection(){
 }
 
 const controlHelp={
+ 'queue-clear':'Removes every pending job across models. The active job, finished audio and History are kept.',
  'queue-processing':'On: waiting jobs run in order. Off: the queue pauses after the active job finishes and waiting jobs stay saved. Generate immediately and Run Now jobs still run while paused. The setting is shared with the queue API and kept after restarts.',
  'show-deleted':'Show recordings deleted within the last 24 hours. Restore brings them back before that deadline. After 24 hours the generator removes their audio and metadata from disk, waiting for unfinished jobs that still need the files.',
  'record-source':'Choose a saved character, upload a reference recording, or use a built-in speaker when available. The same Record lines form handles each source.',
@@ -1514,18 +1557,27 @@ function scheduleHelpHide(){
  clearTimeout(helpHideTimer);
  helpHideTimer=setTimeout(()=>{if(activeHelp&&!activeHelp.matches(':hover,:focus')&&!helpTooltip.matches(':hover'))hideControlHelp()},150);
 }
+controlHelp['queue-processing-dialog']=controlHelp['queue-processing'];
+function helpTrigger(id,name){
+ const button=el('button','?','help-trigger');
+ button.type='button';button.dataset.helpFor=id;button.setAttribute('aria-label','Help: '+name);button.setAttribute('aria-expanded','false');
+ button.addEventListener('pointerenter',()=>showControlHelp(button));button.addEventListener('focus',()=>showControlHelp(button));
+ button.addEventListener('pointerleave',scheduleHelpHide);button.addEventListener('blur',scheduleHelpHide);
+ button.addEventListener('click',event=>{event.preventDefault();showControlHelp(button)});
+ return button;
+}
 function installControlHelp(){
  for(const id of Object.keys(controlHelp)){
   const control=$(id);if(!control)continue;
   const label=document.querySelector(`label[for="${id}"]`)||control.closest('label');
-  if(!label)continue;
+  if(!label){
+   // Unlabelled buttons get their help beside the button itself.
+   if(control.tagName==='BUTTON'&&!control.parentElement.classList.contains('help-label-row')){const row=el('span',null,'help-label-row help-toggle-row');control.before(row);row.append(control,helpTrigger(id,control.textContent.trim()))}
+   continue;
+  }
   if(label.parentElement.classList.contains('help-label-row')){label.parentElement.querySelector('.help-trigger').setAttribute('aria-label','Help: '+label.textContent.trim());continue;}
-  const row=el('div',null,'help-label-row'+(label.contains(control)?' help-toggle-row':'')),button=el('button','?','help-trigger');
-  button.type='button';button.dataset.helpFor=id;button.setAttribute('aria-label','Help: '+label.textContent.trim());button.setAttribute('aria-expanded','false');
-  label.before(row);row.append(label,button);
-  button.addEventListener('pointerenter',()=>showControlHelp(button));button.addEventListener('focus',()=>showControlHelp(button));
-  button.addEventListener('pointerleave',scheduleHelpHide);button.addEventListener('blur',scheduleHelpHide);
-  button.addEventListener('click',event=>{event.preventDefault();showControlHelp(button)});
+  const row=el('div',null,'help-label-row'+(label.contains(control)?' help-toggle-row':''));
+  label.before(row);row.append(label,helpTrigger(id,label.textContent.trim()));
  }
 }
 helpTooltip.addEventListener('pointerenter',()=>clearTimeout(helpHideTimer));helpTooltip.addEventListener('pointerleave',scheduleHelpHide);
