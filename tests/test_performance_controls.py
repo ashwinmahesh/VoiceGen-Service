@@ -58,13 +58,13 @@ class PerformanceTests(unittest.TestCase):
         with patch('engine.PROFILE',profile('fish')),patch('capabilities.PROFILE',profile('fish')):
             with self.assertRaises(ValueError):adapter.check_input_budget(r,Path('/tmp/reference.wav'),'abc')
             self.assertLess(len(adapter.check_input_budget(r.model_copy(update={'fish':None}),Path('/tmp/reference.wav'),'abc')),2048)
-    def test_higgs_cli_effective_options_no_incomplete_bypass(self):
+    def test_higgs_server_effective_options_no_incomplete_bypass(self):
         r=request(higgs={'emotion':'amusement','top_p':.75,'top_k':20})
-        with patch('native_engine.PROFILE',profile('higgs')),patch('native_engine.MODEL_SPECS',{'higgs':{'files':[{'path':'model.gguf'}]}}),patch('native_engine.Path.is_file',return_value=True):
-            args=native_engine.NativeEngine().command(r,Path('/tmp/ref.wav'),'Exact words.',Path('/tmp/out.wav'))
-        self.assertEqual(args[args.index('--text')+1],'<|emotion:amusement|> '+r.text)
-        self.assertEqual(args[args.index('--top-p')+1],'0.75');self.assertIn('--top-k',args)
-        self.assertFalse(any('repetition' in x or 'allow_incomplete' in x for x in args))
+        with patch('native_engine.PROFILE',profile('higgs')):
+            body=native_engine.NativeEngine().request_body(r,Path('/tmp/ref.wav'),'Exact words.')
+        self.assertEqual(body['input'],'<|emotion:amusement|> '+r.text)
+        self.assertEqual((body['options']['top_p'],body['options']['top_k']),(.75,20))
+        self.assertFalse(any('repetition' in key or 'allow_incomplete' in key for key in [*body,*body['options']]))
     def test_qwen_icl_floor_and_clean_reference_transcripts(self):
         model=SimpleNamespace(speech_tokenizer=SimpleNamespace(has_encoder=True),_resolve_generation_options=lambda *args:{'temperature':.9,'max_tokens':500,'top_k':50,'top_p':1.,'repetition_penalty':1.1})
         self.assertEqual(qwen_sampling(model,request(),Path('/tmp/ref'),'Exact words.')['sampling']['repetition_penalty'],1.5)
