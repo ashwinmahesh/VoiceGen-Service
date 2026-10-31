@@ -345,9 +345,13 @@ class QueueAPITests(QueueFixture):
             stack.enter_context(patch.object(server.app.state,'llm_enabled',False))
             for key,value in [('manager',manager),('engine',manager.engine),('all_errors',lambda:[]),('runtime_errors',lambda:[]),('prepare_storage',lambda:None),('ROOT',self.root)]:
                 stack.enter_context(patch('server.'+key,value))
+            # Default takes go to storage.OUTPUT_DIR; keep them out of the configured outputs folder.
+            for key,value in [('ROOT',self.root),('OUTPUT_DIR',self.root/'outputs')]:
+                stack.enter_context(patch('storage.'+key,value))
             with TestClient(server.app) as client:
                 body={'text':'API fixture.','description':'A calm voice.'}
-                first=client.post('/api/generate',json=body);self.assertEqual(first.status_code,202)
+                first=client.post('/api/generate',json=body);self.assertEqual(first.status_code,202,first.text)
+                self.assertTrue(Path(manager.store.read(first.json()['id'])['payload']['destination']).is_relative_to(self.root))
                 self.assertTrue(manager.engine.started.wait(2));self.assertFalse(first.json()['generate_immediately'])
                 row=client.post('/api/generate',json={**body,'generate_immediately':True,'idempotency_key':'api'}).json()
                 self.assertTrue(row['generate_immediately']);self.assertEqual(row['status'],'queued')
