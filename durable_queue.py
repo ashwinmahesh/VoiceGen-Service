@@ -111,10 +111,13 @@ class QueueStore:
             return json.loads(row[0]) if row else default
 
     def set_setting(self,key,value):
-        with self.transaction() as db:
-            db.execute('INSERT INTO queue_settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-                       (key,json.dumps(value,allow_nan=False)))
+        with self.transaction() as db:self._set(db,key,value)
         return value
+
+    @staticmethod
+    def _set(db,key,value):
+        db.execute('INSERT INTO queue_settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                   (key,json.dumps(value,allow_nan=False)))
 
     def default_model(self,timeout=10):
         from queue_config import DEFAULT_MODEL
@@ -140,30 +143,43 @@ class QueueStore:
                        (reason,'Blocked: '+reason,now(),identity))
 
     def claim_global(self,ready,allow_llm=True):
-        """One global order/consumer; finish a candidate batch before switching."""
+        """One global order/consumer; finish a candidate batch before other normal work.
+
+        Immediate work interrupts a normal batch after its current take, then the batch
+        resumes. Pausing stops a normal batch after its current take and returns its
+        remaining options to the top of the queue."""
         with self.transaction() as db:
             saved={row['key']:json.loads(row['value']) for row in db.execute('SELECT * FROM queue_settings')}
             rows=list(db.execute("SELECT * FROM entries WHERE status='queued' ORDER BY generate_immediately DESC,queue_order,sequence"))
-            batch=saved.get('active_batch')
-            if batch:
-                members=[row for row in rows if json.loads(row['payload']).get('candidate_batch_id')==batch]
-                if members and any(row['backend'] in ready and (not saved.get('paused') or row['generate_immediately']) and
-                                   (allow_llm or json.loads(row['payload']).get('candidate_plan',{}).get('method')!='llm' or
-                                    json.loads(row['payload']).get('candidate_plan',{}).get('ready')) for row in members):
-                    rows=members
-                else:
-                    db.execute("DELETE FROM queue_settings WHERE key='active_batch'")
-            chosen=None
-            for row in rows:
-                if row['backend'] not in ready:continue
-                if saved.get('paused') and not row['generate_immediately']:continue
+            paused=saved.get('paused')
+            def eligible(row):
+                if row['backend'] not in ready or (paused and not row['generate_immediately']):return False
                 plan=json.loads(row['payload']).get('candidate_plan',{})
-                if plan.get('method')=='llm' and not plan.get('ready') and not allow_llm:continue
-                chosen=row;break
+                return allow_llm or plan.get('method')!='llm' or bool(plan.get('ready'))
+            def members(batch):
+                return [row for row in rows if batch and json.loads(row['payload']).get('candidate_batch_id')==batch]
+            def settle(key):
+                # A batch with nothing eligible is dropped; a paused one goes back to the top.
+                if paused and members(saved.get(key)):self._to_top(db,[row['id'] for row in members(saved[key])])
+                db.execute('DELETE FROM queue_settings WHERE key=?',(key,));saved.pop(key,None)
+            if saved.get('active_batch') and not any(map(eligible,members(saved['active_batch']))):settle('active_batch')
+            if saved.get('interrupted_batch') and not saved.get('active_batch'):
+                if any(map(eligible,members(saved['interrupted_batch']))):
+                    self._set(db,'active_batch',saved['interrupted_batch'])
+                    db.execute("DELETE FROM queue_settings WHERE key='interrupted_batch'")
+                    saved['active_batch']=saved.pop('interrupted_batch')
+                else:settle('interrupted_batch')
+            batch=members(saved.get('active_batch'))
+            urgent=[row for row in rows if row['generate_immediately'] and row not in batch]
+            if batch and any(map(eligible,urgent)) and not any(row['generate_immediately'] for row in batch):
+                self._set(db,'interrupted_batch',saved['active_batch'])
+                db.execute("DELETE FROM queue_settings WHERE key='active_batch'")
+                rows=urgent
+            elif batch:rows=batch
+            chosen=next(filter(eligible,rows),None)
             if chosen is None:return None
             group=json.loads(chosen['payload']).get('candidate_batch_id')
-            if group:
-                db.execute("INSERT INTO queue_settings VALUES('active_batch',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(json.dumps(group),))
+            if group:self._set(db,'active_batch',group)
             db.execute("UPDATE entries SET status='running',attempts=attempts+1,started_at=?,completed_at=NULL,updated_at=?,stage='Starting',error=NULL,blocked_reason=NULL,progress=NULL WHERE id=?",(now(),now(),chosen['id']))
             return self.decode(db.execute('SELECT * FROM entries WHERE id=?',(chosen['id'],)).fetchone())
 
@@ -302,6 +318,12 @@ class QueueStore:
         # sequence-based admissions at the back of their priority group.
         db.executemany('UPDATE entries SET queue_order=? WHERE id=?',
                        ((position,identity) for position,identity in enumerate(identities,1)))
+
+    def _to_top(self, db, identities):
+        """Put waiting jobs first within their priority group, keeping their order."""
+        rest=[row['id'] for row in db.execute("SELECT id FROM entries WHERE status='queued' ORDER BY generate_immediately DESC,queue_order,sequence")
+              if row['id'] not in identities]
+        self._save_order(db,[*identities,*rest])
 
     def run_now(self, identity):
         """Place one waiting job first, even ahead of existing immediate work."""

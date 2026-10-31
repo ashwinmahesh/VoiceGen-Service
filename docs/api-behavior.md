@@ -83,7 +83,7 @@ Capabilities include model-specific license links and notices. `commercial_use_n
 - Model-specific options and telemetry use exact model IDs. Deprecated Chatterbox/Index flat controls remain accepted; mixing them with their namespaced equivalents is rejected.
 - Retry identity includes model and effective request form. Compatibility handling preserves older omitted-mode/nullable-option requests without changing stored jobs. New defaults do not modify already admitted work.
 - Candidate, single-take, queue-service, and pause-edit keys have separate scopes. Keep the same endpoint and request form when recovering an unchanged submission.
-- Shared accelerator ownership lasts through load/generation/unload, including after a client disconnect. Native children retain reservations until exit even if their parent is killed. One server owns a data folder; do not start additional workers or enable reloaders against the same state.
+- Shared accelerator ownership lasts through load/generation/unload, including after a client disconnect. The generator holds one reservation across a run of consecutive jobs and releases it when nothing more can run. Per-take native children retain reservations until exit even if their parent is killed; the resident Higgs server holds only the consumer lease. One server owns a data folder; do not start additional workers or enable reloaders against the same state.
 - Generator queue-health probes are read-only and bounded: 0.3 seconds for the separate API and 0.25 seconds for database lock waits. A queue HTTP outage does not trigger automatic restart or a fallback database.
 
 See [AGENTS.md](../AGENTS.md) for development rules and [BACKENDS.md](../BACKENDS.md) for runtime setup and storage.

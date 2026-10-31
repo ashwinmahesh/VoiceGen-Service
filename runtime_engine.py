@@ -20,11 +20,16 @@ class RuntimeEngine:
         self.worker_script=Path(worker_script or PROJECT_ROOT/'backend_worker.py')
         self.process=None;self.channel=None;self.backend=None
         self.consumer_owner=None;self.fatal_error=None
-        self.loaded=False;self.variant=None;self.switching=False
+        self.loaded=False;self.variant=None;self.switching=False;self.queue_resident=False
         self.lock=threading.RLock()
 
     @property
     def model(self):return True if self.loaded else None
+
+    @property
+    def release_when_paused(self):
+        """The loaded backend keeps its weights only while the queue is processing."""
+        return bool(self.process and self.loaded and self.queue_resident and not self.switching)
 
     @property
     def active_model(self):return self.backend if self.process and (self.loaded or self.switching) else None
@@ -78,7 +83,7 @@ class RuntimeEngine:
             raise RuntimeError(self.fatal_error) from error
         finally:
             if channel:channel.close()
-        self.process=self.channel=self.backend=None;self.loaded=False;self.variant=None
+        self.process=self.channel=self.backend=None;self.loaded=False;self.variant=None;self.queue_resident=False
 
     def _start(self,backend,on_stage):
         if self.fatal_error:raise RuntimeError(self.fatal_error)
@@ -127,6 +132,7 @@ class RuntimeEngine:
                         if on_stage:on_stage(response['event'])
                         continue
                     self.loaded=response.get('loaded',False);self.variant=response.get('variant')
+                    self.queue_resident=response.get('release_when_paused',False)
                     if 'error' in response:raise RuntimeError(response['error'])
                     return response['result']
             except BaseException:

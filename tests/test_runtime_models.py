@@ -51,7 +51,7 @@ while True:
   with wave.open(str(path),'wb') as out:
    out.setparams((1,2,16000,0,'NONE','not compressed'))
    out.writeframes(b''.join(struct.pack('<h',int(2000*math.sin(i*.1))) for i in range(16000)))
-  send(sock,{'loaded':True,'variant':os.environ['MODEL_BACKEND'],'result':{'duration':1.,'sample_rate':16000,'generation_seconds':.01,'waveform':[.1],
+  send(sock,{'loaded':True,'variant':os.environ['MODEL_BACKEND'],'release_when_paused':os.environ['MODEL_BACKEND']=='higgs','result':{'duration':1.,'sample_rate':16000,'generation_seconds':.01,'waveform':[.1],
     'worker_pid':os.getpid(),'worker_calls':calls,'received_leases':len(fds),'backend':os.environ['MODEL_BACKEND']}})
  finally:
   for fd in fds:os.close(fd)
@@ -118,18 +118,55 @@ class SharedQueue(unittest.TestCase):
         self.store.mark_blocked({'higgs':None})
         self.assertEqual(self.store.claim_global(['higgs'])['id'],third['id'])
 
-    def test_candidate_batch_finishes_before_other_model_even_after_restart(self):
+    def claim_all(self,store,ready=('higgs','voxcpm2')):
+        claimed=[]
+        while row:=store.claim_global(list(ready)):
+            claimed.append(row['id']);store.change(row['id'],status='done')
+        return claimed
+
+    def test_candidate_batch_finishes_before_other_normal_work(self):
         payload={'destination':str(self.root),'requested':{},'effective':{}}
         batch=self.store.admit_candidates('voxcpm2','voxcpm2','design',False,[payload,payload],None,'fingerprint')
-        other=self.store.admit_opaque('higgs',{})
+        first=self.store.claim_global(['higgs','voxcpm2']);self.store.change(first['id'],status='done')
+        other=self.store.admit_opaque('higgs',{});self.store.move(other['id'],before_id=batch['jobs'][1]['id'])
+        self.assertEqual(self.claim_all(self.store),[batch['jobs'][1]['id'],other['id']])
+
+    def test_immediate_work_runs_after_the_current_take_then_the_batch_resumes_even_after_restart(self):
+        payload={'destination':str(self.root),'requested':{},'effective':{}}
+        batch=self.store.admit_candidates('voxcpm2','voxcpm2','design',False,[payload,payload,payload],None,'fingerprint')
+        later=self.store.admit_opaque('higgs',{});other=self.store.admit_opaque('higgs',{})
         first=self.store.claim_global(['higgs','voxcpm2'])
         self.assertEqual(first['id'],batch['jobs'][0]['id'])
         self.store.run_now(other['id']);self.store.change(first['id'],status='done')
+        urgent=self.store.admit_candidates('higgs','higgs','reference',True,[payload,payload],None,'urgent')
         fresh=QueueStore(self.root,self.store.path);fresh.initialize()
-        second=fresh.claim_global(['higgs','voxcpm2'])
-        self.assertEqual(second['id'],batch['jobs'][1]['id'])
-        fresh.change(second['id'],status='done')
-        self.assertEqual(fresh.claim_global(['higgs','voxcpm2'])['id'],other['id'])
+        self.assertEqual(self.claim_all(fresh),[other['id'],*(job['id'] for job in urgent['jobs']),
+                                                 batch['jobs'][1]['id'],batch['jobs'][2]['id'],later['id']])
+
+    def test_pausing_mid_batch_returns_its_remaining_options_to_the_top(self):
+        payload={'destination':str(self.root),'requested':{},'effective':{}}
+        batch=self.store.admit_candidates('voxcpm2','voxcpm2','design',False,[payload,payload,payload],None,'fingerprint')
+        other=self.store.admit_opaque('higgs',{})
+        first=self.store.claim_global(['higgs','voxcpm2'])
+        self.store.move(other['id'],before_id=batch['jobs'][1]['id'])
+        self.store.pause(True);self.store.change(first['id'],status='done')
+        self.assertIsNone(self.store.claim_global(['higgs','voxcpm2']))
+        self.assertIsNone(self.store.setting('active_batch'))
+        self.assertEqual([row['id'] for row in self.store.listing()['data']],[batch['jobs'][1]['id'],batch['jobs'][2]['id'],other['id']])
+        self.store.pause(False)
+        self.assertEqual(self.claim_all(self.store),[batch['jobs'][1]['id'],batch['jobs'][2]['id'],other['id']])
+
+    def test_pausing_while_immediate_work_interrupts_a_batch_still_returns_the_batch_to_the_top(self):
+        payload={'destination':str(self.root),'requested':{},'effective':{}}
+        batch=self.store.admit_candidates('voxcpm2','voxcpm2','design',False,[payload,payload],None,'fingerprint')
+        other=self.store.admit_opaque('higgs',{})
+        first=self.store.claim_global(['higgs','voxcpm2']);self.store.change(first['id'],status='done')
+        urgent=self.store.admit_opaque('higgs',{},immediate=True)
+        self.store.move(other['id'],before_id=batch['jobs'][1]['id'])
+        self.assertEqual(self.store.claim_global(['higgs','voxcpm2'])['id'],urgent['id'])
+        self.store.pause(True);self.store.change(urgent['id'],status='done')
+        self.assertIsNone(self.store.claim_global(['higgs','voxcpm2']))
+        self.assertEqual([row['id'] for row in self.store.listing()['data']],[batch['jobs'][1]['id'],other['id']])
 
     def test_unplanned_batch_without_llm_does_not_block_eligible_models(self):
         payload={'destination':str(self.root),'requested':{},'effective':{},'candidate_plan':{'method':'llm','ready':False}}
@@ -192,6 +229,18 @@ class RuntimeAPITests(unittest.TestCase):
 
     def done(self,job):
         return wait_for(lambda:(row if (row:=self.client.get('/api/jobs/'+job['id']).json())['status'] in ('done','error') else None))
+
+    def test_pausing_releases_only_a_model_resident_for_queue_work(self):
+        self.assertEqual(self.done(self.submit('voxcpm2'))['status'],'done')
+        self.client.post('/api/queue/pause');time.sleep(.3)
+        self.assertEqual(self.engine.active_model,'voxcpm2')
+        self.client.post('/api/queue/resume')
+        self.assertEqual(self.done(self.submit('higgs'))['status'],'done')
+        self.assertEqual(self.engine.active_model,'higgs')
+        self.assertTrue(self.engine.release_when_paused)
+        self.client.post('/api/queue/pause')
+        wait_for(lambda:self.engine.active_model is None)
+        self.assertFalse(self.engine.release_when_paused)
 
     def test_real_subprocesses_reuse_same_model_and_reap_before_switching(self):
         one=self.done(self.submit('voxcpm2'));two=self.done(self.submit('voxcpm2'))
@@ -300,11 +349,14 @@ class RuntimeAPITests(unittest.TestCase):
     def test_backend_crash_fails_one_job_and_next_model_still_runs(self):
         bad=self.done(self.submit('voxcpm2','Crash.'));self.assertEqual(bad['status'],'error',bad)
         good=self.done(self.submit('higgs'));self.assertEqual(good['status'],'done',good)
-        with (self.root/'gpu.lock').open('a+') as handle:
-            wait_for(lambda:self.manager.active is None)
-            fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        def free():
+            with (self.root/'gpu.lock').open('a+') as handle:
+                try:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                except BlockingIOError:return False
+                return True
+        wait_for(free)
 
-    def test_batch_finishes_before_other_models_run_now(self):
+    def test_run_now_runs_after_the_current_take_then_the_batch_resumes(self):
         response=self.client.post('/api/candidates',json={'model':'voxcpm2','text':'Held.','description':'A cultured baritone.',
             'candidate_count':3,'candidate_variation':'seed_only','candidate_use_llm':False})
         self.assertEqual(response.status_code,202,response.text);batch=response.json()
@@ -312,10 +364,11 @@ class RuntimeAPITests(unittest.TestCase):
         other=self.submit('higgs')
         self.assertEqual(self.client.post('/api/queue/'+other['id']+'/run-now').status_code,200)
         (self.root/'outputs/release').touch()
-        rows=[self.done(job) for job in batch['jobs']];last=self.done(other)
-        self.assertTrue(all(row['status']=='done' for row in rows),rows)
-        self.assertEqual(len({row['result']['worker_pid'] for row in rows}),1)
-        self.assertLess(max(row['completed_at'] for row in rows),last['started_at'])
+        rows=[self.done(job) for job in batch['jobs']];urgent=self.done(other)
+        self.assertTrue(all(row['status']=='done' for row in [*rows,urgent]),rows)
+        self.assertLess(rows[0]['completed_at'],urgent['started_at'])
+        self.assertLess(urgent['completed_at'],rows[1]['started_at'])
+        self.assertLess(rows[1]['completed_at'],rows[2]['started_at'])
 
     def test_api_stays_responsive_and_validates_model_during_generation(self):
         active=self.submit('voxcpm2','Held.')

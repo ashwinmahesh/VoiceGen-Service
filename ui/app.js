@@ -192,6 +192,9 @@ $('prompt-expansion-enabled').onchange=()=>{
  pendingKey=null;controls();persist();
 };
 $('restore-guidance').onclick=()=>{restoreAppliedGuidance();clearExpansion();pendingKey=null;controls();persist();};
+// Each tab keeps its own number of options: recorded lines default to one take, designs to two.
+const defaultOptionCounts={design:2,record:1};let optionCounts={...defaultOptionCounts};
+const optionKind=value=>value==='design'?'design':'record';
 function setMode(next){
  if(next==='record')next=readySourceModels(recordSource).length?recordSource:recordSources.find(([source])=>readySourceModels(source).length)?.[0];
  if(!next)return;
@@ -200,6 +203,7 @@ function setMode(next){
   awaitingSourceModel=caps.modes[sourceMode(next)]?.available===false;
  }
  if(mode!==next)rememberTranscriptDraft();
+ if(optionKind(mode)!==optionKind(next)){optionCounts[optionKind(mode)]=Number($('candidate-count').value);$('candidate-count').value=String(optionCounts[optionKind(next)])}
  pendingKey=null;clearExpansion();const previous=mode;mode=next;
  if(mode!=='design')recordSource=mode;
  if(['saved','upload'].includes(mode)&&$('emotion-preset').value==='natural'&&$('emotion').value===presets.natural){$('emotion').value='';$('emotion-preset').value='custom'}
@@ -259,7 +263,7 @@ function settings(allowCustomHiggs=false){
  if(Object.keys(options).length)result[caps.backend]=options;
  return result;
 }
-function persist(){if(caps&&!awaitingSourceModel)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(true),randomize_seed:$('random-seed').checked,...(caps.backend==='higgs'?{higgs_direction_drafts:Object.fromEntries(['emotion','prosody','style'].map(key=>[key,$('higgs-'+key).value])),higgs_selected_controls:higgsSelectedControls,higgs_suspended_directions:suspendedHiggsDirections}:{}),ref_text:$('ref-text').value,expansion_guidance:$('expansion-guidance').value,prompt_expansion_choice:expansionChoice,prompt_expansion:appliedExpansion,description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
+function persist(){if(caps&&!awaitingSourceModel)try{localStorage.setItem(storageKey+'-form',JSON.stringify({...settings(true),option_counts:{...optionCounts,[optionKind(mode)]:Number($('candidate-count').value)},randomize_seed:$('random-seed').checked,...(caps.backend==='higgs'?{higgs_direction_drafts:Object.fromEntries(['emotion','prosody','style'].map(key=>[key,$('higgs-'+key).value])),higgs_selected_controls:higgsSelectedControls,higgs_suspended_directions:suspendedHiggsDirections}:{}),ref_text:$('ref-text').value,expansion_guidance:$('expansion-guidance').value,prompt_expansion_choice:expansionChoice,prompt_expansion:appliedExpansion,description:$('description').value,accent:$('accent').value,emotion:$('emotion').value,mode,preset:$('emotion-preset').value}))}catch{}}
 function updateCapabilities(){
  if(!caps)return;
  const referenceMode=mode==='saved'||mode==='upload';
@@ -325,7 +329,7 @@ function restore(row){
  const requestedModel=row.backend||row.requested?.model||row.model;
  if(requestedModel&&availableModels.some(model=>model.id===requestedModel)&&requestedModel!==caps?.backend){if(changingModel){pendingModelRestore=row;return}selectVoiceModel(requestedModel).then(()=>restore(row)).catch(exc=>error(exc.message));return}
 
- $('candidate-count').value=String(row.candidate_count??2);
+ optionCounts={...defaultOptionCounts,...row.option_counts};$('candidate-count').value=String(optionCounts[optionKind(mode)]);
  expansionChoice=row.candidate_variant?false:row.prompt_expansion_choice??null;
  $('prompt-expansion-enabled').checked=!!caps.limits.prompt_expansion?.enabled&&(expansionChoice??true);
  $('candidate-variation').value=row.candidate_variant?'seed_only':row.candidate_variation||'auto';
@@ -342,6 +346,7 @@ function restore(row){
  else if(row.reference_id){reference={id:row.reference_id};$('reference-info').textContent='Using the reference saved with this take.';$('reference-preview').src=`/api/audio/references/${row.reference_id}`;$('reference-preview').hidden=false;setMode('upload')}
  else if(['design','saved','upload','preset'].includes(row.mode))setMode(readySourceModels(row.mode).length?row.mode:readySourceModels('upload').length?'upload':'design');
  else setMode('design');
+ if(row.candidate_count!=null&&!row.option_counts)$('candidate-count').value=String(optionCounts[optionKind(mode)]=row.candidate_count);
  for(const key of ['exaggeration','cfg_weight','duration_factor','interval_silence','emotion_alpha'])if($(key))$(key).value=row[caps.backend]?.[key]??row[key]??caps.controls[caps.backend]?.[key]?.default??1;
  $('emotion-reference-id').value=row[caps.backend]?.emotion_reference_id||row.emotion_reference_id||'';$('emotion-vector').value=(row[caps.backend]?.emotion_vector||row.emotion_vector)?.join(',')||'';
  $('emotion-reference-info').textContent=(row[caps.backend]?.emotion_reference_id||row.emotion_reference_id)?'Using the saved emotion recording.':'';
@@ -1211,7 +1216,8 @@ async function selectVoiceModel(backend){
   if(notice?.notice){$('license-text').textContent=notice.notice;$('license-link').href=notice.license_url;}
   buildBackendSettings();buildPerformanceControls();updateCapabilities();await refresh();
   const saved=JSON.parse(localStorage.getItem(storageKey+'-form')||'null');
-  if(draftMode)setMode(draftMode);else if(saved)restore(saved);else setMode(caps.modes.design.available===false?(voiceRows.length?'saved':'upload'):'design');
+  // Drafts saved before per-tab option counts take the new defaults.
+  if(draftMode)setMode(draftMode);else if(saved)restore(saved.option_counts?saved:{...saved,candidate_count:null});else setMode(caps.modes.design.available===false?(voiceRows.length?'saved':'upload'):'design');
   await health();
   if(!browsePage)recordingStore?.setModel(backend);
   renderModelChoices();
@@ -1503,7 +1509,7 @@ const controlHelp={
  'output-dir':'An absolute folder on the Mac running the service. Leave blank for the configured output folder; an external drive must be connected.',
  'prompt-expansion-enabled':'Use a small local language model to refine voice and acting directions. Preview and apply guidance for a take; supported voice-design batches can plan different options automatically. Spoken words stay unchanged.',
  'expansion-guidance':'Describe the delivery you want the local language model to help refine. Review its suggestion before applying it; it does not listen to your recording.',
- 'candidate-count':'Generate 1–5 options, one at a time. Recorded voices produce alternate takes; supported voice-design modes can explore different voices. The default is two.',
+ 'candidate-count':'Generate 1–5 options, one at a time. Recorded voices produce alternate takes; supported voice-design modes can explore different voices. The default is two for Design a voice and one for Record lines.',
  'candidate-variation':'Distinct designs keep your first description and explore contrasting voice traits for later options. Same prompt changes only the seed. Explicit accent and acting directions remain constraints.',
  'generate-immediately':'Run next after the current batch, ahead of ordinary waiting work. It does not interrupt active generation. Turn off to join the normal queue.',
  'voice-name':'A name for this reusable voice in Collection. Saving it lets you select its recording for later lines.',

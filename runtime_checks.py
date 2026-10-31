@@ -10,10 +10,11 @@ from backend_selection import AUDIOCPP_REVISION
 
 
 @lru_cache(maxsize=4)
-def native_build_error(binary, stamp):
+def native_build_error(binary, stamp, instrumented=True):
     try:
         result=subprocess.run([binary,'--version'],capture_output=True,text=True,timeout=5,check=False)
-        if result.returncode or AUDIOCPP_REVISION[:7] not in result.stdout or 'metal' not in result.stdout or 'voicegen_lifecycle=1' not in result.stdout:
+        if (result.returncode or AUDIOCPP_REVISION[:7] not in result.stdout or 'metal' not in result.stdout
+                or instrumented and 'voicegen_lifecycle=1' not in result.stdout):
             return 'Native binary is not the pinned Metal build; run make setup-env MODEL='+PROFILE['backend']
     except (OSError,subprocess.TimeoutExpired) as exc:
         return 'Cannot inspect native runtime: '+str(exc)
@@ -36,5 +37,13 @@ def runtime_errors():
             errors.append('Missing native runtime; run make setup-env MODEL='+backend)
         else:
             error=native_build_error(str(binary),binary.stat().st_mtime_ns)
+            if error:errors.append(error)
+    if backend=='higgs':
+        # Higgs stays resident in the server, which has no CLI lifecycle hook.
+        server=Path(os.environ.get('AUDIOCPP_SERVER_BIN',str(PROJECT_ROOT/'.runtime-source/audio.cpp/build/bin/audiocpp_server')))
+        if not server.is_file() or not os.access(server,os.X_OK):
+            errors.append('Missing native server; run make setup-env MODEL=higgs')
+        else:
+            error=native_build_error(str(server),server.stat().st_mtime_ns,False)
             if error:errors.append(error)
     return errors

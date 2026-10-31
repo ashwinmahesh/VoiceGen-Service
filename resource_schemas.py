@@ -113,7 +113,7 @@ class ModelLifecycleEvent(BaseModel):
     backend: str
     model: str
     action: Literal['load','unload']
-    scope: Literal['runtime_process','weights','native_weights','native_release','llm_weights']
+    scope: Literal['runtime_process','weights','native_weights','native_release','native_server','llm_weights']
     reason: str
     started_at: float
     ended_at: float | None

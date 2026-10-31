@@ -197,6 +197,19 @@ class QueueTests(QueueFixture):
         manager.recover();self.done(manager,one['id'])
         self.assertEqual(manager.read(other['id'])['status'],'queued');self.assertEqual(len(manager.engine.calls),2)
         self.assertEqual(manager.remove(backend='qwen3')['deleted'],1)
+    def test_one_gpu_reservation_spans_a_run_and_is_released_when_idle(self):
+        manager=self.manager();reserve=manager.reserve;reservations=[]
+        manager.reserve=lambda:reservations.append(1) or reserve()
+        rows=[self.submit(manager,f'Line {number}.') for number in range(3)]
+        manager.recover()
+        for row in rows:self.assertEqual(self.done(manager,row['id'])['status'],'done')
+        self.assertEqual(len(reservations),1)
+        def free():
+            with (self.root/'gpu.lock').open('a+') as peer:
+                try:fcntl.flock(peer,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                except BlockingIOError:return False
+                return True
+        wait_for(free)
     def test_shared_accelerator_lock_waits_then_consumes(self):
         handle=(self.root/'gpu.lock').open('a+');fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
         manager=self.manager();manager.recover();row=self.submit(manager)
