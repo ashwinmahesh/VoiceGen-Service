@@ -32,11 +32,11 @@ class HiggsLimitTests(unittest.TestCase):
                 self.assertEqual(effective.higgs.text_chunk_size,1024)
             r=Generation(text='Welcome.',reference_id='a'*32,higgs={'text_chunk_size':400})
             effective=capabilities.validate_controls(r)
-            with patch('native_engine.PROFILE',higgs_profile()),patch('native_engine.MODEL_SPECS',{'higgs':{'files':[{'path':'model.gguf'}]}}),patch('native_engine.Path.is_file',return_value=True):
-                command=native_engine.NativeEngine().command(effective,Path('/ref.wav'),'Hello.',Path('/out.wav'))
-            self.assertEqual(command[command.index('--text-chunk-size')+1],'400')
-            self.assertEqual(command[command.index('--max-tokens')+1],'1000')
-            self.assertFalse(any('allow_incomplete' in value for value in command))
+            with patch('native_engine.PROFILE',higgs_profile()):
+                body=native_engine.NativeEngine().request_body(effective,Path('/ref.wav'),'Hello.')
+            self.assertEqual(body['options']['text_chunk_size'],400)
+            self.assertEqual(body['max_tokens'],1000)
+            self.assertNotIn('allow_incomplete',json.dumps(body))
         for size in (0,79,1025):
             with self.assertRaises(ValueError):Generation(text='Welcome.',reference_id='a'*32,higgs={'text_chunk_size':size})
         with patch('capabilities.PROFILE',json.loads((PROJECT_ROOT/'backends/voxcpm2/service.json').read_text())):
@@ -57,16 +57,19 @@ class HiggsLimitTests(unittest.TestCase):
         parent=PROJECT_ROOT/'state/validation';parent.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(dir=parent) as folder:
             root=Path(folder);(root/'logs').mkdir();destination=root/'take.wav'
-            def fail(*args,**kwargs):
-                kwargs['stdout'].write('Higgs TTS generation reached max_tokens (1000) before EOC for this text chunk\n')
-                destination.with_suffix('.tmp.wav').write_bytes(b'incomplete')
-                return SimpleNamespace(returncode=1)
-            with patch('native_engine.ROOT',root),patch('native_engine.PROFILE',higgs_profile()),patch('native_engine.MODEL_SPECS',{'higgs':{'repo':'fixture/higgs'}}),patch('native_engine.all_errors',return_value=[]),patch.object(native_engine.NativeEngine,'command',return_value=['native']),patch('native_engine.subprocess.run',side_effect=fail) as run:
+            engine=native_engine.NativeEngine();self.addCleanup(setattr,engine,'server',None)
+            def start():
+                engine.server=SimpleNamespace(poll=lambda:None);engine.server_output=root/'server.log'
+                engine.server_output.write_text('server ready\n')
+            error=b'{"error":{"message":"Higgs TTS generation reached max_tokens (1000) before EOC for this text chunk"}}'
+            with patch('native_engine.ROOT',root),patch('native_engine.PROFILE',higgs_profile()),patch('native_engine.MODEL_SPECS',{'higgs':{'repo':'fixture/higgs'}}),patch('native_engine.all_errors',return_value=[]),patch.object(engine,'_start_server',side_effect=start),patch.object(engine,'_post',return_value=(500,{},error)) as post:
                 with self.assertRaisesRegex(RuntimeError,r'reached max_tokens \(1000\) before EOC.*Advanced settings'):
-                    native_engine.NativeEngine().generate(Generation(text='Welcome.',reference_id='a'*32),Path('/ref.wav'),destination)
-                self.assertEqual(run.call_count,1)
+                    engine.generate(Generation(text='Welcome.',reference_id='a'*32),Path('/ref.wav'),destination)
+                self.assertEqual(post.call_count,1)
                 self.assertFalse(destination.exists())
                 self.assertFalse(destination.with_suffix('.tmp.wav').exists())
+                self.assertIn('before EOC',(root/'logs/native-take.log').read_text())
+                self.assertIsNotNone(engine.model)  # A failed take keeps the resident model for the next one.
 
 
 class HiggsPartialBatchTests(unittest.TestCase):

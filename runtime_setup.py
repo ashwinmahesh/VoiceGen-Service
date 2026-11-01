@@ -42,7 +42,8 @@ def main():
         subprocess.run([str(cmake),'-S',str(source),'-B',str(source/'build'),'-DCMAKE_BUILD_TYPE=Release',
             '-DENGINE_ENABLE_METAL=ON','-DENGINE_ENABLE_OPENMP=OFF','-DAUDIOCPP_DEPLOYMENT_BUILD=ON',
             '-DAUDIOCPP_MODEL_SET=custom','-DAUDIOCPP_MODELS=moss_voicegen,higgs_audio_tts'],check=True)
-        subprocess.run([str(cmake),'--build',str(source/'build'),'--target','audiocpp_cli','-j','4'],check=True)
+        # Higgs runs the resident server; MOSS runs the per-take CLI.
+        subprocess.run([str(cmake),'--build',str(source/'build'),'--target','audiocpp_cli','audiocpp_server','-j','4'],check=True)
     print(f'{backend} runtime ready: {python}\nData: {ROOT}')
 
 

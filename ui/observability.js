@@ -48,7 +48,7 @@ function chart(metric,data,job){
 }
 function setView(next){view=next;if(next!=='jobs')history.replaceState(null,'',location.pathname+(next==='models'?'?view=models':''));for(const key of ['timeline','jobs','models']){$(key+'-panel').hidden=next!==key;$(key+'-tab').setAttribute('aria-selected',String(next===key))}refresh(true)}
 const boundaryNames={runtime_process:'Backend process',weights:'Python weights',native_weights:'Native weights & session',native_release:'Native release',llm_weights:'Prompt LLM weights'};
-const reasonNames={first_use:'First use',variant_change:'Variant change',model_switch:'Model switch',memory_release:'Release memory',shutdown:'Server shutdown',failure_cleanup:'Failure cleanup',per_job:'Per-take process',prompt_expansion:'Prompt expansion'};
+const reasonNames={first_use:'First use',variant_change:'Variant change',model_switch:'Model switch',memory_release:'Release memory',shutdown:'Server shutdown',failure_cleanup:'Failure cleanup',per_job:'Per-take process',prompt_expansion:'Prompt expansion',queue_paused:'Queue paused'};
 function lifecycleTable(headings,rows){const scroll=node('div',undefined,'table-scroll'),table=node('table'),thead=node('thead'),tr=node('tr'),tbody=node('tbody');for(const text of headings)tr.append(node('th',text));thead.append(tr);tbody.append(...rows);table.append(thead,tbody);scroll.append(table);return scroll}
 function renderLifecycle(target,data,job=false){
  const heading=node('div',undefined,'lifecycle-counts');for(const key of ['success','running','error','interrupted'])heading.append(node('span',`${data.counts[key]||0} ${key==='success'?'completed':key==='error'?'failed':key}`));

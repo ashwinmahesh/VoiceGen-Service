@@ -385,41 +385,55 @@ class JobManager:
         return True
 
     def _dispatch(self):
-        while not self._stop.is_set():
-            self._wake.clear()
-            handle = None
-            try:
-                ready=None
-                if self.runtime and self.store.has_pending():
-                    reasons={}
-                    for model in self.store.pending_models():
-                        errors=self.catalog.errors(model,force=True)
-                        reasons[model]='; '.join(errors)+f' Run make setup MODEL={model}.' if errors else None
-                    self.store.mark_blocked(reasons)
-                    ready=[model for model,reason in reasons.items() if not reason]
-                with self.guard:
-                    if not self._stop.is_set() and self.store.has_pending(None if self.runtime else self.current_profile['backend']):
-                        handle = self.reserve()
-                        row = self.store.claim_global(ready,allow_llm=self.llm_enabled) if self.runtime else self.store.claim(self.current_profile['backend'],allow_llm=self.llm_enabled)
-                        if row:
-                            self.active = row['id']
-                            self.last_error = None
-                        else:
-                            handle.close(); handle = None
+        # One GPU reservation spans a run of consecutive jobs. It is released as
+        # soon as nothing can be claimed, so other services wait for the run, not forever.
+        handle = None
+        try:
+            while not self._stop.is_set():
+                self._wake.clear()
+                row = None
+                try:
+                    ready=None
+                    if self.runtime and self.store.has_pending():
+                        reasons={}
+                        for model in self.store.pending_models():
+                            errors=self.catalog.errors(model,force=True)
+                            reasons[model]='; '.join(errors)+f' Run make setup MODEL={model}.' if errors else None
+                        self.store.mark_blocked(reasons)
+                        ready=[model for model,reason in reasons.items() if not reason]
+                    with self.guard:
+                        if not self._stop.is_set() and self.store.has_pending(None if self.runtime else self.current_profile['backend']):
+                            if handle is None:handle = self.reserve()
+                            row = self.store.claim_global(ready,allow_llm=self.llm_enabled) if self.runtime else self.store.claim(self.current_profile['backend'],allow_llm=self.llm_enabled)
+                            if row:
+                                self.active = row['id']
+                                self.last_error = None
+                    if row:
+                        # The dispatcher waits for capacity, not an HTTP connection.
+                        self.executor.submit(self._run_bound,row,handle).result()
+                        continue
+                except BusyError:
+                    pass
+                except Exception as exc:
+                    logging.exception('Queue dispatch failed')
+                    self.last_error = str(exc)
                 if handle:
-                    # The dispatcher waits for capacity, not an HTTP connection.
-                    self.executor.submit(self._run_bound,row,handle).result()
-                    handle = None
-                    continue
-            except BusyError:
-                pass
-            except Exception as exc:
-                logging.exception('Queue dispatch failed')
-                self.last_error = str(exc)
-            finally:
-                if handle:
-                    handle.close()
-            self._wake.wait(2 if self.runtime else .2)
+                    handle.close(); handle = None
+                self._release_paused_model()
+                self._wake.wait(2 if self.runtime else .2)
+        finally:
+            if handle:
+                handle.close()
+
+    def _release_paused_model(self):
+        """A backend resident only for queue work is released once the queue is paused and idle."""
+        if not (self.runtime and getattr(self.engine,'release_when_paused',False)):return
+        try:
+            if self.store.setting('paused',False):self.unload('queue_paused').result()
+        except BusyError:
+            pass  # Another service holds the GPU; retry on the next pass.
+        except Exception:
+            logging.exception('Could not release the model after pausing the queue')
 
     def _run_bound(self,row,handle):
         with observe(lambda event:self.observe('lifecycle_event',event)):
@@ -431,7 +445,7 @@ class JobManager:
             try:self.catalog.require(row['backend'],force=True)
             except ModelUnavailable as error:
                 self.store.defer_blocked(row['id'],str(error))
-                with self.guard:self.active=None;handle.close()
+                with self.guard:self.active=None
                 return
             with model_context(row['backend']):return self.run(row,handle)
         return self.run(row,handle)
@@ -549,10 +563,10 @@ class JobManager:
                 destination.unlink(missing_ok=True)
             self.update(identity,status='error',stage='Generation failed',error=str(exc),completed_at=now())
         finally:
+            # The dispatcher owns the GPU reservation and releases it after the run.
             self.observe('job_finished',resource_status)
             with self.guard:
                 self.active = None
-                handle.close()
 
     def estimate(self, row, effective):
         """Freeze the expected generation time from recent successful takes of this model."""
@@ -603,13 +617,13 @@ class JobManager:
         self._wake.set()
         return self.public(row)
 
-    def unload(self):
+    def unload(self, why='memory_release'):
         with self.guard:
             handle = self.reserve()
             self.unloading, self.stage = True,'unloading'
         def work():
             try:
-                with observe(lambda event:self.observe('lifecycle_event',event)), reason('memory_release'):self.engine.unload()
+                with observe(lambda event:self.observe('lifecycle_event',event)), reason(why):self.engine.unload()
                 self.stage, self.last_error = 'unloaded',None
             except Exception as exc:
                 self.stage, self.last_error = 'error',str(exc)

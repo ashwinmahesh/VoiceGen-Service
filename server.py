@@ -209,7 +209,7 @@ def resource_jobs(model: str | None=Query(None,max_length=80), limit: int=Query(
 def model_lifecycle(window: Literal['24h','7d','30d','90d','all']='30d',
                     model: Literal['higgs','voxcpm2','qwen3','chatterbox','indextts','moss','fish'] | None=None,
                     action: Literal['load','unload'] | None=None,
-                    scope: Literal['runtime_process','weights','native_weights','native_release','llm_weights'] | None=None,
+                    scope: Literal['runtime_process','weights','native_weights','native_release','native_server','llm_weights'] | None=None,
                     job_id: str | None=Query(None,pattern='^[a-f0-9]{32}$'),
                     run_id: str | None=Query(None,pattern='^[a-f0-9]{32}$'),
                     limit: int=Query(25,ge=1,le=100),offset: int=Query(0,ge=0)):
@@ -436,7 +436,8 @@ def runtime_health():
 
 
 @app.post('/api/queue/pause',response_model=QueueState)
-def queue_pause():return manager.store.pause(True)
+def queue_pause():
+    result=manager.store.pause(True);manager._wake.set();return result
 
 
 @app.post('/api/queue/resume',response_model=QueueState)

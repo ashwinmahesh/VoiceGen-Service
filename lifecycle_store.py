@@ -9,6 +9,7 @@ LIFECYCLE_SCOPES = {
     'weights':'Python model loader/validation, or release of model references, garbage collection and allocator cache. Lazy compilation/first inference is excluded.',
     'native_weights':'Native registry model load plus task-session construction. Excludes input preparation and synthesis.',
     'native_release':'Native task-session and model destruction before CLI process exit. Excludes earlier synthesis and later process teardown.',
+    'native_server':'Resident native server launch until its model and session report loaded, or stop request until the server exits. Includes server startup/teardown; excludes synthesis.',
     'llm_weights':'Prompt LLM loader, or explicit release/garbage collection/cache clearing. Excludes prompt generation.',
 }
 

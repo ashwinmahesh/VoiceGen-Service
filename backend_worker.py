@@ -12,6 +12,8 @@ from lifecycle_events import observe, reason
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--fd',type=int,required=True);parser.add_argument('--owner-fd',type=int,required=True)
     args=parser.parse_args()
+    # A resident native server inherits this consumer descriptor, never a per-job GPU one.
+    os.environ['VOICEGEN_CONSUMER_FD']=str(args.owner_fd)
     from engine import create_engine
     from schemas import Generation
     from inference_locks import inherit_reservations
@@ -39,9 +41,14 @@ def main():
                         result=engine.generate(Generation.model_validate(request['request']),
                             Path(request['reference']) if request['reference'] else None,Path(request['destination']),
                             lambda stage:report({'event':stage}),transcript=request['transcript'])
-                        report({'result':result,'loaded':engine.model is not None,'variant':engine.variant})
+                        report({'result':result,**state(engine)})
                 except Exception as error:
-                    report({'error':str(error),'loaded':engine.model is not None,'variant':engine.variant})
+                    report({'error':str(error),**state(engine)})
+
+
+def state(engine):
+    return {'loaded':engine.model is not None,'variant':engine.variant,
+            'release_when_paused':getattr(engine,'release_when_paused',False)}
 
 
 if __name__=='__main__':main()

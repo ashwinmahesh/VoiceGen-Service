@@ -1,4 +1,6 @@
 """Backend selection, strict controls, native arguments and storage ownership. No GPU."""
+from contextlib import ExitStack
+import io
 from pathlib import Path
 import tempfile
 import unittest
@@ -405,16 +407,41 @@ class BackendTests(unittest.TestCase):
         self.assertFalse(kwargs['text_normalization']);self.assertEqual(kwargs['lang'],'en')
         self.assertTrue(np.max(np.abs(data))<1);self.assertEqual(sr,22050)
 
-    def test_native_command_preserves_text_and_uses_metal(self):
+    def test_native_requests_preserve_text_and_use_metal(self):
         import json
-        for backend in ['moss','higgs']:
-            specs=json.loads((PROJECT_ROOT/'backends'/backend/'model_specs.json').read_text())
-            with patch('native_engine.PROFILE',self.profile(backend)),patch('native_engine.MODEL_SPECS',specs),patch('native_engine.Path.is_file',return_value=True):
-                request=self.request(language='English',temperature=1.,seed=2**32-1)
-                args=NativeEngine().command(request,Path('/tmp/ref.wav'),'Exact words.',Path('/tmp/out.wav'))
-                self.assertEqual(args[args.index('--text')+1],request.text)
-                self.assertEqual(args[args.index('--backend')+1],'metal')
-                if backend=='higgs':self.assertEqual(args[args.index('--reference-text')+1],'Exact words.')
+        request=self.request(language='English',temperature=1.,seed=2**32-1)
+        specs=json.loads((PROJECT_ROOT/'backends/moss/model_specs.json').read_text())
+        with patch('native_engine.PROFILE',self.profile('moss')),patch('native_engine.MODEL_SPECS',specs),patch('native_engine.Path.is_file',return_value=True):
+            args=NativeEngine().command(request,None,'',Path('/tmp/out.wav'))
+        self.assertEqual(args[args.index('--text')+1],request.text)
+        self.assertEqual(args[args.index('--backend')+1],'metal')
+        with patch('native_engine.PROFILE',self.profile('higgs')):
+            body=NativeEngine().request_body(request,Path('/tmp/ref.wav'),'Exact words.')
+        self.assertEqual((body['input'],body['reference_text'],body['seed']),(request.text,'Exact words.',str(2**32-1)))
+        self.assertEqual(body['voice_ref'],{'type':'path','path':'/tmp/ref.wav'})
+
+    def test_higgs_server_config_is_loopback_metal_without_request_logging(self):
+        import json
+        engine=NativeEngine()
+        class Server:
+            def __init__(self,args,**kwargs):self.args,self.kwargs=args,kwargs
+            def poll(self):return None
+        with tempfile.TemporaryDirectory(dir=ROOT/'cache/tmp') as tmp,ExitStack() as stack:
+            project=Path(tmp);binary=project/'audiocpp_server';binary.write_text('')
+            for target,value in [('native_engine.PROFILE',self.profile('higgs')),('native_engine.PROJECT_ROOT',project),
+                                 ('native_engine.MODEL_DIR',project),('native_engine.MODEL_SPECS',{'higgs':{'files':[{'path':'higgs.gguf'}]}})]:
+                stack.enter_context(patch(target,value))
+            stack.enter_context(patch.dict(os.environ,{'AUDIOCPP_SERVER_BIN':str(binary),'VOICEGEN_CONSUMER_FD':'7'}))
+            stack.enter_context(patch('native_engine.subprocess.Popen',side_effect=Server))
+            models=json.dumps({'data':[{'id':'higgs','loaded':True}]}).encode()
+            stack.enter_context(patch('native_engine.urllib.request.urlopen',return_value=io.BytesIO(models)))
+            engine._start_server()
+            config=json.loads((project/'state/native-server-higgs.json').read_text())
+        self.assertEqual((config['host'],config['backend'],config['lazy_load'],config['log_request_body']),('127.0.0.1','metal',False,False))
+        self.assertEqual(config['models'][0]['path'],str(project/'higgs.gguf'))
+        self.assertNotIn('--log',engine.server.args)
+        self.assertEqual(engine.server.kwargs['pass_fds'],(7,))
+        engine.server=None
 
     def test_data_dir_exclusion_before_recovery(self):
         with tempfile.TemporaryDirectory(dir=ROOT/'cache/tmp') as tmp:

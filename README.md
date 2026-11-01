@@ -18,7 +18,7 @@ Studio, Collection, and Observability share one header: navigation, **Queue**, a
 
 ![Collection voice library with four demonstration voices](docs/images/collection-page.jpg)
 
-**Queue:** each row shows its model, the voice (a saved voice's name, “Uploaded voice”, or “Designed voice”), and the running take's estimated progress. Row actions are icon buttons (Monitor, Run Now, Remove, and others) that name themselves on hover. Drag a row by its handle to reorder waiting jobs; it lifts while you drag. Like Image Studio, the window's header has a **Process queue** switch, an amber **Clear pending** button, and **×** to close. **Generate immediately**, on by default, runs your request right after the current take. Switching off **Process queue** holds ordinary waiting work; **Generate immediately** and **Run Now** jobs still run.
+**Queue:** each row shows its model, the voice (a saved voice's name, “Uploaded voice”, or “Designed voice”), and the running take's estimated progress. Row actions are icon buttons (Monitor, Run Now, Remove, and others) that name themselves on hover. Drag a row by its handle to reorder waiting jobs; it lifts while you drag. Like Image Studio, the window's header has a **Process queue** switch, an amber **Clear pending** button, and **×** to close. **Generate immediately**, on by default, runs your request right after the current take. Switching off **Process queue** holds ordinary waiting work; **Generate immediately** and **Run Now** jobs still run. Pausing partway through a set of options puts its unfinished options back at the top of the queue. While the queue is processing, Higgs stays loaded between takes; pausing releases its memory.
 
 ![Queue window with a running take's progress and waiting jobs for several voices](docs/images/queue-modal.jpg)
 
@@ -42,7 +42,7 @@ VoiceGen brings several techniques into one place:
 - **Start with the right recording.** For models that reuse a voice, a clear sample with the intended accent and delivery gives them a stronger starting point. Higgs and Fish also use the exact words spoken in that sample.
 - **Use each model's acting controls.** These include delivery instructions, emotion recordings, expression settings, and supported performance tags. The studio shows the controls available for the selected model.
 - **Refine written directions with a local LLM.** Prompt expansion can turn a voice description or acting direction into guidance suited to the chosen speech model. You can review the suggestion before applying it.
-- **Compare options.** Generate 1–5 options at once, with two selected by default and a fresh random seed for every new Generate click. Voice-design models can explore contrasting descriptions; a saved or recorded voice produces alternative takes of the same speaker. Advanced settings also allow a fixed seed.
+- **Compare options.** Generate 1–5 options at once, with two selected by default for Design a voice and one for Record lines, and a fresh random seed for every new Generate click. Voice-design models can explore contrasting descriptions; a saved or recorded voice produces alternative takes of the same speaker. Advanced settings also allow a fixed seed.
 - **Adjust the pacing.** Supported models offer sentence and comma pause settings. You can also extend quiet gaps in a completed take and save the edit separately from the original.
 
 More expression can change the voice or weaken an accent. Listen for all three—delivery, accent, and voice identity—when comparing takes. [Voice quality tips](VOICE_QUALITY.md) explain the recommended starting settings and model limitations.
@@ -122,7 +122,7 @@ Here are the available endpoints. See [API.md](API.md) for request formats, exam
 | GET | `/api/references/{id}/original` | Download the original reference file. |
 | POST | `/api/model/unload` | Release the model's memory. |
 
-Both APIs also provide `POST /api/queue/pause` and `/api/queue/resume`, which the header's **Process queue** switch uses. Run Now waits for the active batch, then runs ahead of normal work.
+Both APIs also provide `POST /api/queue/pause` and `/api/queue/resume`, which the header's **Process queue** switch uses. Run Now runs after the current take, ahead of normal work; an interrupted set of options resumes afterward.
 
 ### Queue service — localhost:55205
 

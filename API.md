@@ -387,7 +387,7 @@ List responses contain `data`, `total`, `counts`, `limit`, `offset`, `has_more`,
 
 Deletion affects **waiting work only**. It does not cancel active generation or delete completed audio, History, or voices. Deleting an already deleted job reports zero removed. Retrying requires an `error` job whose model is ready; other states return 409. If its model is unavailable, retry returns 422 with setup guidance and leaves the failed entry unchanged.
 
-`POST /api/queue/pause` pauses normal waiting work; `/api/queue/resume` resumes it. Both APIs share this saved switch, and it is kept after restarts. Jobs submitted with `generate_immediately:true`, and jobs given Run Now, can still run while paused. A running job is never interrupted. Neither endpoint takes a body. Both return `{"paused": true}` or `{"paused": false}`, the saved state shared by the two services. Read the current state from generator `/health` `queue_paused` or queue `/health` `paused`. The generator's value is only reliable while its `queue_storage.status` is `ready`.
+`POST /api/queue/pause` pauses normal waiting work; `/api/queue/resume` resumes it. Both APIs share this saved switch, and it is kept after restarts. Jobs submitted with `generate_immediately:true`, and jobs given Run Now, can still run while paused. A running job is never interrupted. Pausing partway through a candidate batch returns its unfinished options to the top of the queue, and a resident Higgs model is released once the current take finishes. Neither endpoint takes a body. Both return `{"paused": true}` or `{"paused": false}`, the saved state shared by the two services. Read the current state from generator `/health` `queue_paused` or queue `/health` `paused`. The generator's value is only reliable while its `queue_storage.status` is `ready`.
 
 ```sh
 curl --fail-with-body -X POST http://localhost:5743/api/queue/pause    # or :55205
@@ -421,7 +421,7 @@ curl --fail-with-body -X POST \
   http://localhost:5743/api/queue/JOB_ID_HERE/run-now
 ```
 
-Both actions return **200** with the updated job and persist across restarts. Fetch the queue again for its current list order. The current candidate batch finishes first. The generator switches models as needed, reusing the current backend for consecutive jobs and releasing it before loading another. Run Now cannot make a missing model available or enable a disabled LLM. Blocked jobs remain queued while eligible work proceeds.
+Both actions return **200** with the updated job and persist across restarts. Fetch the queue again for its current list order. The current take finishes first; the rest of an interrupted candidate batch runs after the Run Now job. The generator switches models as needed, reusing the current backend for consecutive jobs and releasing it before loading another. Run Now cannot make a missing model available or enable a disabled LLM. Blocked jobs remain queued while eligible work proceeds.
 
 Only waiting jobs and waiting anchors can move. A running/completed/failed/deleted job returns **409**; a missing job/anchor returns **404**. Moving relative to itself or supplying multiple move fields returns **422**. If a job starts while you drag, refresh and try another waiting job.
 

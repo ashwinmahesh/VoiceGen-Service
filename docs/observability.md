@@ -15,8 +15,9 @@ The screenshot above uses synthetic history, not measured performance. A selecte
 | Boundary | Timed operation |
 | --- | --- |
 | Python weights | Model loader and adapter validation; or dropping model references, garbage collection, and allocator cache clearing. Applies to Vox, Qwen, Fish, Chatterbox, and Index. Lazy GPU execution and first-inference compilation are not forced into the load timer. |
-| Native weights & session | Higgs/MOSS registry loading plus native task-session construction. Input preparation and speech generation follow this boundary. |
+| Native weights & session | MOSS registry loading plus native task-session construction. Input preparation and speech generation follow this boundary. |
 | Native release | Destruction of that native session and model before its per-take CLI exits. |
+| Native server | Higgs resident server launch until its model and session report loaded, or stop request until the server exits. Synthesis is excluded. |
 | Prompt LLM weights | Local LLM loading, or explicit reference release, garbage collection and cache clearing. Its speech backend still identifies the request that needed expansion. |
 | Backend process | Launch to ready IPC, or close request to **verified exit of the owned process group**, including teardown and any escalation/reaping. This is separate from weight-only timing. |
 
@@ -84,7 +85,7 @@ For resource-series responses, times are Unix seconds in UTC and byte metrics ar
 
 ### Model event responses
 
-`GET /api/observability/models` accepts `window=24h|7d|30d|90d|all` (default `30d`), an optional supported `model`, `action=load|unload`, and `scope=runtime_process|weights|native_weights|native_release|llm_weights`. Optional `job_id` and `run_id` select a triggering job/attempt. Pagination uses `limit=1..100` (default 25), `offset>=0`, newest start first. Invalid values return 422; SQLite read failures return the usual structured 503.
+`GET /api/observability/models` accepts `window=24h|7d|30d|90d|all` (default `30d`), an optional supported `model`, `action=load|unload`, and `scope=runtime_process|weights|native_weights|native_release|native_server|llm_weights`. Optional `job_id` and `run_id` select a triggering job/attempt. Pagination uses `limit=1..100` (default 25), `offset>=0`, newest start first. Invalid values return 422; SQLite read failures return the usual structured 503.
 
 The result contains `data`, `total`, `counts`, `summaries`, `limit`, `offset`, `has_more`, `window`, `start`, `end`, `retention_seconds`, `scopes`, and `collector`. `all` has `start: null`. Each event has `id`, `session_id`, nullable `run_id`/`job_id`/`attempt`, `backend`, concrete `model`, `action`, `scope`, `reason`, `started_at`, nullable `ended_at`/`duration_seconds`, and `status` (`running`, `success`, `error`, `interrupted`). Duration is in seconds, independent of changes to the wall clock. Reasons include first use, variant/model switches, per-take loading, prompt expansion, manual memory release, shutdown, and failure cleanup.
 
