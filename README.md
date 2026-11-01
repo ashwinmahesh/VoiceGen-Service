@@ -8,56 +8,32 @@ The studio supports **seven speech models**, with **Higgs TTS 3 as the default**
 
 ## Inside the studio
 
-Studio, Collection, and Observability share the same navigation, Queue button, service status, and memory-release control.
+Studio, Collection, and Observability share one header: navigation, **Queue**, a **Process queue** switch, the service status, and **Release model memory**, which is greyed out with a “No model loaded” tooltip when there is nothing to release. Click the Voice Studios name to return to Studio. Screenshots use benign demonstration records and fake inference; percentages and timings are not model benchmarks.
 
-Click the Voice Studios icon, title, or subtitle in the header to return to Studio.
+**Studio:** use **Design a voice** to create a character from a description, or **Record lines** to reuse a saved voice, an uploaded recording, or a built-in speaker. Enter the dialogue, direct the performance with the model's own controls, and generate 1–5 options to compare. While a take renders, the listening room shows an estimated percentage and time left, such as “~62% · about 1 min left”, based on how long recent takes of the same model took. A recording strip keeps that progress visible on other pages, and returning restores your batch and chosen option. [See the return flow](docs/recording-return-ux.md).
 
-Screenshots use benign demonstration records and fake inference; displayed timings are not model benchmarks.
+![Studio with a saved Higgs voice: option 1 is ready and option 2 is generating](docs/images/studio-page.jpg)
 
-**Generate:** choose or design a voice, enter dialogue, direct the performance, and audition the results.
+**Collection:** **Voice library** holds saved and uploaded voices with names, descriptions, and searchable tags; **History** holds generated takes, each labelled with the voice it used. Every entry is a row with its player and actions on one line. The trash icon deletes an entry after a [confirmation](docs/images/collection-delete-confirmation.jpg), and **Show deleted** lets you restore it within 24 hours; after that its files are removed. Uploaded voices are [transcribed locally](docs/transcription.md). See [retention and shared copies](docs/collection-retention.md).
 
-Use **Design a voice** to create a character, or **Record lines** to reuse one. Record lines has a **Voice source** menu for saved voices, uploaded reference audio, and built-in speakers when available. Browse voice catalog opens your Collection in a new tab so your recording form stays open.
+![Collection voice library with four demonstration voices](docs/images/collection-page.jpg)
 
-An elapsed timer below Generate and in the Listening room updates every second through waiting and generation, then keeps the final duration. Reference transcripts stay with saved voices; you can save an edit directly or let Generate save it before submitting. Higgs has searchable Emotion, Prosody, and Style inputs. Choose an option, or type a custom direction and preview a supported control with the local LLM. Accent comes from the reference recording.
+**Queue:** each row shows its model, the voice (a saved voice's name, “Uploaded voice”, or “Designed voice”), and the running take's estimated progress. Row actions are icon buttons (Monitor, Run Now, Remove, and others) that name themselves on hover. Drag a row by its handle to reorder waiting jobs; it lifts while you drag. Like Image Studio, the window's header has a **Process queue** switch, an amber **Clear pending** button, and **×** to close. **Generate immediately**, on by default, runs your request right after the current take. Switching off **Process queue** holds ordinary waiting work; **Generate immediately** and **Run Now** jobs still run. Pausing partway through a set of options puts its unfinished options back at the top of the queue. While the queue is processing, Higgs stays loaded between takes; pausing releases its memory.
 
-A recording strip keeps progress visible while you browse Collection or Observability, then offers **Listen to recording** when it finishes. Returning restores your batch, selected option, and elapsed time; on a phone, the return link goes straight to the listening room. Temporary connection losses reconnect automatically. Each option has **Resources & logs**. [See the return flow](docs/recording-return-ux.md).
+![Queue window with a running take's progress and waiting jobs for several voices](docs/images/queue-modal.jpg)
 
-Higgs starts new UI settings with a 2,000-token audio limit. If one option cannot finish within its limit, the others stay available; the failed card can prepare a single replacement with a higher limit. Advanced settings also offer native text chunk size for longer passages.
+**Observability:** chart CPU, memory, and GPU use over windows from five minutes to seven days, filter by model, or inspect one job's resources and logs. GPU figures cover the whole Mac. **Model activity** keeps 90 days of model load and unload durations. [What the measurements mean](docs/observability.md).
 
-**Design a voice** stays visible when the current model needs a recording, such as Higgs. Open it and choose a set-up VoxCPM2, Qwen3-TTS, or MOSS VoiceGenerator from the model menu. If none is set up, the tab stays disabled and its tooltip lists those alternatives.
-
-![Full Generate page with Higgs performance controls and audio playback](docs/images/studio-page.jpg)
-
-**Collection:** browse previous takes or save and upload voices with names, descriptions, and searchable tags. Search, tag selection, sort order, and page size share a compact row; search and select existing tags to find voices matching any of them.
-
-Uploaded voices are transcribed locally with a small CPU model. Listen, correct the detected words, and save them with the voice; automatic transcription can also be switched off. [Upload transcription](docs/transcription.md) explains setup and API use.
-
-Voice library appears first and opens by default; History holds your generated takes. Both offer **Delete** with a confirmation popup. Use the **Show deleted** switch and **Restore** within 24 hours to bring an entry back. After 24 hours, the generator automatically removes its audio and metadata from disk. Cleanup waits for unfinished jobs that still need the recording. [Retention and shared copies](docs/collection-retention.md).
-
-[View the deletion confirmation](docs/images/collection-delete-confirmation.jpg).
-
-![Full Collection page with a saved voice, search, and tags](docs/images/collection-page.jpg)
-
-**Queue:** drag waiting jobs into order, choose **Run Now** to run one next, monitor progress, or remove pending work. Running takes show an estimated percentage (for example ~62%) based on how long recent takes of the same model took, in the queue and in the listening room. The studio's default **Generate immediately** switch runs next after the current take and keeps Generate busy until your options finish. Turn it off to keep adding ordinary queued jobs. To pause the queue, switch off **Process queue** in the header. The current take finishes, then waiting jobs stay saved until you switch it back on. Pausing partway through a set of options puts its unfinished options back at the top of the queue. While the queue is processing, Higgs stays loaded between takes; pausing releases its memory. **Generate immediately** and **Run Now** jobs still run while paused.
-
-![Full page with the Queue modal open](docs/images/queue-modal.jpg)
-
-**Observability:** chart CPU, memory, and GPU usage over time, filter by model, or inspect a job's resource use. Choose windows from five minutes to seven days. History is saved automatically while the generator runs; GPU figures cover the whole Mac. Each job view also shows sampled stages and any retained generation log. **Model activity** keeps a separate 90-day history of model load/unload durations, with individual events, filters, and job links.
-
-![Full Observability page with demonstration resource history](docs/images/observability-page.jpg)
+![Observability with demonstration resource history](docs/images/observability-page.jpg)
 
 <details>
 <summary>Model load and unload history</summary>
 
-![Full Model activity page with demonstration timing events](docs/images/model-activity.jpg)
+![Model activity with demonstration timing events](docs/images/model-activity.jpg)
 
 </details>
 
-Screenshots use demo data. Model files and recordings can live on an external SSD. Source code, Python environments, and one shared SQLite queue stay together in the project folder on your Mac. See [storage setup](QUICKSTART.md#1-install-and-set-up).
-
-Setup automatically reuses a compatible installed Python, or downloads one into the project when needed. You do not need to install Python 3.11 and 3.14 yourself. Starting the studio uses the environments already set up and does not download anything. `make serve` exits with setup instructions unless at least one model has its verified files and compatible runtime ready.
-
-You can safely rerun `make setup`: verified model downloads are reused, while dependencies and support files are checked and updated in place as needed. Choose **q** in the model menu or press **Ctrl+C** during setup to cancel; existing downloads, voices, recordings, and queued jobs are kept.
+Model files and recordings can live on an external SSD; source code, Python environments, and the shared SQLite queue stay in the project folder. Setup reuses a compatible installed Python or downloads one into the project, and is safe to rerun: verified downloads are reused. `make serve` never downloads anything and exits with setup instructions unless at least one model is ready. See [storage setup](QUICKSTART.md#1-install-and-set-up).
 
 ## Getting better voices and performances
 
@@ -79,9 +55,7 @@ The optional prompt expander uses **Qwen3.5-2B, a 4-bit local language model**. 
 
 Expansion follows different rules for each supported model and mode. The studio shows the original and expanded guidance. The LLM receives written voice and delivery directions, while dialogue, reference transcripts, and recordings stay out of its input. Suggestions still need listening checks; extra wording does not always produce a better performance.
 
-With a saved or uploaded voice in **Vox Auto**, enter an Emotion & delivery direction to preview its expansion. Auto then uses flexible voice conditioning. With no new directions and an exact transcript, Auto follows the recorded performance; the preview explains that choice. Empty disabled fields show a short reason inside the box; helper text explains how to enable a supported alternative. Existing typed values are kept.
-
-For **Higgs**, enter a short acting direction and select **Suggest delivery control**. The LLM chooses one supported Emotion, Prosody, or Style setting; it does not write a longer prose prompt. For example, “more expressive intonation” can suggest `expressive_high`. The preview shows what you typed and makes **No change suggested** explicit. Accent comes from the reference recording, and can still drift.
+Each model gets its own expansion rules: Vox Auto can preview an expanded Emotion & delivery direction, and Higgs uses **Suggest delivery control** to pick one supported Emotion, Prosody, or Style setting rather than writing prose. See [prompt expansion details](docs/voice-prompt-expansion.md).
 
 ## Speech models
 
