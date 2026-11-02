@@ -122,9 +122,9 @@ class CollectionCleaner:
             if not isinstance(source,str) or not catalog.IDENTITY.fullmatch(source):raise ValueError('Invalid source reference ID')
             if not self.source_shared(identity,source):
                 folder=self.root/'references'
-                if folder.is_symlink() or (folder/'originals').is_symlink():
+                if folder.is_symlink() or (folder/'originals').is_symlink() or (folder/'full').is_symlink():
                     raise ValueError('Reference directories must not be symbolic links')
-                reference_paths=[folder/f'{source}.wav',folder/f'{source}.json',folder/'originals'/f'{source}.bin']
+                reference_paths=[folder/f'{source}.wav',folder/f'{source}.json',folder/'originals'/f'{source}.bin',folder/'full'/f'{source}.wav']
         for path in with_companions([*paths,*reference_paths]):regular(path)
         return paths,reference_paths,source
 

@@ -63,6 +63,51 @@ def persist_artifact(destination, row):
     atomic_json(ROOT/'artifact-index'/f'{row["id"]}.json', {'path':str(destination.absolute())})
 
 
+FULL_BAND_BACKENDS = {'higgs','voxcpm2'}
+FULL_BAND_MAX_RATE = 48000
+
+
+def full_band_reference(reference, row):
+    """The conditioning audio for Higgs and VoxCPM2: the retained original upload behind a reference, or behind a saved voice that
+    is an unchanged copy of one, mono at its own rate up to 48 kHz and cached once in references/full/<id>.wav. The 16 kHz working
+    copy drops everything above 8 kHz, which the clone then fills in as grain. Without a wider original the working copy is kept."""
+    import filecmp
+    from io import BytesIO
+    if reference.parent.name == 'references':
+        identity, source = row.get('id'), row
+    elif row.get('source_kind') == 'references' and IDENTITY.fullmatch(str(row.get('source_id') or '')):
+        identity = row['source_id']
+        working = ROOT/'references'/f'{identity}.wav'
+        if not working.is_file() or not filecmp.cmp(reference, working, shallow=False):
+            return reference
+        source = json.loads(working.with_suffix('.json').read_text())
+    else:
+        return reference
+    original = ROOT/'references/originals'/f'{identity}.bin'
+    if not IDENTITY.fullmatch(str(identity or '')) or int((source.get('original') or {}).get('sample_rate') or 0) <= 16000 or not original.is_file():
+        return reference
+    target = validate_mount(ROOT/'references/full'/f'{identity}.wav')
+    if target.is_file():
+        return target
+    from math import gcd
+    import numpy as np
+    import soundfile as sf
+    from scipy.signal import resample_poly
+    data, sr = sf.read(BytesIO(original.read_bytes()), dtype='float32', always_2d=True)
+    data = data.mean(axis=1)
+    if sr > FULL_BAND_MAX_RATE:
+        divisor = gcd(sr, FULL_BAND_MAX_RATE)
+        data, sr = resample_poly(data, FULL_BAND_MAX_RATE//divisor, sr//divisor), FULL_BAND_MAX_RATE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_suffix('.tmp.wav')
+    try:
+        sf.write(temp, np.clip(data, -1, 1), sr, subtype='PCM_16')
+        temp.replace(target)
+    finally:
+        temp.unlink(missing_ok=True)
+    return target
+
+
 def preserve_reference(raw, filename, transcript=''):
     from io import BytesIO
     from math import gcd
