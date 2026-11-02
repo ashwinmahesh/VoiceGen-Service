@@ -366,6 +366,9 @@ def prepare_generation(request, allow_deleted=False):
         source = json.loads(reference.with_suffix('.json').read_text())
         transcript = request.ref_text if request.ref_text is not None else source.get('transcript','')
         reference_info = {key:source[key] for key in ['id','name','duration','original','effective','sample_rate','channels','source_id','source_kind'] if key in source}
+        if PROFILE['backend'] in storage.FULL_BAND_BACKENDS:
+            reference = storage.full_band_reference(reference,source)
+            reference_info['full_band'] = reference.parent.name=='full'
         import hashlib
         reference_info['sha256']=hashlib.sha256(reference.read_bytes()).hexdigest()
         effective = effective.model_copy(update={'description':source.get('design_description',source.get('description',''))})
@@ -573,7 +576,8 @@ def transcription_readiness():return transcription_status()
 
 
 def remove_new_reference(reference):
-    for path in [ROOT/'references'/f'{reference["id"]}.wav',ROOT/'references'/f'{reference["id"]}.json',ROOT/'references/originals'/f'{reference["id"]}.bin']:
+    for path in [ROOT/'references'/f'{reference["id"]}.wav',ROOT/'references'/f'{reference["id"]}.json',ROOT/'references/originals'/f'{reference["id"]}.bin',
+                 ROOT/'references/full'/f'{reference["id"]}.wav']:
         path.unlink(missing_ok=True)
 
 

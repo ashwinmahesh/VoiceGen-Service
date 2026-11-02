@@ -170,7 +170,11 @@ class ContractTests(unittest.TestCase):
             self.assertEqual((audio.samplerate,audio.channels,len(audio)),(16000,1,32000))
         generated=self.generate(voice_id=voice['id']).json()
         self.assertEqual(self.finish(generated)['status'],'done')
-        self.assertEqual(str(self.engine.calls[-1][1]),str(self.root/'voices'/f'{voice["id"]}.wav'))
+        used=self.engine.calls[-1][1]
+        if server.PROFILE['backend'] in storage.FULL_BAND_BACKENDS:   # the 48 kHz original, not the 16 kHz working copy
+            self.assertEqual(str(used),str(self.root/'references/full'/f'{voice["source_id"]}.wav'))
+            self.assertEqual((sf.info(used).samplerate,sf.info(used).channels),(48000,1))
+        else:self.assertEqual(str(used),str(self.root/'voices'/f'{voice["id"]}.wav'))
     def test_direct_voice_upload_rejects_bad_metadata_audio_and_size_without_catalog_entries(self):
         for details in [{'name':' '},{'name':'Named','tags':['x'*41]}, {'name':'Named','tags':['tag']*21}]:
             response=self.client.post('/api/voices/upload',files={'file':('voice.wav',wav(),'audio/wav')},data=details)
