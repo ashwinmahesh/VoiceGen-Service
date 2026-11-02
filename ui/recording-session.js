@@ -15,6 +15,11 @@ function resumable(selection){
  if(!selection||selection.kind==='artifact')return false;
  return !selection.summary||['queued','running'].includes(selection.summary.status);
 }
+// Browse pages point back only to work still generating or finished but not yet opened in the studio.
+function returnable(selection){
+ if(!selection||selection.kind==='artifact')return false;
+ return resumable(selection)||!selection.opened;
+}
 function summary(selection,data){
  const batch=selection.kind==='candidates',jobs=batch?data.jobs:[data],active=['queued','running'].includes(data.status);
  const running=jobs.find(job=>job.status==='running');
@@ -94,6 +99,6 @@ function createPoller({read,onData,onConnection=()=>{},onMissing=()=>{},onError=
  Promise.resolve().then(run);
  return {stop,refresh};
 }
-const api={validId,fromURL,resolveSelection,resumable,url,summary,progressText,progressSpeech,presentation,createStore,readJSON,createPoller};
+const api={validId,fromURL,resolveSelection,resumable,returnable,url,summary,progressText,progressSpeech,presentation,createStore,readJSON,createPoller};
 if(typeof module==='object'&&module.exports)module.exports=api;else root.VoiceRecording=api;
 })(typeof window==='object'?window:globalThis);
