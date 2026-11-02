@@ -1,9 +1,17 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {createStore,fromURL,resolveSelection,url,createPoller,readJSON,summary,presentation,progressText,progressSpeech}=require('../ui/recording-session.js');
+const {createStore,fromURL,resolveSelection,resumable,url,createPoller,readJSON,summary,presentation,progressText,progressSpeech}=require('../ui/recording-session.js');
 const id='a'.repeat(32),second='b'.repeat(32);
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(check){for(let n=0;n<200;n++){if(check())return;await pause(2)}assert.fail('polling condition timed out')}
+test('the studio root reopens only recordings that may still be generating',()=>{
+ assert.equal(resumable(null),false);
+ assert.equal(resumable({kind:'artifact',id}),false);
+ assert.equal(resumable({kind:'job',id}),true);
+ assert.equal(resumable({kind:'job',id,summary:{status:'running'}}),true);
+ assert.equal(resumable({kind:'candidates',id,summary:{status:'queued'}}),true);
+ for(const status of ['done','error','deleted','partial'])assert.equal(resumable({kind:'job',id,summary:{status}}),false,status);
+});
 test('recording selection is project-wide, model-independent, and preserves chosen option',()=>{
  const data=new Map(),storage={getItem:key=>data.get(key),setItem:(key,value)=>data.set(key,value)};
  const one=createStore(storage,'project-one');one.save({kind:'candidates',id,selected:second,model:'voxcpm2'});one.setModel('higgs');

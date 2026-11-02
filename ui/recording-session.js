@@ -10,6 +10,11 @@ function fromURL(search){
 }
 function resolveSelection(explicit,saved){return explicit?{...(saved?.kind===explicit.kind&&saved?.id===explicit.id?saved:{}),...explicit}:saved}
 function url(selection){const params=new URLSearchParams({[selection.kind]:selection.id});if(selection.kind==='candidates'&&validId(selection.selected))params.set('option',selection.selected);return '/?'+params}
+// Only work that may still be generating reopens on its own; a finished take stays in History.
+function resumable(selection){
+ if(!selection||selection.kind==='artifact')return false;
+ return !selection.summary||['queued','running'].includes(selection.summary.status);
+}
 function summary(selection,data){
  const batch=selection.kind==='candidates',jobs=batch?data.jobs:[data],active=['queued','running'].includes(data.status);
  const running=jobs.find(job=>job.status==='running');
@@ -89,6 +94,6 @@ function createPoller({read,onData,onConnection=()=>{},onMissing=()=>{},onError=
  Promise.resolve().then(run);
  return {stop,refresh};
 }
-const api={validId,fromURL,resolveSelection,url,summary,progressText,progressSpeech,presentation,createStore,readJSON,createPoller};
+const api={validId,fromURL,resolveSelection,resumable,url,summary,progressText,progressSpeech,presentation,createStore,readJSON,createPoller};
 if(typeof module==='object'&&module.exports)module.exports=api;else root.VoiceRecording=api;
 })(typeof window==='object'?window:globalThis);

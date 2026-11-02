@@ -1236,7 +1236,8 @@ async function startStudio(){
   await selectVoiceModel(model);
   if(!await openPageSelection()&&!browsePage){
    const saved=recordingStore.selection();
-   if(saved)await openRecording(saved);
+   // The studio root reopens only a recording that may still be generating, so a finished take never takes over /.
+   if(VoiceRecording.resumable(saved))await openRecording(saved);
    else{
     // Upgrade a previous browser pointer once; subsequent recovery is project-wide.
     const batch=localStorage.getItem(storageKey+'-candidates'),job=localStorage.getItem(storageKey+'-job');
