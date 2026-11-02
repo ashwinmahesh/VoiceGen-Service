@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {createStore,fromURL,resolveSelection,resumable,url,createPoller,readJSON,summary,presentation,progressText,progressSpeech}=require('../ui/recording-session.js');
+const {createStore,fromURL,resolveSelection,resumable,returnable,url,createPoller,readJSON,summary,presentation,progressText,progressSpeech}=require('../ui/recording-session.js');
 const id='a'.repeat(32),second='b'.repeat(32);
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(check){for(let n=0;n<200;n++){if(check())return;await pause(2)}assert.fail('polling condition timed out')}
@@ -11,6 +11,16 @@ test('the studio root reopens only recordings that may still be generating',()=>
  assert.equal(resumable({kind:'job',id,summary:{status:'running'}}),true);
  assert.equal(resumable({kind:'candidates',id,summary:{status:'queued'}}),true);
  for(const status of ['done','error','deleted','partial'])assert.equal(resumable({kind:'job',id,summary:{status}}),false,status);
+});
+test('browse pages point back only to unfinished or unopened recordings, never to takes picked from Collection',()=>{
+ assert.equal(returnable(null),false);
+ assert.equal(returnable({kind:'artifact',id,summary:{status:'done'}}),false);
+ assert.equal(returnable({kind:'job',id}),true);
+ assert.equal(returnable({kind:'job',id,summary:{status:'running'},opened:true}),true);
+ assert.equal(returnable({kind:'job',id,summary:{status:'done'}}),true);
+ assert.equal(returnable({kind:'job',id,summary:{status:'done'},opened:true}),false);
+ assert.equal(returnable({kind:'candidates',id,summary:{status:'partial'}}),true);
+ assert.equal(returnable({kind:'candidates',id,summary:{status:'partial'},opened:true}),false);
 });
 test('recording selection is project-wide, model-independent, and preserves chosen option',()=>{
  const data=new Map(),storage={getItem:key=>data.get(key),setItem:(key,value)=>data.set(key,value)};
@@ -124,4 +134,23 @@ test('return summaries keep only the active percentage, not the preparing placeh
  assert.equal(summary({kind:'job',id},{status:'running',jobs,progress:{percent:40,phase:'generating'}}).percent,40);
  assert.equal(summary({kind:'job',id},{status:'running',progress:{percent:0,phase:'preparing'}}).percent,null);
  assert.equal(summary({kind:'job',id},{status:'done',progress:{percent:100,phase:'done'}}).percent,null);
+});
+test('takes opened from Collection are not stored, and finished recordings count as opened only on a visible studio page',()=>{
+ const vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
+ const source=fs.readFileSync(path.join(__dirname,'../ui/app.js'),'utf8');
+ const helpers=source.slice(source.indexOf('function storeRecording()'),source.indexOf('\nfunction watchReturnRecording('));
+ const saved=[];
+ const context=vm.createContext({VoiceRecording:require('../ui/recording-session.js'),recordingStore:{save:value=>saved.push({...value})},recordingSelection:null,browsePage:false,document:{hidden:false}});
+ vm.runInContext(helpers,context);
+ context.recordingSelection={kind:'artifact',id,summary:{status:'done'}};
+ vm.runInContext('storeRecording();noteRecordingOpened()',context);assert.equal(saved.length,0);
+ context.recordingSelection={kind:'job',id:second,summary:{status:'running'}};
+ vm.runInContext('noteRecordingOpened()',context);assert.equal(saved.length,0);assert.equal(context.recordingSelection.opened,undefined);
+ context.recordingSelection.summary={status:'done'};context.document.hidden=true;
+ vm.runInContext('noteRecordingOpened()',context);assert.equal(saved.length,0);
+ context.document.hidden=false;context.browsePage=true;
+ vm.runInContext('noteRecordingOpened()',context);assert.equal(saved.length,0);
+ context.browsePage=false;
+ vm.runInContext('noteRecordingOpened();noteRecordingOpened()',context);
+ assert.equal(saved.length,1);assert.equal(saved[0].opened,true);assert.equal(saved[0].id,second);
 });
