@@ -1243,7 +1243,7 @@ async function startStudio(){
     const batch=localStorage.getItem(storageKey+'-candidates'),job=localStorage.getItem(storageKey+'-job');
     if(batch&&VoiceRecording.validId(batch))watchCandidates(batch);
     else if(job&&VoiceRecording.validId(job))watch(job);
-    else if(healthSnapshot?.active_job)watch(healthSnapshot.active_job);
+    // Queue work started elsewhere stays in the Queue window and header progress instead of taking over /.
    }
    localStorage.removeItem(storageKey+'-candidates');localStorage.removeItem(storageKey+'-job');
   }
