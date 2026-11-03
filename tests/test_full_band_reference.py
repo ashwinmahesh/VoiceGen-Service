@@ -1,4 +1,4 @@
-"""Higgs and VoxCPM2 clone from the retained original upload at full band, not the 16 kHz working copy."""
+"""Every model clones from the retained original upload at full band, not the 16 kHz working copy."""
 import json
 from datetime import datetime, timezone, timedelta
 from unittest import TestCase
@@ -43,13 +43,18 @@ class FullBandReferenceTests(TestCase):
         wide=self.f.upload(rate=96000).json()['id']
         self.assertEqual(sf.info(self.conditioning(reference_id=wide)).samplerate,48000,'capped at 48 kHz')
 
-    def test_other_backends_keep_the_working_copy(self):
+    def test_every_cloning_backend_uses_the_full_band_original(self):
         reference=self.f.upload(rate=44100).json()['id']
-        profile=json.loads((PROJECT_ROOT/'backends/qwen3/service.json').read_text())
-        with patch('capabilities.PROFILE',profile),patch('server.PROFILE',profile):
-            self.assertEqual(server.prepare_generation(server.Generation(text='Welcome home.',reference_id=reference))[1],
-                             self.f.root/'references'/f'{reference}.wav')
-        self.assertFalse((self.f.root/'references/full'/f'{reference}.wav').exists())
+        for backend in ['qwen3','fish','indextts','chatterbox','higgs']:
+            with self.subTest(backend=backend):
+                profile=json.loads((PROJECT_ROOT/'backends'/backend/'service.json').read_text())
+                with patch('capabilities.PROFILE',profile),patch('server.PROFILE',profile):
+                    # Fish and Higgs require the reference transcript; the torch backends refuse one.
+                    transcript={'ref_text':'Welcome home.'} if backend in ('fish','higgs') else {}
+                    language='English' if backend=='indextts' else 'auto'
+                    effective,path,_,info=server.prepare_generation(server.Generation(text='Welcome home.',reference_id=reference,language=language,**transcript))
+                self.assertEqual(path,self.f.root/'references/full'/f'{reference}.wav')
+                self.assertTrue(info['full_band'])
 
     def test_cleanup_removes_the_full_band_copy_with_its_reference(self):
         reference=self.f.upload(rate=44100).json()['id']

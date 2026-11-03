@@ -63,14 +63,14 @@ def persist_artifact(destination, row):
     atomic_json(ROOT/'artifact-index'/f'{row["id"]}.json', {'path':str(destination.absolute())})
 
 
-FULL_BAND_BACKENDS = {'higgs','voxcpm2'}
 FULL_BAND_MAX_RATE = 48000
 
 
 def full_band_reference(reference, row):
-    """The conditioning audio for Higgs and VoxCPM2: the retained original upload behind a reference, or behind a saved voice that
-    is an unchanged copy of one, mono at its own rate up to 48 kHz and cached once in references/full/<id>.wav. The 16 kHz working
-    copy drops everything above 8 kHz, which the clone then fills in as grain. Without a wider original the working copy is kept."""
+    """The conditioning audio for every model that clones a voice: the retained original upload behind a reference, or behind a saved
+    voice that is an unchanged copy of one, mono at its own rate up to 48 kHz and cached once in references/full/<id>.wav. The 16 kHz
+    working copy drops everything above 8 kHz, which the clone then fills in as grain; each model resamples this copy to its own
+    rate. Without a wider original the working copy is kept. Transcription and IndexTTS's emotion reference read the working copy."""
     import filecmp
     from io import BytesIO
     if reference.parent.name == 'references':
