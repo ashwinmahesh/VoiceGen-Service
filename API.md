@@ -351,7 +351,7 @@ Delete and Restore return `200` with the same shape:
 | Decoded recording | 1–30 seconds, 8–96 kHz, mono or stereo. |
 | Formats | WAV, FLAC, or MP3 supported by the installed audio reader. |
 | Working copy | Mono 16 kHz PCM16; original upload retained separately. |
-| Higgs and VoxCPM2 conditioning | The retained original, mono at its own rate up to 48 kHz, cached once as `references/full/<id>.wav`; also used for a saved voice that is an unchanged copy of a reference. Other models, transcription and uploads at 16 kHz or below use the working copy. Job `reference_info.full_band` says which was used. |
+| Voice cloning conditioning (every model) | The retained original, mono at its own rate up to 48 kHz, cached once as `references/full/<id>.wav`; also used for a saved voice that is an unchanged copy of a reference. Each model resamples it to the rate its encoder reads. Transcription, IndexTTS's emotion reference and uploads at 16 kHz or below use the working copy. Job `reference_info.full_band` says which was used. |
 
 Unsupported or unreadable audio returns 422; oversized uploads return 413. Nothing is automatically pruned.
 
